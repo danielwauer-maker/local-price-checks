@@ -32,9 +32,11 @@ def market_freshness(db: Session) -> list[dict]:
                 started = started.replace(tzinfo=timezone.utc)
             if run.status == "failed":
                 state = "failed"
+            elif run.status == "no_offers":
+                state = "empty"
             elif started < stale_before:
                 state = "stale"
-            elif run.status in {"success", "no_offers"}:
+            elif run.status == "success":
                 state = "current"
             else:
                 state = run.status
