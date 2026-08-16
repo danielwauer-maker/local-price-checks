@@ -57,7 +57,7 @@ def parse_any_date(s: str, ref: date | None=None) -> date | None:
     for fmt in ("%d.%m.%Y","%d.%m.%y","%Y-%m-%d"):
         try: return datetime.strptime(s,fmt).date()
         except ValueError: pass
-    m=re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.",s)
+    m=re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.?",s)
     if m:
         d=date(ref.year,int(m.group(2)),int(m.group(1)))
         if (d-ref).days < -180: d=d.replace(year=ref.year+1)
@@ -72,6 +72,7 @@ DATE_RANGE_PATTERNS = [
 NETTO_RANGE = re.compile(r"gültig\s+von\s+\w+,?\s*(\d{1,2}\.\d{1,2}\.(?:20)?\d{2})\s*[-–]\s*\w+,?\s*(\d{1,2}\.\d{1,2}\.(?:20)?\d{2})",re.I)
 AB_MONTAG = re.compile(r"ab\s+montag,?\s*(\d{1,2}\.\d{1,2}\.(?:20)?\d{2})",re.I)
 SHORT_RANGE = re.compile(r'(\d{1,2}\.\d{1,2}\.?)\s*[–-]\s*(\d{1,2}\.\d{1,2}\.?)',re.I)
+SHORT_BIS_RANGE = re.compile(r'(\d{1,2}\.\d{1,2}\.?)\s+bis\s+(\d{1,2}\.\d{1,2}\.?)',re.I)
 THIS_WEEK_UNTIL = re.compile(r"gültig\s+diese\s+woche\s+bis\s+samstag,?\s*(\d{1,2}\.\d{1,2}\.(?:20)?\d{2})",re.I)
 THIS_WEEK_RANGE = re.compile(r"diese\s+woche\s+(\d{1,2}\.\d{1,2}\.?)\s*(?:bis|[–-])\s*(\d{1,2}\.\d{1,2}\.?)",re.I)
 WEEK_OFFERS_RANGE = re.compile(r"wochenangebote\s+mo\.?,?\s*(\d{1,2}\.\d{1,2}\.?)\s*[–-]\s*sa\.?,?\s*(\d{1,2}\.\d{1,2}\.?)",re.I)
@@ -115,12 +116,16 @@ def infer_validity(text: str, ref: date | None=None):
             a=parse_any_date(m.group(1),ref); b=parse_any_date(m.group(2),ref)
             if a and b: return a,b,"explicit_range",1.0
 
-    m=SHORT_RANGE.search(text)
-    if m:
-        a=parse_any_date(m.group(1),ref); b=parse_any_date(m.group(2),ref)
-        if a and b:
-            if b<a: b=b.replace(year=a.year+1)
-            return a,b,'short_range',0.92
+    for pat, source_name, confidence in (
+        (SHORT_BIS_RANGE, "short_bis_range", 0.94),
+        (SHORT_RANGE, "short_range", 0.92),
+    ):
+        m=pat.search(text)
+        if m:
+            a=parse_any_date(m.group(1),ref); b=parse_any_date(m.group(2),ref)
+            if a and b:
+                if b<a: b=b.replace(year=a.year+1)
+                return a,b,source_name,confidence
 
     m=AB_MONTAG.search(text)
     if m:
