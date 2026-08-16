@@ -9,10 +9,25 @@ def test_rejects_descriptor_only_product_names():
         "2er-Set",
         "3er-Set",
         "4er-Set",
+        "Kl. II",
+        "3-fach sortiert, geschnitten",
+        "grillfertig gewürzt",
+        "feine Würzung, vom Eifelschwein",
+        "ohne Speckwürfel, leckere Würzung, vom Eifelschwein",
+        "gegart, geschnitten, vom Eifelschwein",
+        "grob oder fein, feine Würzung, vom Eifelschwein",
     ]
     for name in bad:
         assert product_name_issue(name), name
 
 
-def test_keeps_real_product_name():
-    assert product_name_issue("Axe Bodyspray") is None
+def test_keeps_real_product_names():
+    good = [
+        "Axe Bodyspray",
+        "Bresso Feine Kräuter",
+        "Oreo Double Creme",
+        "Ehrmann Almighurt",
+        "Müller Milch Reis",
+    ]
+    for name in good:
+        assert product_name_issue(name) is None, name
