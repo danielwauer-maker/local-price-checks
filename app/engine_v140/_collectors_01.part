@@ -1,0 +1,170 @@
+import re, httpx, json
+from dataclasses import dataclass, asdict
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
+from .browser_fetch import browser_fetch
+from .source_registry import SOURCES, RetailSource
+from .services import classify_offer
+from .week_utils import infer_validity
+from .price_units import normalize_unit_price, compute_unit_price, canonical_unit_price_unit
+from .aldi_parser import aldi_week_range
+from .product_cleaning import clean_product_name, product_name_issue
+from .offer_quality import evaluate_offer
+PRICE=re.compile(r"(\d{1,3}[.,]\d{2})\s*€")
+SIZE=re.compile(r"\b(\d+(?:[.,]\d+)?)\s*[-]?\s*(kg|g|l|ml|stück|stk\.?|becher|dose|flasche|pckg\.?|btl\.?|fl\.?)\b",re.I)
+UPR=re.compile(r"(?:1\s*)?(kg|l|100\s*g|100\s*ml)\s*=\s*(?:€\s*)?(\d{1,3}(?:[.,]\d{1,2})?)",re.I)
+DATES=re.compile(r"(?:gültig(?:\s+vom)?\s*)?(\d{1,2}\.\d{1,2}\.20\d{2})\s*(?:bis|–|-)\s*(?:zum\s*)?(\d{1,2}\.\d{1,2}\.20\d{2})",re.I)
+CATS=[
+("Kekse & Gebäck",["butterkeks","keks","cookies","soft cake","cheez-it"]),
+("Kochen & Würzen",["maggi fix","fix air fryer","würzmix","würz","sauce","soße"]),
+("Kaffee",["kaffee","krönung","espresso","prodomo"]),
+("Käse",["weichkäse","gouda","patros","grünländer","geramont","géramont"]),
+("Joghurt",["joghurt","sahnejoghurt"]),
+("Süßwaren",["haribo","milka","snickers","twix","mr. tom","fruchtgummi"]),
+("Bier",["pilsener","bier","veltins"]),
+("Spirituosen",["gin","whisky","whiskey","rum","havana club","johnnie walker","aperol","sarti rosa"]),
+("Wein & Sekt",["sekt","crémant","cremant","wein"]),
+("Tiefkühl",["tiefgefroren","frosta","iglo","ofenfrische"]),
+("Getränke",["wasser","tee","energy","valensina","schweppes","saft"])
+]
+@dataclass
+class CollectedOffer:
+    source_key:str; store_name:str; retailer:str; product_name:str; category:str; price:float|None
+    regular_price:float|None=None; app_price:float|None=None; unit_price:float|None=None; unit_price_unit:str|None=None; quantity:float|None=None; unit:str|None=None
+    valid_from:str|None=None; valid_to:str|None=None; source_text:str=""; source_url:str=""; image_url:str|None=None; image_alt:str|None=None; local_store_offer:bool=True; confidence:float=.5
+def cat(s):
+    x=s.lower()
+    for c,words in CATS:
+        if any(w in x for w in words): return c
+    return "Sonstiges"
+def size(s):
+    text=s or ''
+    cleaned=re.sub(r'\([^)]*(?:1\s*)?(?:kg|l|100\s*g|100\s*ml)\s*=\s*(?:€\s*)?\d{1,3}(?:[.,]\d{1,2})?[^)]*\)',' ',text,flags=re.I)
+    cleaned=re.sub(r'\([^)]*\d{1,3}(?:[.,]\d{1,2})?\s*€?\s*/\s*1?\s*(?:kg|l)[^)]*\)',' ',cleaned,flags=re.I)
+    cleaned=re.sub(r'\b\d{1,3}(?:[.,]\d{1,2})\s*€?\s*/\s*(?:1\s*)?(?:kg|l)\b',' ',cleaned,flags=re.I)
+    mm=re.search(r'\b(\d{1,3})\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[-]?\s*(kg|g|l|ml)\b',cleaned,re.I)
+    if mm:
+        count=float(mm.group(1)); each=float(mm.group(2).replace(',','.')); unit=mm.group(3).lower()
+        return (count*each,unit)
+    m=SIZE.search(cleaned)
+    return (float(m.group(1).replace(',','.')),m.group(2).lower()) if m else (None,None)
+def upr(s):
+    m=UPR.search(s); return float(m.group(2).replace(',','.')) if m else None
+
+def upr_unit(s):
+    m=UPR.search(s)
+    if not m: return None
+    raw=m.group(1).lower().replace(" ","")
+    if raw=="100g": return "kg"
+    if raw=="100ml": return "l"
+    if raw=="kg": return "kg"
+    if raw=="l": return "l"
+    return None
+def dates(s):
+    m=DATES.search(s); return (m.group(1),m.group(2)) if m else (None,None)
+def visible(html):
+    soup=BeautifulSoup(html,'html.parser')
+    for t in soup(['script','style','noscript','svg']):t.decompose()
+    return '\n'.join(x.strip() for x in soup.stripped_strings if x.strip())
+
+def embedded_offer_text(html):
+    """Extract offer-like text from embedded JSON/script state.
+    Some retailer pages render cards from JSON that never becomes normal DOM text.
+    """
+    soup=BeautifulSoup(html,'html.parser')
+    chunks=[]
+    keywords=('angebot','filial','produkt','product','price','preis','festpreis','app-preis','wochenangebote')
+    for script in soup.find_all('script'):
+        raw=script.string or script.get_text(" ",strip=True)
+        if not raw or len(raw)>2_500_000:
+            continue
+        low=raw.lower()
+        if not any(k in low for k in keywords):
+            continue
+        cleaned=raw.replace('\\u20ac','€').replace('\\u00a0',' ')
+        cleaned=re.sub(r'\\["/bfnrt]', ' ', cleaned)
+        cleaned=re.sub(r'[{}\[\],":]+',' ',cleaned)
+        cleaned=re.sub(r'\s+',' ',cleaned).strip()
+        if cleaned:
+            chunks.append(cleaned[:250000])
+    return '\n'.join(chunks[:20])
+
+def images(html,base):
+    soup=BeautifulSoup(html,'html.parser'); out=[]
+    for im in soup.find_all('img'):
+        src=im.get('src') or im.get('data-src') or im.get('data-lazy-src')
+        if src: out.append({'url':urljoin(base,src),'alt':(im.get('alt') or '').strip()})
+    return out
+def best_img(imgs,name):
+    n=' '.join(name.lower().split())
+    ws=set(re.findall(r'[A-Za-zÄÖÜäöüß0-9]{4,}',n)); best=None;score=0
+    for im in imgs:
+        alt=' '.join(im['alt'].lower().split())
+        if n and (n in alt or alt in n) and len(alt)>5:
+            return im
+        common=len(ws & set(re.findall(r'[A-Za-zÄÖÜäöüß0-9]{4,}',alt)))
+        ratio=common/max(1,len(ws))
+        local=common + (2 if ratio>=0.6 else 0)
+        if local>score:best,score=im,local
+    return best if score>=2 else None
+def fetch_source(source,timeout=25):
+    headers={
+        'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127 Safari/537.36',
+        'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language':'de-DE,de;q=0.9,en;q=0.6',
+        'Cache-Control':'no-cache',
+    }
+    http_error=None
+    for attempt in range(2):
+        try:
+            r=httpx.get(source.url,timeout=timeout,follow_redirects=True,headers=headers)
+            r.raise_for_status()
+            body=r.content
+            low=body[:10000].decode("utf-8",errors="ignore").lower()
+            if "access denied" not in low and "you don't have permission to access" not in low:
+                return body,r.headers.get('content-type','text/html'),'http',str(r.url)
+            http_error=RuntimeError("HTTP returned access-denied page")
+        except httpx.HTTPStatusError as e:
+            http_error=e
+            if e.response.status_code not in (403,429,503):
+                raise
+        except (httpx.ConnectError,httpx.ReadTimeout,httpx.RemoteProtocolError) as e:
+            http_error=e
+
+    try:
+        result=browser_fetch(source.url)
+        return result.content,result.content_type,result.mode,result.final_url
+    except Exception as browser_error:
+        raise RuntimeError(
+            f"Abruf fehlgeschlagen. HTTP: {str(http_error)[:250]} | Browser: {str(browser_error)[:500]}"
+        ) from browser_error
+
+def _money_values(text):
+    return [float(v.replace(',','.')) for v in PRICE.findall(text or '')]
+
+def _price_without_unit_prices(block):
+    cleaned=block or ''
+    cleaned=re.sub(r'\([^)]*\d{1,3}(?:[.,]\d{1,2})?\s*€?\s*/\s*1?\s*(?:kg|l)[^)]*\)',' ',cleaned,flags=re.I)
+    cleaned=re.sub(r'\([^)]*(?:1\s*)?(?:kg|l|100\s*g|100\s*ml)\s*=\s*(?:€\s*)?\d{1,3}(?:[.,]\d{1,2})?[^)]*\)',' ',cleaned,flags=re.I)
+    cleaned=re.sub(r'\b\d{1,3}(?:[.,]\d{1,2})\s*€?\s*/\s*(?:1\s*)?(?:kg|l)\b',' ',cleaned,flags=re.I)
+    cleaned=re.sub(r'\b(?:1\s*)?(?:kg|l|100\s*g|100\s*ml)\s*=\s*(?:€\s*)?\d{1,3}(?:[.,]\d{1,2})\b',' ',cleaned,flags=re.I)
+    vals=re.findall(r'(?<!\d)(\d{1,3}[.,]\d{2})(?!\d)',cleaned)
+    return [float(v.replace(',','.')) for v in vals]
+
+
+def _is_noise_line(line):
+    low=(line or "").lower().strip()
+    return (
+        not low or
+        low in {"filiale","filiale & shop","aktion","knaller","alle anzeigen","zu den angeboten","image"} or
+        low.startswith(("spare ","uvp ","statt ","einzelpreis","grundpreis","zzgl. pfand","gültig ","angebote ","aktuelle prospekte"))
+    )
+
+def _best_candidate_name(lines,start,end):
+    candidates=[]
+    for j in range(max(0,start),min(len(lines),end)):
+        line=lines[j].strip()
+        if _is_noise_line(line): continue
+        if PRICE.search(line): continue
+        if re.fullmatch(r'[-–]?\d+\s*%',line): continue
+        if re.fullmatch(r'\d{1,3}(?:[.,]\d{1,2})?\s*/\s*(?:kg|l)',line,re.I): continue
