@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.db import Base, SessionLocal, engine
 from app.main import app
 from app.models import FavoriteStore, MasterProduct, Offer, ProductBarcode, ShoppingItem, Store, UserProfile
-from app.optimizer import optimize_current_shopping
+from app.optimizer import optimize_current_shopping, optimize_shopping
 from app.seed import seed_stores
 from app.web_collector import _links_from_html
 
@@ -67,9 +67,11 @@ def test_products_data_status_and_saving_plan_render():
         db.commit()
     db.close()
     client = TestClient(app)
-    for path in ["/produkte?q=Mobile", "/datenstatus", "/sparplan"]:
+    for path in ["/produkte?q=Mobile", "/datenstatus", "/sparplan", "/sparplan?view=next"]:
         r = client.get(path)
         assert r.status_code == 200
+    upcoming = client.get("/sparplan?view=next")
+    assert "Demnächst" in upcoming.text
 
 
 def test_optimizer_returns_travel_and_single_store_comparison():
@@ -83,4 +85,25 @@ def test_optimizer_returns_travel_and_single_store_comparison():
     assert result.merchandise_total > 0
     assert result.total_with_travel >= result.merchandise_total
     assert result.single_store_total is not None
+    assert result.period == "current"
+    db.close()
+
+
+def test_optimizer_supports_next_period_without_breaking_current_wrapper():
+    db, user, product, stores = _ensure_data()
+    item = db.query(ShoppingItem).filter_by(user_id=user.id, master_product_id=product.id).first()
+    if not item:
+        item = ShoppingItem(user_id=user.id, master_product_id=product.id, quantity=1)
+        db.add(item)
+        db.flush()
+    today = date.today()
+    next_start = today + timedelta(days=7)
+    next_end = next_start + timedelta(days=6)
+    existing = db.query(Offer).filter_by(store_id=stores[0].id, master_product_id=product.id, valid_from=next_start).first()
+    if not existing:
+        db.add(Offer(store_id=stores[0].id, master_product_id=product.id, price=1.99, valid_from=next_start, valid_to=next_end, local_store_offer=True))
+    db.commit()
+    result = optimize_shopping(db, user, [item], "next")
+    assert result.period == "next"
+    assert result.merchandise_total >= 0
     db.close()
