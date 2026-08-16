@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<h1>Einkaufsliste</h1>{% for row in rows %}<article><b>{{ row.product.name }}</b><span>Menge {{ row.quantity|int if row.quantity == row.quantity|int else row.quantity }}</span></article>{% else %}<p class="muted">Deine Einkaufsliste ist leer.</p>{% endfor %}<a class="primary" href="/sparplan">Sparplan erstellen</a>{% endblock %}
