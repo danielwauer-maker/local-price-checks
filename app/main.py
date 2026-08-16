@@ -113,8 +113,7 @@ def products_page(request: Request, q: str = "", db: Session = Depends(get_db)):
     user = current_user(db)
     query = db.query(MasterProduct)
     if q.strip():
-        like = f"%{q.strip()}%"
-        query = query.filter(MasterProduct.name.ilike(like))
+        query = query.filter(MasterProduct.name.ilike(f"%{q.strip()}%"))
     products = query.order_by(MasterProduct.name).limit(100).all()
     fav_ids = {x.master_product_id for x in db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()}
     return templates.TemplateResponse("products.html", {"request": request, "products": products, "q": q, "fav_ids": fav_ids})
@@ -206,8 +205,17 @@ def offers_page(request: Request, view: str = "current", db: Session = Depends(g
 
 
 @app.get("/scanner")
-def scanner_page(request: Request):
-    return templates.TemplateResponse("scanner.html", {"request": request, "result": None})
+def scanner_page(request: Request, barcode: str = "", db: Session = Depends(get_db)):
+    code = normalize_gtin(barcode)
+    result = None
+    error = None
+    if code:
+        if not valid_gtin(code):
+            error = "Ungültige GTIN/EAN-Prüfziffer."
+        else:
+            row = db.get(ProductBarcode, code)
+            result = row.master_product if row else None
+    return templates.TemplateResponse("scanner.html", {"request": request, "result": result, "barcode": code, "error": error})
 
 
 @app.post("/scanner")
@@ -228,7 +236,7 @@ def scanner_search(request: Request, barcode: str = Form(...), q: str = Form(...
     code = normalize_gtin(barcode)
     if not valid_gtin(code):
         return templates.TemplateResponse("scanner.html", {"request": request, "barcode": code, "error": "Ungültige GTIN/EAN-Prüfziffer.", "result": None})
-    candidates = db.query(MasterProduct).filter(MasterProduct.name.ilike(f"%{q.strip()}%" у)).limit(30).all() if q.strip() else []
+    candidates = db.query(MasterProduct).filter(MasterProduct.name.ilike(f"%{q.strip()}%")).limit(30).all() if q.strip() else []
     return templates.TemplateResponse("scanner.html", {"request": request, "result": None, "barcode": code, "q": q, "candidates": candidates})
 
 
@@ -244,13 +252,6 @@ def scanner_link(barcode: str = Form(...), product_id: int = Form(...), db: Sess
             db.add(ProductBarcode(barcode=code, master_product_id=product.id, source="user"))
         db.commit()
     return RedirectResponse(f"/scanner?barcode={code}", status_code=303)
-
-
-@app.get("/scanner/result")
-def scanner_result(request: Request, barcode: str = "", db: Session = Depends(get_db)):
-    code = normalize_gtin(barcode)
-    result = db.get(ProductBarcode, code).master_product if valid_gtin(code) and db.get(ProductBarcode, code) else None
-    return templates.TemplateResponse("scanner.html", {"request": request, "result": result, "barcode": code})
 
 
 @app.get("/datenstatus")
