@@ -24,36 +24,38 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 
 The script creates `.env` when needed, builds the Docker image, starts the app, detects the current LAN IPv4 address, prints laptop/phone URLs and opens `http://localhost:8000`.
 
-Laptop URL:
+Laptop URL: `http://localhost:8000`
 
-```text
-http://localhost:8000
-```
-
-Health check:
-
-```text
-http://localhost:8000/health
-```
+Health check: `http://localhost:8000/health`
 
 ## 3. Load real prospect data for a deterministic first test
 
-The automatic collector can be tested later. For the first functional test it is safer to import the already validated REWE/Netto/ALDI prospect PDFs from your PC. The files are copied only into the ignored `data/import/` folder and are never committed to Git.
+The automatic collector can be tested later. For the first functional test it is safer to import the already validated REWE/Netto/ALDI prospect PDFs from your PC. The files are copied only into ignored `data/import/` and are never committed to Git.
+
+Because the current reference PDFs are KW33 and their real validity ended on 15 August 2026, use the optional **local test date** when you want to see them under `Jetzt` without rewriting their dates:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\import-local-pdfs.ps1 `
   -RewePdf "C:\Path\REWE-KW33.pdf" `
   -NettoPdf "C:\Path\Netto-KW33.pdf" `
-  -AldiPdf "C:\Path\ALDI-KW33.pdf"
+  -AldiPdf "C:\Path\ALDI-KW33.pdf" `
+  -TestDate "2026-08-15"
+```
+
+`-TestDate` changes only the app's local comparison clock through `LOCAL_DATE_OVERRIDE`; it does **not** change any imported offer validity. Remove/empty `LOCAL_DATE_OVERRIDE` in `.env` before testing live current data.
+
+Without a test-date override:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\import-local-pdfs.ps1 `
+  -RewePdf "C:\Path\REWE.pdf" `
+  -NettoPdf "C:\Path\Netto.pdf" `
+  -AldiPdf "C:\Path\ALDI.pdf"
 ```
 
 The REWE prospect is imported into REWE Dierdorf; the validated regional Netto/ALDI prospects are imported into both currently verified local stores of their respective chain. Store identities remain separate.
 
-Then open:
-
-```text
-http://localhost:8000/datenstatus
-```
+Then open `http://localhost:8000/datenstatus`.
 
 ## 4. Test from a smartphone over WLAN
 
@@ -82,17 +84,7 @@ The server rejects images above 8 MB and only accepts a decoded code after the a
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-https.ps1
 ```
 
-This starts Caddy at:
-
-```text
-https://<LAN-IP>:8443
-```
-
-Caddy creates a local development CA. Its root certificate is exported to:
-
-```text
-.local-dev\caddy-root.crt
-```
+This starts Caddy at `https://<LAN-IP>:8443` and exports its local root certificate to `.local-dev\caddy-root.crt`.
 
 ### iPhone/iPad
 
@@ -116,7 +108,7 @@ Only install this generated local CA on development devices. Remove it after tes
 5. Check whether its current/upcoming offer appears under **Favoriten** and on the start page.
 6. Add products to the shopping list and change quantities.
 7. Open **Sparplan** and verify that only selected stores are used.
-8. Check the merchandise total, estimated travel cost, best one-store alternative and multi-store recommendation.
+8. Check merchandise total, estimated travel cost, best one-store alternative and multi-store recommendation.
 9. Open **Scanner** and try manual EAN input.
 10. Use **Foto aufnehmen** on the phone; for an unknown barcode, link it once to a product.
 11. Re-scan and add the recognized product to favorites or the shopping list.
