@@ -27,6 +27,7 @@ class Settings:
     default_radius_km: int = int(os.getenv("DEFAULT_RADIUS_KM", "15"))
     local_date_override: str = os.getenv("LOCAL_DATE_OVERRIDE", "").strip()
     scheduler_enabled: bool = _bool_env("SCHEDULER_ENABLED", False)
+    manual_collection_enabled: bool = _bool_env("MANUAL_COLLECTION_ENABLED", False)
     collection_hour: int = int(os.getenv("COLLECTION_HOUR", "5"))
     collection_minute: int = int(os.getenv("COLLECTION_MINUTE", "30"))
     collector_browser_enabled: bool = _bool_env("COLLECTOR_BROWSER_ENABLED", False)
