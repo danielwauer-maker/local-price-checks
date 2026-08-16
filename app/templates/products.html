@@ -1,1 +1,43 @@
-{% extends 'base.html' %}{% block content %}<h1>Produkte suchen</h1><form method="get"><input name="q" value="{{ q }}" placeholder="Produktname"><button>Suchen</button></form>{% for p in products %}<article><b>{{ p.name }}</b><small>{{ p.brand or '' }} {{ p.package_size or '' }}</small><div class="actions"><form method="post" action="/favoriten/{{ p.id }}/toggle"><input type="hidden" name="next_url" value="/produkte?q={{ q }}"><button>{% if p.id in fav_ids %}★ Favorit entfernen{% else %}☆ Als Favorit{% endif %}</button></form><form method="post" action="/einkauf/{{ p.id }}/add"><button>+ Einkaufsliste</button></form></div></article>{% else %}<p class="muted">Keine Produkte gefunden.</p>{% endfor %}{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<h1>Produkte suchen</h1>
+<form method="get">
+  <input name="q" value="{{ q }}" placeholder="Produktname">
+  <button>Suchen</button>
+</form>
+
+{% for p in products %}
+  {% set offer = current.get(p.id) %}
+  {% set next_offer = upcoming.get(p.id) %}
+  <article>
+    <b>{{ p.name }}</b>
+    {% if p.brand or p.package_size %}<small>{{ p.brand or '' }} {{ p.package_size or '' }}</small>{% endif %}
+
+    {% if offer %}
+      <div class="product-offer">
+        <strong>{{ '%.2f'|format(offer.price)|replace('.', ',') }} €</strong>
+        <small>{{ offer.store.name }} · gültig bis {{ offer.valid_to.strftime('%d.%m.%Y') }}</small>
+        {% if offer.unit_price %}<small>{{ '%.2f'|format(offer.unit_price)|replace('.', ',') }} € / {{ offer.unit_price_unit or 'Einheit' }}</small>{% endif %}
+      </div>
+    {% elif next_offer %}
+      <div class="product-offer upcoming">
+        <span class="badge">demnächst</span>
+        <strong>{{ '%.2f'|format(next_offer.price)|replace('.', ',') }} €</strong>
+        <small>{{ next_offer.store.name }} · {{ next_offer.valid_from.strftime('%d.%m.') }}–{{ next_offer.valid_to.strftime('%d.%m.%Y') }}</small>
+      </div>
+    {% else %}
+      <small>Aktuell kein Angebot in deinen ausgewählten Märkten.</small>
+    {% endif %}
+
+    <div class="actions">
+      <form method="post" action="/favoriten/{{ p.id }}/toggle">
+        <input type="hidden" name="next_url" value="/produkte?q={{ q }}">
+        <button>{% if p.id in fav_ids %}★ Favorit entfernen{% else %}☆ Als Favorit{% endif %}</button>
+      </form>
+      <form method="post" action="/einkauf/{{ p.id }}/add"><button>+ Einkaufsliste</button></form>
+    </div>
+  </article>
+{% else %}
+  <p class="muted">Keine Produkte gefunden.</p>
+{% endfor %}
+{% endblock %}
