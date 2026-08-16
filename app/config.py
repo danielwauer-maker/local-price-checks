@@ -7,6 +7,13 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "development")
@@ -18,6 +25,12 @@ class Settings:
         f"sqlite:///{BASE_DIR / 'data' / 'local_price_checks.sqlite3'}",
     )
     default_radius_km: int = int(os.getenv("DEFAULT_RADIUS_KM", "15"))
+    scheduler_enabled: bool = _bool_env("SCHEDULER_ENABLED", False)
+    collection_hour: int = int(os.getenv("COLLECTION_HOUR", "5"))
+    collection_minute: int = int(os.getenv("COLLECTION_MINUTE", "30"))
+    collector_browser_enabled: bool = _bool_env("COLLECTOR_BROWSER_ENABLED", False)
+    collector_timeout_seconds: int = int(os.getenv("COLLECTOR_TIMEOUT_SECONDS", "30"))
+    stale_after_hours: int = int(os.getenv("STALE_AFTER_HOURS", "36"))
 
 
 settings = Settings()
