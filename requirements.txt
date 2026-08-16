@@ -9,4 +9,6 @@ APScheduler==3.11.0
 playwright==1.54.0
 pypdf>=5.0,<7.0
 PyMuPDF>=1.26,<2.0
+Pillow==12.3.0
+zxing-cpp==3.1.0
 pytest==8.4.1
