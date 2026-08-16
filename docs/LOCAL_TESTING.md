@@ -22,21 +22,7 @@ cd local-price-checks
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 ```
 
-The script:
-
-- creates `.env` from `.env.example` when needed,
-- builds the Docker image,
-- starts the app,
-- detects the current LAN IPv4 address,
-- prints the laptop and smartphone URLs,
-- opens `http://localhost:8000` in the default browser.
-
-Manual equivalent:
-
-```powershell
-copy .env.example .env
-docker compose up --build -d
-```
+The script creates `.env` when needed, builds the Docker image, starts the app, detects the current LAN IPv4 address, prints laptop/phone URLs and opens `http://localhost:8000`.
 
 Laptop URL:
 
@@ -50,27 +36,53 @@ Health check:
 http://localhost:8000/health
 ```
 
-## 3. Test from a smartphone over WLAN
+## 3. Load real prospect data for a deterministic first test
 
-Start the normal local stack, then open the printed LAN URL on the phone, for example:
+The automatic collector can be tested later. For the first functional test it is safer to import the already validated REWE/Netto/ALDI prospect PDFs from your PC. The files are copied only into the ignored `data/import/` folder and are never committed to Git.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\import-local-pdfs.ps1 `
+  -RewePdf "C:\Path\REWE-KW33.pdf" `
+  -NettoPdf "C:\Path\Netto-KW33.pdf" `
+  -AldiPdf "C:\Path\ALDI-KW33.pdf"
+```
+
+The REWE prospect is imported into REWE Dierdorf; the validated regional Netto/ALDI prospects are imported into both currently verified local stores of their respective chain. Store identities remain separate.
+
+Then open:
+
+```text
+http://localhost:8000/datenstatus
+```
+
+## 4. Test from a smartphone over WLAN
+
+Start the normal local stack and open the LAN URL printed by the script, for example:
 
 ```text
 http://192.168.178.25:8000
 ```
 
-The phone and laptop must be in the same network. If the page does not open, verify that Windows Firewall allows inbound TCP traffic to Docker/port 8000 and that the WLAN does not use client isolation.
+The phone and laptop must be in the same network. If the page does not open, verify Windows Firewall access to Docker/port 8000 and that WLAN client isolation is disabled.
 
-All main MVP functions can be tested over HTTP: markets, postal-code location, favorites, product search, shopping list, current/upcoming offers and saving plan. Browser camera access may be blocked because mobile browsers require a secure context.
+All main MVP functions work over HTTP: market map, postal-code location, favorites, product search, shopping list, current/upcoming offers, saving plan and the **camera-photo barcode fallback**.
 
-## 4. Local HTTPS for the phone camera
+### Barcode camera modes
 
-For a real camera barcode test run:
+The scanner offers two camera paths:
+
+1. **Live camera** using the browser's `BarcodeDetector`. This requires a secure HTTPS context and browser support.
+2. **Take photo** using the phone's normal camera/file capture. The uploaded image is decoded by the Local Price Checks server with ZXing-C++; no external barcode service receives the image. This fallback can be used even when the browser has no `BarcodeDetector` implementation.
+
+The server rejects images above 8 MB and only accepts a decoded code after the app's own GTIN check-digit validation.
+
+## 5. Optional local HTTPS for live camera scanning
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-https.ps1
 ```
 
-This starts the app plus a local Caddy reverse proxy at:
+This starts Caddy at:
 
 ```text
 https://<LAN-IP>:8443
@@ -82,48 +94,45 @@ Caddy creates a local development CA. Its root certificate is exported to:
 .local-dev\caddy-root.crt
 ```
 
-The script trusts this certificate for the current Windows user. The phone must trust the same root certificate before the HTTPS page is considered secure.
-
 ### iPhone/iPad
 
-1. Transfer `.local-dev/caddy-root.crt` to the device (AirDrop, Files, iCloud Drive or another local/private transfer).
-2. Open the certificate and install the downloaded profile in **Settings > General > VPN & Device Management**.
-3. Then enable trust in **Settings > General > About > Certificate Trust Settings**.
-4. Open `https://<LAN-IP>:8443` in Safari/Chrome and test the scanner.
+1. Transfer `.local-dev/caddy-root.crt` to the development device.
+2. Install the profile under **Settings > General > VPN & Device Management**.
+3. Enable trust under **Settings > General > About > Certificate Trust Settings**.
+4. Open `https://<LAN-IP>:8443` and test **Live-Kamera**.
 
 ### Android
 
-Android menus vary by manufacturer. Install `.local-dev/caddy-root.crt` as a CA certificate under the device security/certificate settings, then open `https://<LAN-IP>:8443`.
+Install `.local-dev/caddy-root.crt` as a user CA certificate in the device security/certificate settings and open `https://<LAN-IP>:8443`.
 
-Only install the generated local CA on development devices. Remove it after local HTTPS testing if it is no longer required. The certificate and private CA data are never committed to Git.
+Only install this generated local CA on development devices. Remove it after testing when no longer needed. Certificates/private CA data are ignored by Git.
 
-## 5. Suggested MVP test flow
+## 6. Suggested MVP end-to-end test
 
 1. Open **Meine Märkte**.
-2. Enter postal code and town; no GPS permission is requested.
-3. Set a radius and select one or more verified markets.
-4. Search a product and mark it as a favorite.
-5. Add a product to the shopping list and change its quantity.
-6. Open **Angebote** for current and upcoming offers.
-7. Open **Sparplan** and verify that only selected markets are used.
-8. Open **Scanner**, scan or enter a valid barcode.
-9. For an unknown barcode, search an existing product and link it once.
-10. Mark the recognized product as favorite or add it to the shopping list.
-11. Open **Datenstatus** to inspect the latest collection state.
+2. Enter PLZ and town. The browser never requests GPS permission.
+3. Confirm the map center/radius and select one or more verified markets.
+4. Open **Produkte suchen** and mark a product as favorite.
+5. Check whether its current/upcoming offer appears under **Favoriten** and on the start page.
+6. Add products to the shopping list and change quantities.
+7. Open **Sparplan** and verify that only selected stores are used.
+8. Check the merchandise total, estimated travel cost, best one-store alternative and multi-store recommendation.
+9. Open **Scanner** and try manual EAN input.
+10. Use **Foto aufnehmen** on the phone; for an unknown barcode, link it once to a product.
+11. Re-scan and add the recognized product to favorites or the shopping list.
+12. Optionally start local HTTPS and test the live scanner.
+13. Open **Datenstatus** and inspect each market's latest collection state.
 
-## 6. Stop local testing
+## 7. Collector during local testing
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
-```
+The scheduler is disabled by default so opening the local app does not immediately hit retailer sites. **Datenstatus > Jetzt sammeln** triggers a manual attempt in development mode.
 
-The SQLite database stays in `data/` and is reused on the next start.
+The collector now tries:
 
-## Collector during local testing
+1. the migrated 1.4 structured DOM/network collector,
+2. then official prospect PDF discovery + the benchmarked PDF parser as fallback.
 
-The automatic scheduler is disabled by default (`SCHEDULER_ENABLED=false`) so local startup does not immediately hit retailer sites. `Datenstatus > Jetzt sammeln` can trigger one collection attempt in development mode.
-
-For scheduled testing set in `.env`:
+For scheduled testing set:
 
 ```env
 SCHEDULER_ENABLED=true
@@ -133,3 +142,11 @@ COLLECTOR_BROWSER_ENABLED=true
 ```
 
 Only active `benchmark_verified` stores are eligible for scheduled collection.
+
+## 8. Stop local testing
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
+```
+
+The SQLite database remains in `data/` and is reused on the next start.
