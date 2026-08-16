@@ -42,11 +42,13 @@
     </section>
 
     <div class="map-shell">
-      <div id="map" aria-label="Karte mit Hauptstandort und Märkten"></div>
-      <div class="map-legend">
+      <div id="map" aria-label="Karte mit Hauptstandort, Suchradius und Märkten"></div>
+      <div class="map-legend" aria-label="Kartenlegende">
         <span><i class="legend-dot home"></i>Standort</span>
+        <span><i class="legend-dot radius"></i>15-km-Radius</span>
         <span><i class="legend-dot selected"></i>Ausgewählt</span>
         <span><i class="legend-dot available"></i>Verfügbar</span>
+        <span><i class="legend-dot locked"></i>Noch gesperrt</span>
       </div>
     </div>
   {% else %}
@@ -92,8 +94,13 @@
 <script>
 (function () {
   const center = [{{ user.latitude }}, {{ user.longitude }}];
-  const radiusMeters = {{ user.radius_km * 1000 }};
-  const map = L.map('map', { zoomControl: true, scrollWheelZoom: false });
+  const radiusKm = {{ user.radius_km }};
+  const radiusMeters = radiusKm * 1000;
+  const map = L.map('map', {
+    zoomControl: true,
+    scrollWheelZoom: false,
+    tap: true
+  });
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -102,65 +109,83 @@
 
   const homeIcon = L.divIcon({
     className: 'market-map-icon-wrap',
-    html: '<span class="market-map-icon home">⌂</span>',
-    iconSize: [36, 36],
-    iconAnchor: [18, 18]
+    html: '<span class="market-map-icon home" aria-hidden="true">⌂</span>',
+    iconSize: [38, 38],
+    iconAnchor: [19, 19]
   });
   const selectedIcon = L.divIcon({
     className: 'market-map-icon-wrap',
-    html: '<span class="market-map-icon selected">★</span>',
-    iconSize: [34, 34],
-    iconAnchor: [17, 17]
+    html: '<span class="market-map-icon selected" aria-hidden="true">★</span>',
+    iconSize: [38, 38],
+    iconAnchor: [19, 19]
   });
   const availableIcon = L.divIcon({
     className: 'market-map-icon-wrap',
-    html: '<span class="market-map-icon available">●</span>',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15]
+    html: '<span class="market-map-icon available" aria-hidden="true"><i></i></span>',
+    iconSize: [32, 32],
+    iconAnchor: [16, 16]
   });
   const lockedIcon = L.divIcon({
     className: 'market-map-icon-wrap',
-    html: '<span class="market-map-icon locked">●</span>',
-    iconSize: [28, 28],
-    iconAnchor: [14, 14]
+    html: '<span class="market-map-icon locked" aria-hidden="true">×</span>',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15]
   });
 
-  const bounds = L.latLngBounds([center]);
-  L.circle(center, {
+  const radiusCircle = L.circle(center, {
     radius: radiusMeters,
     color: '#176b45',
-    weight: 2,
-    opacity: .55,
-    fillColor: '#176b45',
-    fillOpacity: .07
+    weight: 3,
+    opacity: .82,
+    dashArray: '8 7',
+    fillColor: '#5ca17b',
+    fillOpacity: .10,
+    interactive: false
   }).addTo(map);
 
-  L.marker(center, { icon: homeIcon, zIndexOffset: 1000 })
+  L.marker(center, { icon: homeIcon, zIndexOffset: 1200 })
     .addTo(map)
-    .bindPopup({{ ('<strong>Hauptstandort</strong><br>' ~ user.postal_code ~ ' ' ~ user.city)|tojson }});
+    .bindPopup({{ ('<div class="market-popup"><strong>Hauptstandort</strong><span>' ~ user.postal_code ~ ' ' ~ user.city ~ '</span><em>Ausgangspunkt des Suchradius</em></div>')|tojson }});
 
   {% for store,distance,selected in rows %}
     {% if store.latitude is not none and store.longitude is not none %}
       (function () {
         const point = [{{ store.latitude }}, {{ store.longitude }}];
         const marker = L.marker(point, {
-          icon: {{ 'selectedIcon' if selected else ('availableIcon' if store.benchmark_verified else 'lockedIcon') }}
+          icon: {{ 'selectedIcon' if selected else ('availableIcon' if store.benchmark_verified else 'lockedIcon') }},
+          zIndexOffset: {{ '800' if selected else ('400' if store.benchmark_verified else '100') }}
         }).addTo(map);
-        marker.bindPopup({{ ('<strong>' ~ store.name ~ '</strong><br>' ~ store.address ~ '<br>' ~ (('%.1f km entfernt'|format(distance)) if distance is not none else '') ~ '<br>' ~ ('★ ausgewählt' if selected else ('verfügbar' if store.benchmark_verified else 'noch nicht freigegeben')))|tojson }});
-        bounds.extend(point);
+        const status = {{ ('Ausgewählt' if selected else ('Verfügbar' if store.benchmark_verified else 'Noch nicht freigegeben'))|tojson }};
+        const statusClass = {{ ('selected' if selected else ('available' if store.benchmark_verified else 'locked'))|tojson }};
+        marker.bindPopup(
+          '<div class="market-popup">' +
+            '<strong>' + {{ store.name|tojson }} + '</strong>' +
+            '<span>' + {{ store.address|tojson }} + '</span>' +
+            '<span>' + {{ (store.postal_code ~ ' ' ~ store.city)|tojson }} + '</span>' +
+            {% if distance is not none %}'<em>{{ '%.1f'|format(distance) }} km entfernt</em>' +{% endif %}
+            '<b class="popup-status ' + statusClass + '">' + status + '</b>' +
+          '</div>'
+        );
       })();
     {% endif %}
   {% endfor %}
 
-  map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
+  function fitMap() {
+    map.invalidateSize(false);
+    map.fitBounds(radiusCircle.getBounds(), {
+      padding: [18, 18],
+      maxZoom: 12,
+      animate: false
+    });
+  }
 
-  requestAnimationFrame(function () {
-    map.invalidateSize(true);
-    map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
+  fitMap();
+  requestAnimationFrame(fitMap);
+  window.setTimeout(fitMap, 250);
+  window.addEventListener('resize', function () {
+    window.clearTimeout(window.__marketMapResizeTimer);
+    window.__marketMapResizeTimer = window.setTimeout(fitMap, 120);
   });
-  window.setTimeout(function () {
-    map.invalidateSize(true);
-  }, 250);
 })();
 </script>
 {% endif %}
