@@ -271,16 +271,27 @@ def scanner_link(barcode: str = Form(...), product_id: int = Form(...), db: Sess
 
 
 @app.get("/datenstatus")
-def data_status(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("data_status.html", {"request": request, "rows": market_freshness(db), "scheduler_enabled": settings.scheduler_enabled})
+def data_status(request: Request, collected: int = 0, db: Session = Depends(get_db)):
+    manual_enabled = settings.manual_collection_enabled or settings.app_env in {"development", "local"}
+    return templates.TemplateResponse(
+        "data_status.html",
+        {
+            "request": request,
+            "rows": market_freshness(db),
+            "scheduler_enabled": settings.scheduler_enabled,
+            "manual_collection_enabled": manual_enabled,
+            "collection_finished": bool(collected),
+        },
+    )
 
 
 @app.post("/datenstatus/sammeln")
 def collect_now():
-    if settings.app_env not in {"development", "local"}:
+    manual_enabled = settings.manual_collection_enabled or settings.app_env in {"development", "local"}
+    if not manual_enabled:
         return RedirectResponse("/datenstatus", status_code=303)
     run_verified_market_collection()
-    return RedirectResponse("/datenstatus", status_code=303)
+    return RedirectResponse("/datenstatus?collected=1", status_code=303)
 
 
 @app.get("/sparplan")
