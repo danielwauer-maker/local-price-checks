@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .barcode import normalize_gtin, valid_gtin
+from .barcode_image import BarcodeImageError, decode_gtin_image
 from .config import settings
 from .db import Base, engine, get_db
 from .freshness import market_freshness
@@ -231,6 +232,19 @@ def scanner_lookup(request: Request, barcode: str = Form(...), db: Session = Dep
         row = db.get(ProductBarcode, code)
         result = row.master_product if row else None
     return templates.TemplateResponse("scanner.html", {"request": request, "result": result, "barcode": code, "error": error})
+
+
+@app.post("/scanner/bild")
+async def scanner_image(request: Request, image: UploadFile = File(...), db: Session = Depends(get_db)):
+    try:
+        code = decode_gtin_image(await image.read())
+    except BarcodeImageError as exc:
+        return templates.TemplateResponse("scanner.html", {"request": request, "result": None, "barcode": "", "error": str(exc)})
+    if not code:
+        return templates.TemplateResponse("scanner.html", {"request": request, "result": None, "barcode": "", "error": "Auf dem Foto wurde keine gültige EAN/GTIN erkannt. Bitte näher und schärfer fotografieren."})
+    row = db.get(ProductBarcode, code)
+    result = row.master_product if row else None
+    return templates.TemplateResponse("scanner.html", {"request": request, "result": result, "barcode": code, "error": None})
 
 
 @app.post("/scanner/suche")
