@@ -12,6 +12,7 @@
   <b>{{ row.store.name }}</b>
   <strong>
     {% if row.state == 'current' %}✓ aktuell
+    {% elif row.state == 'empty' %}⚠ keine Angebote importiert
     {% elif row.state == 'failed' %}⚠ letzter Lauf fehlgeschlagen
     {% elif row.state == 'stale' %}⚠ veraltet
     {% elif row.state == 'running' %}↻ Sammlung läuft
