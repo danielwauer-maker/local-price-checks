@@ -119,7 +119,30 @@ def products_page(request: Request, q: str = "", db: Session = Depends(get_db)):
         query = query.filter(MasterProduct.name.ilike(f"%{q.strip()}%"))
     products = query.order_by(MasterProduct.name).limit(100).all()
     fav_ids = {x.master_product_id for x in db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()}
-    return templates.TemplateResponse("products.html", {"request": request, "products": products, "q": q, "fav_ids": fav_ids})
+
+    current_by_product = {}
+    for offer in offers_for_selected_stores(db, user, "current"):
+        previous = current_by_product.get(offer.master_product_id)
+        if previous is None or offer.price < previous.price:
+            current_by_product[offer.master_product_id] = offer
+
+    upcoming_by_product = {}
+    for offer in offers_for_selected_stores(db, user, "next"):
+        previous = upcoming_by_product.get(offer.master_product_id)
+        if previous is None or offer.price < previous.price:
+            upcoming_by_product[offer.master_product_id] = offer
+
+    return templates.TemplateResponse(
+        "products.html",
+        {
+            "request": request,
+            "products": products,
+            "q": q,
+            "fav_ids": fav_ids,
+            "current": current_by_product,
+            "upcoming": upcoming_by_product,
+        },
+    )
 
 
 @app.post("/favoriten/{product_id}/toggle")
