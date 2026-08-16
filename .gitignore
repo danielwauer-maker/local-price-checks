@@ -16,6 +16,10 @@ data/*
 cache/
 logs/
 browser_profiles/
+.local-dev/
+*.crt
+*.key
+*.pem
 *.pdf
 *.zip
 support*/
