@@ -2,6 +2,9 @@
 {% block content %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3yn5haTCI9pTtO4d7W77d1XjVhWlA=" crossorigin="">
 
+{% set selected_count = namespace(value=0) %}
+{% for store,distance,selected in rows %}{% if selected %}{% set selected_count.value = selected_count.value + 1 %}{% endif %}{% endfor %}
+
 <section class="stores-page">
   <header class="page-header">
     <h1>Meine Märkte</h1>
@@ -35,7 +38,7 @@
       <div><small>Hauptstandort</small><strong>{{ user.postal_code }} {{ user.city }}</strong></div>
       <div><small>Radius</small><strong>{{ '%.0f'|format(user.radius_km) }} km</strong></div>
       <div><small>Gefunden</small><strong>{{ rows|length }}</strong></div>
-      <div><small>Ausgewählt</small><strong>{{ rows|selectattr('2')|list|length }}</strong></div>
+      <div><small>Ausgewählt</small><strong>{{ selected_count.value }}</strong></div>
     </section>
 
     <div class="map-shell">
@@ -85,7 +88,7 @@
 </section>
 
 {% if user.latitude is not none and user.longitude is not none %}
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9coqIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 (function () {
   const center = [{{ user.latitude }}, {{ user.longitude }}];
@@ -151,8 +154,6 @@
 
   map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
 
-  // Leaflet kann in dynamischen/responsiven Containern zunächst eine falsche Breite messen.
-  // Nach dem ersten Layout erzwingen wir daher eine Neuberechnung und zentrieren erneut.
   requestAnimationFrame(function () {
     map.invalidateSize(true);
     map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
