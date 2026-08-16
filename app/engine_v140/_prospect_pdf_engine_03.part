@@ -1,0 +1,249 @@
+    for page in doc:
+        try:
+            chunks.append(page.get_text("text") or "")
+        except Exception:
+            pass
+    return "\n".join(chunks)
+
+
+def detect_retailer(text:str)->str|None:
+    low=(text or "").lower()
+    if "aldi süd" in low or "aldi-sued.de" in low:
+        return "ALDI SÜD"
+    if "netto marken-discount" in low or "netto-online.de" in low:
+        return "Netto Marken-Discount"
+    if "rewe" in low and ("rewe.de" in low or "rewe bonus" in low or "knaller" in low):
+        return "REWE"
+    if "edeka" in low:
+        return "EDEKA"
+    return None
+
+
+def _market_id(text:str, filename:str|None)->str|None:
+    hay=(filename or "")+"\n"+(text[:8000] or "")
+    m=re.search(r'(?:rewe[^\n/]*_|/)(\d{6})(?:[._/?-]|$)',hay,re.I)
+    return m.group(1) if m else None
+
+
+def _pdf_year()->int:
+    return date.today().year
+
+def _parse_pdf_validity(text:str)->tuple[date|None,date|None]:
+    t=(text or '').replace('\u2013','-').replace('\u2014','-').replace('–','-')
+    m=re.search(r'Gültig\s+ab\s+(\d{1,2})[.](\d{1,2})[.](\d{2,4})',t,re.I)
+    if m:
+        d,mo,y=map(int,m.groups()); y=y+2000 if y<100 else y
+        try:
+            vf=date(y,mo,d); return vf,vf+timedelta(days=5)
+        except ValueError: pass
+    m=re.search(r'(\d{1,2})[.](\d{1,2})[.](\d{2,4})\s*[^\d\n]{0,25}-\s*[^\d\n]{0,25}(\d{1,2})[.](\d{1,2})[.](\d{2,4})',t,re.I)
+    if m:
+        d1,mo1,y1,d2,mo2,y2=map(int,m.groups()); y1=y1+2000 if y1<100 else y1; y2=y2+2000 if y2<100 else y2
+        try:
+            a,b=date(y1,mo1,d1),date(y2,mo2,d2)
+            if a<=b and (b-a).days<=14:return a,b
+        except ValueError: pass
+    m=re.search(r'(?:Mo|Di|Mi|Do|Fr|Sa|So)[.]?\s*(\d{1,2})[.]\s*(\d{1,2})[.]\s*[^\d\n]{0,15}-\s*(?:Mo|Di|Mi|Do|Fr|Sa|So)[.]?\s*(\d{1,2})[.]\s*(\d{1,2})[.]',t,re.I)
+    if m:
+        d1,mo1,d2,mo2=map(int,m.groups()); y=_pdf_year()
+        try:
+            a,b=date(y,mo1,d1),date(y,mo2,d2)
+            if a<=b and (b-a).days<=14:return a,b
+        except ValueError: pass
+    m=re.search(r'gültig[^\d]{0,20}(\d{1,2})[.](\d{1,2})[.](?:\d{2,4})?\s*[^\d\n]{0,15}-\s*[^\d\n]{0,15}(\d{1,2})[.](\d{1,2})[.]',t,re.I)
+    if m:
+        d1,mo1,d2,mo2=map(int,m.groups()); y=_pdf_year()
+        try:
+            a,b=date(y,mo1,d1),date(y,mo2,d2)
+            if a<=b and (b-a).days<=14:return a,b
+        except ValueError: pass
+    months={'januar':1,'februar':2,'märz':3,'maerz':3,'april':4,'mai':5,'juni':6,'juli':7,'august':8,'september':9,'oktober':10,'november':11,'dezember':12}
+    m=re.search(r'(\d{1,2})[.]\s*(Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s*(20\d{2})\s*[-]\s*(\d{1,2})[.]\s*(Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s*(20\d{2})',t,re.I)
+    if m:
+        d1,mon1,y1,d2,mon2,y2=m.groups()
+        try:
+            a=date(int(y1),months[mon1.lower()],int(d1)); b=date(int(y2),months[mon2.lower()],int(d2))
+            if a<=b and (b-a).days<=14:return a,b
+        except Exception: pass
+    m=re.search(r'(\d{1,2})[.]\s*Woche\s*(20\d{2})',t,re.I)
+    if not m:
+        m=re.search(r'KW\s*(\d{1,2})\b',t,re.I)
+        if m:
+            week=int(m.group(1)); year=_pdf_year()
+            try:
+                vf=date.fromisocalendar(year,week,1); return vf,vf+timedelta(days=5)
+            except ValueError: pass
+    else:
+        week=int(m.group(1));year=int(m.group(2))
+        try:
+            vf=date.fromisocalendar(year,week,1); return vf,vf+timedelta(days=5)
+        except ValueError: pass
+    return None,None
+
+def _row_validity(page_text:str,document_text:str)->tuple[str|None,str|None]:
+    vf,vt=_parse_pdf_validity(page_text)
+    if not vf: vf,vt=_parse_pdf_validity(document_text)
+    if not vf:return None,None
+    return vf.strftime("%d.%m.%Y"),vt.strftime("%d.%m.%Y")
+
+
+def _has_alpha_product_name(name:str)->bool:
+    if not name or not re.search(r'[A-Za-zÄÖÜäöüß]',name):return False
+    low=name.lower().strip(' .,:;-')
+    if low in {'ab','je','pro','stück','set','packung','aktion','xxl','modellbeispiel','fassungsvermögen','größe','größen','dauertiefpreis','weitere designs','weitere design','ki','bio','vegan','20 extra°punkte','20 extrapunkte','100 °punkte','150 extra°punkte','150 extrapunkte'}:return False
+    if re.fullmatch(r'(?:ab|je)?\s*\d+(?:[.,]\d+)?(?:€)?(?:\s*pro)?',low):return False
+    if re.fullmatch(r'(?:maße|größe|größen|fassungsvermögen)[^a-zäöüß]{0,5}.*',low):return False
+    if re.match(r'^\d+(?:[.,]\d+)?\s+(?:uvp|statt)\b',low):return False
+    bad_prefixes=('* saisonbedingt','artikel sind','abbildung','preis','uvp','sparen','bis zu','gültig ','kw ','empfohlene körpergröße','auf stardrink','nur online','online-shop','nur do. erhältlich','nur fr. erhältlich','nur sa. erhältlich','nur erhältlich','ab 6 flaschen','ab 6 flasche','dauertiefpreis','weitere designs','serviervorschlag','dekoration nicht enthalten','weitere informationen','extra°punkte','extrapunkte','information lesen.')
+    if low.startswith(bad_prefixes):return False
+    if re.fullmatch(r'(?:\d+\s*)?für',low):return False
+    if re.match(r'^\d+(?:[.,–-]|\s*€)',low):return False
+    if len(re.findall(r'[A-Za-zÄÖÜäöüß]{2,}',name))==0:return False
+    return True
+
+
+def _raw_line_block(line,parent_text:str="")->PdfBlock|None:
+    all_spans=line.get("spans",[]);spans=[sp for sp in all_spans if (sp.get("text") or "").strip()]
+    if not spans:return None
+    text="".join(sp.get("text") or "" for sp in all_spans).strip()
+    if not text:return None
+    bbox=line.get("bbox") or spans[0].get("bbox") or (0,0,0,0);mx=max(float(sp.get("size") or 0) for sp in spans);first=spans[0];emph=[]
+    if mx>=18:
+        vals=[float(f"{a}.{b}") for a,b in PRICE_RE.findall(text)];emph=[v for v in vals if .01<=v<=5000]
+    return PdfBlock(float(bbox[0]),float(bbox[1]),float(bbox[2]),float(bbox[3]),text,mx,str(first.get("font") or ""),float(first.get("size") or 0),tuple(emph))
+
+
+def _rewe_split_blocks(page)->list[PdfBlock]:
+    width=float(page.rect.width);colw=width/3.0;out=[]
+    for raw in page.get_text("dict").get("blocks",[]):
+        if raw.get("type")!=0:continue
+        lines=raw.get("lines",[])
+        if not lines:continue
+        groups={}
+        for line in lines:
+            bbox=line.get("bbox") or (0,0,0,0);cx=(bbox[0]+bbox[2])/2;col=max(0,min(2,int(cx/colw)));groups.setdefault(col,[]).append(line)
+        rb=raw.get("bbox") or (0,0,0,0)
+        if len(groups)>1 and (rb[2]-rb[0])>colw*.85:
+            for col,glines in groups.items():
+                spans=[sp for ln in glines for sp in ln.get("spans",[]) if (sp.get("text") or "").strip()]
+                if not spans:continue
+                x0=min(ln["bbox"][0] for ln in glines);y0=min(ln["bbox"][1] for ln in glines);x1=max(ln["bbox"][2] for ln in glines);y1=max(ln["bbox"][3] for ln in glines)
+                text="\n".join("".join(sp.get("text") or "" for sp in ln.get("spans",[])) for ln in sorted(glines,key=lambda l:l["bbox"][1])).strip()
+                first=spans[0];mx=max(float(sp.get("size") or 0) for sp in spans);em=[]
+                for ln in glines:em.extend(_line_emphasis_prices(ln))
+                out.append(PdfBlock(x0,y0,x1,y1,text,mx,str(first.get("font") or ""),float(first.get("size") or 0),tuple(em)))
+        else:
+            spans=[sp for ln in lines for sp in ln.get("spans",[]) if (sp.get("text") or "").strip()]
+            if not spans:continue
+            text="\n".join("".join(sp.get("text") or "" for sp in ln.get("spans",[])) for ln in lines).strip();first=spans[0];mx=max(float(sp.get("size") or 0) for sp in spans);em=[]
+            for ln in lines:em.extend(_line_emphasis_prices(ln))
+            out.append(PdfBlock(float(rb[0]),float(rb[1]),float(rb[2]),float(rb[3]),text,mx,str(first.get("font") or ""),float(first.get("size") or 0),tuple(em)))
+    return out
+
+
+def _page_description_source(page,retailer:str)->list[PdfBlock]:return _rewe_split_blocks(page) if retailer=="REWE" else _page_blocks(page)
+
+
+def _page_price_line_anchors(page,retailer:str)->list[tuple[PdfBlock,float]]:
+    out=[];thresholds={"REWE":35,"Netto Marken-Discount":22,"ALDI SÜD":35};threshold=thresholds.get(retailer,30)
+    for raw in page.get_text("dict").get("blocks",[]):
+        if raw.get("type")!=0:continue
+        parent="\n".join("".join(sp.get("text") or "" for sp in ln.get("spans",[])) for ln in raw.get("lines",[]))
+        for line in raw.get("lines",[]):
+            lb=_raw_line_block(line,parent)
+            if not lb:continue
+            text=lb.text;low=text.lower();plow=parent.lower();explicit_small=((retailer=="REWE" and re.search(r'\b(?:aktion|knaller)\b',parent,re.I)) or (retailer in {"Netto Marken-Discount","ALDI SÜD"} and '*' in text))
+            if lb.max_font<threshold and not explicit_small:continue
+            vals=list(lb.emphasis_prices)
+            if not vals:vals=_price_values(text) if explicit_small else []
+            if not vals:continue
+            if retailer=="REWE":
+                if "bonus" in low or "bonus" in plow and "aktion" not in plow and "knaller" not in plow:continue
+            elif retailer=="Netto Marken-Discount":
+                if "sparen" in low and "*" not in low and "aktion" not in low:continue
+                if "pfand" in low and "*" not in low:continue
+                if "einzelpreis" in low and "*" not in low and " für " not in (" "+low+" "):continue
+            elif retailer=="ALDI SÜD":
+                if (low.startswith("z. b.") or low.startswith("z.b.")) and "aktion" not in plow:continue
+            out.append((lb,vals[-1]))
+    return out
+
+def _description_candidates(blocks:list[PdfBlock],retailer:str)->list[PdfBlock]:
+    out=[]
+    for b in blocks:
+        name=_product_title(b.text,retailer)
+        if not _has_alpha_product_name(name) or product_name_issue(name):continue
+        low=name.lower()
+        if any(k in low for k in ('gültig ab','gültig von','prospekt','coupon','punkte sammeln','rabatt rabatt')):continue
+        q,u=_extract_quantity(b.text);up,upu=_extract_unit_price(b.text);strong=False
+        if retailer=='Netto Marken-Discount':
+            strong=('FrankfurterEF-Medium' in (b.first_font or '') and 8.4<=b.first_size<=10.5)
+            if b.first_size<8.4 and q is None and up is None:continue
+        elif retailer=='REWE':strong=b.max_font<=16
+        elif retailer=='ALDI SÜD':strong=b.max_font<=19
+        embedded=bool(b.emphasis_prices and b.max_font>=35)
+        if q is not None or up is not None or strong or embedded:out.append(b)
+    return out
+
+
+def _bbox_overlap_ratio(a:PdfBlock,b:PdfBlock)->float:
+    x=max(0.0,min(a.x1,b.x1)-max(a.x0,b.x0));y=max(0.0,min(a.y1,b.y1)-max(a.y0,b.y0));inter=x*y
+    if inter<=0:return 0.0
+    aa=max(1.0,a.width*a.height);ba=max(1.0,b.width*b.height)
+    return inter/min(aa,ba)
+
+
+def _price_groups(blocks:list[PdfBlock],retailer:str)->list[tuple[PdfBlock,list[float]]]:
+    raw=_candidate_price_blocks(blocks,retailer);groups=[]
+    for b,p in raw:
+        placed=False
+        for i,(gb,vals) in enumerate(groups):
+            overlap=_bbox_overlap_ratio(b,gb);cx=(b.x0+b.x1)/2;cy=(b.y0+b.y1)/2;gcx=(gb.x0+gb.x1)/2;gcy=(gb.y0+gb.y1)/2
+            if retailer=='Netto Marken-Discount':
+                both_star=('*' in b.text and '*' in gb.text);should_merge=(not both_star and overlap>=.72 and abs(cx-gcx)<12 and abs(cy-gcy)<12)
+            else:should_merge=(overlap>=.18 or (overlap>0 and abs(cx-gcx)<65 and abs(cy-gcy)<45))
+            if should_merge:
+                nb=PdfBlock(min(gb.x0,b.x0),min(gb.y0,b.y0),max(gb.x1,b.x1),max(gb.y1,b.y1),gb.text+'\n'+b.text,max(gb.max_font,b.max_font),gb.first_font or b.first_font,gb.first_size or b.first_size,tuple(gb.emphasis_prices)+tuple(b.emphasis_prices));vals2=list(vals)
+                if p not in vals2:vals2.append(p)
+                groups[i]=(nb,vals2);placed=True;break
+        if not placed:groups.append((b,[p]))
+    return groups
+
+
+def _price_groups_page(page,retailer:str)->list[tuple[PdfBlock,list[float]]]:
+    raw=_page_price_line_anchors(page,retailer);groups=[]
+    for b,p in raw:
+        placed=False
+        for i,(gb,vals) in enumerate(groups):
+            overlap=_bbox_overlap_ratio(b,gb);cx=(b.x0+b.x1)/2;cy=(b.y0+b.y1)/2;gcx=(gb.x0+gb.x1)/2;gcy=(gb.y0+gb.y1)/2
+            if retailer=='Netto Marken-Discount':
+                both_star=('*' in b.text and '*' in gb.text);same_label=(not both_star) and ((overlap>=.72) or (overlap>0 and abs(cx-gcx)<12 and abs(cy-gcy)<12))
+            else:same_label=(overlap>=.22) or (overlap>0 and abs(cx-gcx)<48 and abs(cy-gcy)<38)
+            if same_label:
+                nb=PdfBlock(min(gb.x0,b.x0),min(gb.y0,b.y0),max(gb.x1,b.x1),max(gb.y1,b.y1),gb.text+'\n'+b.text,max(gb.max_font,b.max_font),gb.first_font or b.first_font,gb.first_size or b.first_size,tuple(gb.emphasis_prices)+tuple(b.emphasis_prices));vals2=list(vals)
+                if p not in vals2:vals2.append(p)
+                groups[i]=(nb,vals2);placed=True;break
+        if not placed:groups.append((b,[p]))
+    return groups
+
+def _assignment_cost(desc:PdfBlock,group:tuple[PdfBlock,list[float]],retailer:str)->float:
+    pb,prices=group;cx=(desc.x0+desc.x1)/2;pcx=(pb.x0+pb.x1)/2;cost=_rect_distance(desc,pb)+abs(cx-pcx)*.20
+    if retailer=='Netto Marken-Discount':
+        if desc.y0>pb.y0+18:cost+=450+(desc.y0-pb.y0)*3
+        if 'FrankfurterEF-Medium' in (desc.first_font or ''):
+            if 8.4<=desc.first_size<=10.6: cost-=70
+            elif desc.first_size<8.0: cost+=55
+        dlow=_product_title(desc.text,retailer).lower().strip(' .,:;-')
+        if dlow.startswith(('länge','höhe','maße','tragfähigkeit','stufenlos','strapazierfähig','an der klinge','keit:','größen','fassungsvermögen')):cost+=220
+    elif retailer=='ALDI SÜD':
+        if desc.y0>pb.y0+50:cost+=260+(desc.y0-pb.y0)*1.5
+    elif retailer=='REWE':
+        if abs(cx-pcx)>180:cost+=60
+        if desc.y0>pb.y1+4:cost+=180+(desc.y0-pb.y1)*2.2
+        if pb.y0>desc.y1+95:cost+=60
+    expected=_expected_price_candidates(desc)
+    if expected:
+        rel=min(abs(p-e)/max(e,.05) for p in prices for e in expected);cost+=min(rel,3.0)*1500
+        if rel<=.02:cost-=520
+        elif rel<=.05:cost-=280
+        elif rel<=.10:cost-=90
