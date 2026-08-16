@@ -16,7 +16,7 @@ from .db import Base, engine, get_db
 from .freshness import market_freshness
 from .geo import haversine_km, resolve_center
 from .models import FavoriteProduct, FavoriteStore, MasterProduct, ProductBarcode, ShoppingItem, Store
-from .optimizer import optimize_current_shopping
+from .optimizer import optimize_shopping
 from .scheduler import run_verified_market_collection, start_scheduler, stop_scheduler
 from .seed import seed_stores
 from .services import current_user, offers_for_selected_stores, selected_store_ids
@@ -318,8 +318,9 @@ def collect_now():
 
 
 @app.get("/sparplan")
-def saving_plan(request: Request, db: Session = Depends(get_db)):
+def saving_plan(request: Request, view: str = "current", db: Session = Depends(get_db)):
     user = current_user(db)
     items = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
-    plan = optimize_current_shopping(db, user, items)
-    return templates.TemplateResponse("plan.html", {"request": request, "plan": plan})
+    period = "next" if view == "next" else "current"
+    plan = optimize_shopping(db, user, items, period)
+    return templates.TemplateResponse("plan.html", {"request": request, "plan": plan, "view": period})
