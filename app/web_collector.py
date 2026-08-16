@@ -9,7 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
-from .collection_service import CollectionError, collect_pdf_for_store
+from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
 from .engine_v140.source_registry import source_for_store
@@ -71,7 +71,7 @@ def _rendered_links(url: str) -> list[str]:
 
 
 def discover_official_pdf(source_url: str) -> str:
-    headers = {"User-Agent": "LocalPriceChecks/0.1 (+local development)"}
+    headers = {"User-Agent": "LocalPriceChecks/0.2 (+local development)"}
     with httpx.Client(follow_redirects=True, timeout=settings.collector_timeout_seconds, headers=headers) as client:
         response = client.get(source_url)
         response.raise_for_status()
@@ -97,7 +97,7 @@ def download_pdf(url: str, target_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
     target = target_dir / f"prospect-{digest}.pdf"
-    headers = {"User-Agent": "LocalPriceChecks/0.1 (+local development)"}
+    headers = {"User-Agent": "LocalPriceChecks/0.2 (+local development)"}
     with httpx.Client(follow_redirects=True, timeout=settings.collector_timeout_seconds, headers=headers) as client:
         response = client.get(url)
         response.raise_for_status()
@@ -108,6 +108,13 @@ def download_pdf(url: str, target_dir: Path) -> Path:
 
 
 def collect_store_from_web(db: Session, store_name: str):
+    """Collect one verified market from its official source.
+
+    Prefer the mature 1.4 structured/DOM/network collector. If it cannot
+    produce a validated offer set, discover and parse the official prospect PDF
+    through the benchmarked PDF engine. Both paths use the same Web-MVP import
+    quality gate and record separate CollectionRun entries.
+    """
     store = db.query(Store).filter(Store.name == store_name).first()
     if not store:
         raise CollectionError(f"Unbekannter Markt: {store_name}")
@@ -116,6 +123,22 @@ def collect_store_from_web(db: Session, store_name: str):
     source = source_for_store(store.name)
     if not source:
         raise CollectionError(f"Keine Quelle registriert für: {store.name}")
-    pdf_url = discover_official_pdf(source.url)
-    pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
-    return collect_pdf_for_store(db, store.name, pdf_path)
+
+    structured_error = None
+    try:
+        result, summary, run = collect_structured_for_store(db, store.name)
+        if summary.imported:
+            return result, summary, run
+    except Exception as exc:
+        structured_error = exc
+
+    try:
+        pdf_url = discover_official_pdf(source.url)
+        pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
+        return collect_pdf_for_store(db, store.name, pdf_path)
+    except Exception as pdf_error:
+        if structured_error:
+            raise CollectionError(
+                f"Strukturierter Abruf fehlgeschlagen: {structured_error}; PDF-Fallback fehlgeschlagen: {pdf_error}"
+            ) from pdf_error
+        raise
