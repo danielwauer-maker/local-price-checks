@@ -15,6 +15,18 @@ SET_ONLY=re.compile(r"^\d+er[-\s]*set$",re.I)
 ALCOHOL_DESCRIPTOR=re.compile(r"^(?:\d{1,2}(?:[.,]\d+)?\s*[-–]\s*)?\d{1,2}(?:[.,]\d+)?\s*%\s*vol\.?\b.*$",re.I)
 PERCENT_DESCRIPTOR=re.compile(r"^\d{1,3}(?:[.,]\d+)?\s*%\s+(?:pflanzlich|fett|frucht|kakao|saft)\b.*$",re.I)
 ORIGIN_DESCRIPTOR=re.compile(r"^aus\s+(?:der\s+|dem\s+|fruchtsaft(?:-\s*)?konzentrat\b).*$",re.I)
+QUALITY_CLASS_DESCRIPTOR=re.compile(r"^(?:kl\.?|klasse)\s*[ivx]+$",re.I)
+PREPARATION_DESCRIPTOR=re.compile(
+    r"^(?:"
+    r"\d+\s*[-–]?\s*fach\s+sortiert,?\s*geschnitten|"
+    r"grillfertig\s+gewürzt|"
+    r"feine\s+würzung(?:,\s*vom\s+[\wäöüÄÖÜß-]+)?|"
+    r"ohne\s+[^,]+,\s*leckere\s+würzung(?:,\s*vom\s+[\wäöüÄÖÜß-]+)?|"
+    r"gegart,\s*geschnitten(?:,\s*vom\s+[\wäöüÄÖÜß-]+)?|"
+    r"grob\s+oder\s+fein,\s*feine\s+würzung(?:,\s*vom\s+[\wäöüÄÖÜß-]+)?"
+    r")$",
+    re.I,
+)
 PRICE_SUFFIX=re.compile(r"(?:\s+|^)(?:\d{1,3}[.,]\d{2})\s*(?:€)?\s*(?:App)?\s*$",re.I)
 VALIDITY_SUFFIX=re.compile(r"\s+Gültig\s+(?:ab|vom)\s+\d{1,2}\.\d{1,2}\.(?:20)?\d{2}(?:\s+bis\s+(?:zum\s+)?\d{1,2}\.\d{1,2}\.(?:20)?\d{2})?\s*",re.I)
 PAYBACK_SUFFIX=re.compile(r"\s+\d+\s*Extra\s*[°º]?\s*P\b.*$",re.I)
@@ -54,6 +66,8 @@ def product_name_issue(name:str|None)->str|None:
     if ALCOHOL_DESCRIPTOR.match(text):return "Alkoholangabe statt Produktname"
     if PERCENT_DESCRIPTOR.match(text):return "Prozent-/Eigenschaftsangabe statt Produktname"
     if ORIGIN_DESCRIPTOR.match(text):return "Herkunfts-/Beschreibungsfragment statt Produktname"
+    if QUALITY_CLASS_DESCRIPTOR.match(text):return "Qualitätsklasse statt Produktname"
+    if PREPARATION_DESCRIPTOR.match(text):return "Zubereitungs-/Beschreibungsfragment statt Produktname"
     if SET_ONLY.match(text):return "Set-Angabe statt Produktname"
     if PACK_ONLY.match(text):return "Nur Packungsangabe, kein Produktname"
     if text.startswith((",",".",";",":","-","–")):return "Produktname beginnt mit Satz-/Packungsfragment"
