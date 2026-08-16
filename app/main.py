@@ -15,6 +15,7 @@ from .db import Base, engine, get_db
 from .freshness import market_freshness
 from .geo import haversine_km, resolve_center
 from .models import FavoriteProduct, FavoriteStore, MasterProduct, ProductBarcode, ShoppingItem, Store
+from .optimizer import optimize_current_shopping
 from .scheduler import run_verified_market_collection, start_scheduler, stop_scheduler
 from .seed import seed_stores
 from .services import current_user, offers_for_selected_stores, selected_store_ids
@@ -60,12 +61,13 @@ def health(db: Session = Depends(get_db)):
 @app.get("/")
 def home(request: Request, db: Session = Depends(get_db)):
     user = current_user(db)
-    current = offers_for_selected_stores(db, user, "current")
-    upcoming = offers_for_selected_stores(db, user, "next")
-    favorites = db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).count()
+    favorite_rows = db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()
+    favorite_ids = {row.master_product_id for row in favorite_rows}
+    current = [o for o in offers_for_selected_stores(db, user, "current") if o.master_product_id in favorite_ids]
+    upcoming = [o for o in offers_for_selected_stores(db, user, "next") if o.master_product_id in favorite_ids]
     shopping = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).count()
     selected = len(selected_store_ids(db, user))
-    return templates.TemplateResponse("index.html", {"request": request, "user": user, "current": current[:6], "upcoming": upcoming[:6], "favorites": favorites, "shopping": shopping, "selected": selected})
+    return templates.TemplateResponse("index.html", {"request": request, "user": user, "current": current[:6], "upcoming": upcoming[:6], "favorites": len(favorite_rows), "shopping": shopping, "selected": selected})
 
 
 @app.get("/maerkte")
@@ -270,20 +272,6 @@ def collect_now():
 @app.get("/sparplan")
 def saving_plan(request: Request, db: Session = Depends(get_db)):
     user = current_user(db)
-    store_ids = selected_store_ids(db, user)
     items = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
-    offers = offers_for_selected_stores(db, user, "current")
-    by_product = {}
-    for offer in offers:
-        by_product.setdefault(offer.master_product_id, []).append(offer)
-    picks = []
-    total = 0.0
-    for item in items:
-        opts = by_product.get(item.master_product_id, [])
-        if not opts:
-            picks.append((item, None))
-            continue
-        best = min(opts, key=lambda x: x.price)
-        total += best.price * item.quantity
-        picks.append((item, best))
-    return templates.TemplateResponse("plan.html", {"request": request, "picks": picks, "total": total, "store_ids": store_ids})
+    plan = optimize_current_shopping(db, user, items)
+    return templates.TemplateResponse("plan.html", {"request": request, "plan": plan})
