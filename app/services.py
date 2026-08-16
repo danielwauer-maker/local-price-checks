@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from sqlalchemy.orm import Session
 
+from .clock import app_today
 from .geo import haversine_km
 from .models import FavoriteStore, Offer, UserProfile
 
@@ -35,7 +36,7 @@ def offers_for_selected_stores(db: Session, user: UserProfile, view: str = "curr
     ids = selected_store_ids(db, user)
     if not ids:
         return []
-    today = date.today()
+    today = app_today()
     q = db.query(Offer).filter(Offer.store_id.in_(ids), Offer.local_store_offer.is_(True))
     if view == "next":
         q = q.filter(Offer.valid_from > today, Offer.valid_from <= today + timedelta(days=14))
