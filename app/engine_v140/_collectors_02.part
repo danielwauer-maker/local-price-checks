@@ -1,0 +1,195 @@
+        if len(line)<3 or len(line)>180: continue
+        candidates.append(line)
+    return candidates[-1] if candidates else None
+
+def _card_blocks(html, heading_prefixes=()):
+    soup=BeautifulSoup(html,'html.parser')
+    rows=[]
+    for h in soup.find_all(['h2','h3','h4']):
+        title=' '.join(h.stripped_strings).strip()
+        if heading_prefixes and not any(title.lower().startswith(x.lower()) for x in heading_prefixes):
+            continue
+        container=h
+        for _ in range(3):
+            if container.parent: container=container.parent
+        txt=' '.join(container.stripped_strings)
+        rows.append((title,txt,container))
+    return rows
+
+
+def _flat_offer_candidates(text):
+    """Yield coarse product blocks from flattened embedded page state."""
+    normalized=re.sub(r'\s+',' ',text or '')
+    separators=re.compile(r'(?=(?:Filiale\b|Angebot\b|productName\b|name\b))',re.I)
+    parts=separators.split(normalized)
+    return [p[:900] for p in parts if len(p)>=20]
+
+
+NAME_KEYS=("productName","product_name","name","title","description","productTitle","articleName","artikelName")
+PRICE_KEYS=("price","sellingPrice","salesPrice","offerPrice","promoPrice","currentPrice","finalPrice","amount")
+REGULAR_KEYS=("regularPrice","oldPrice","originalPrice","strikePrice","wasPrice","uvp","listPrice")
+APP_KEYS=("appPrice","loyaltyPrice","memberPrice","clubPrice")
+SIZE_KEYS=("packageSize","packaging","size","quantityText","content","unitSize","salesUnit")
+VALID_FROM_KEYS=("validFrom","startDate","start","from")
+VALID_TO_KEYS=("validTo","endDate","end","to")
+IMAGE_KEYS=("image","imageUrl","imageURL","picture","pictureUrl","mediaUrl")
+
+def _deep_values(obj, keys):
+    vals=[]
+    if isinstance(obj,dict):
+        for k,v in obj.items():
+            if k in keys and v not in (None,""):
+                vals.append(v)
+            if isinstance(v,(dict,list)):
+                vals.extend(_deep_values(v,keys))
+    elif isinstance(obj,list):
+        for v in obj:
+            vals.extend(_deep_values(v,keys))
+    return vals
+
+def _first_scalar(d,keys):
+    for k in keys:
+        if k in d and d[k] not in (None,""):
+            v=d[k]
+            if isinstance(v,(str,int,float)):
+                return v
+            if isinstance(v,dict):
+                for kk in ("value","amount","price","formatted"):
+                    if kk in v and isinstance(v[kk],(str,int,float)):
+                        return v[kk]
+    return None
+
+def _to_price(v):
+    if v is None:return None
+    if isinstance(v,(int,float)):
+        return round(v/100,2) if v>500 else float(v)
+    txt=str(v).replace("€","").strip().replace(" ","")
+    m=re.search(r'\d{1,5}(?:[.,]\d{1,2})?',txt)
+    if not m:return None
+    num=float(m.group(0).replace(',','.'))
+    return round(num/100,2) if num>500 else num
+
+def _walk_dicts(obj):
+    if isinstance(obj,dict):
+        yield obj
+        for v in obj.values():
+            yield from _walk_dicts(v)
+    elif isinstance(obj,list):
+        for v in obj:
+            yield from _walk_dicts(v)
+
+def structured_network_offers(html,source,imgs=None):
+    """Extract offers from JSON responses captured by Chromium.
+
+    Important: REWE and ALDI have dedicated parsers whose output is more
+    trustworthy than broad page/network product state. We therefore do NOT
+    feed generic JSON candidates into those retailers.
+    """
+    if source.retailer in {"REWE","ALDI SÜD"}:
+        return []
+    soup=BeautifulSoup(html,'html.parser')
+    script=soup.find("script",id="lpc-network-json")
+    if not script:return []
+    try:
+        payloads=json.loads(script.string or script.get_text())
+    except Exception:
+        return []
+
+    imgs=imgs or [];out=[]
+    seen=set()
+    for payload in payloads:
+        data=payload.get("data") if isinstance(payload,dict) else payload
+        for d in _walk_dicts(data):
+            if not isinstance(d,dict):continue
+            name=_first_scalar(d,NAME_KEYS)
+            price=_to_price(_first_scalar(d,PRICE_KEYS))
+            if not name or price is None:
+                continue
+
+            dkeys=" ".join(str(k).lower() for k in d.keys())
+            dtext=json.dumps(d,ensure_ascii=False,default=str).lower()[:8000]
+            offer_signal=any(k in dkeys or k in dtext for k in (
+                "offer","angebot","promotion","promo","discount","aktionspreis",
+                "validfrom","validto","startdate","enddate","regularprice",
+                "oldprice","strikeprice","appprice","loyaltyprice"
+            ))
+            edeka_card=(
+                source.retailer=="EDEKA"
+                and "price" in d
+                and _first_scalar(d,SIZE_KEYS) is not None
+            )
+            if not offer_signal and not edeka_card:
+                continue
+            name=str(name).strip()
+            if len(name)<3 or len(name)>220:
+                continue
+
+            regular=_to_price(_first_scalar(d,REGULAR_KEYS))
+            app=_to_price(_first_scalar(d,APP_KEYS))
+            size_text=_first_scalar(d,SIZE_KEYS)
+            source_text=" ".join(str(x) for x in (name,size_text or "",price,regular or "",app or "") if x!="")
+            q,u=size(str(size_text or source_text))
+            vf=_first_scalar(d,VALID_FROM_KEYS)
+            vt=_first_scalar(d,VALID_TO_KEYS)
+            image=_first_scalar(d,IMAGE_KEYS)
+            if isinstance(image,dict):
+                image=_first_scalar(image,("url","src","href"))
+            im_url=str(image) if image else None
+            if not im_url:
+                im=best_img(imgs,name);im_url=im["url"] if im else None
+
+            k=(name.lower(),price,q,u,str(vf),str(vt))
+            if k in seen:continue
+            seen.add(k)
+            out.append(CollectedOffer(
+                source.key,source.store_name,source.retailer,name,cat(name),price,
+                regular_price=regular,app_price=app,quantity=q,unit=u,
+                valid_from=str(vf) if vf else None,valid_to=str(vt) if vt else None,
+                source_text=source_text,source_url=source.url,image_url=im_url,
+                image_alt=name if im_url else None,confidence=.94
+            ))
+    return out
+
+def parse_prospect_text(source,text,imgs=None):
+    """Very conservative fallback for text-bearing PDF/digital prospects."""
+    L=[x.strip() for x in text.splitlines() if x.strip()];imgs=imgs or [];out=[]
+    rvf,rvt,_,_=infer_validity(text)
+    vf=rvf.strftime('%d.%m.%Y') if rvf else None
+    vt=rvt.strftime('%d.%m.%Y') if rvt else None
+    for i,line in enumerate(L):
+        vals=_price_without_unit_prices(line)
+        if not vals or len(line)>120: continue
+        price=vals[-1]
+        block_lines=L[max(0,i-6):min(len(L),i+2)]
+        block=' '.join(block_lines)
+        q,u=size(block)
+        if q is None and upr(block) is None: continue
+        name=None
+        for j in range(i-1,max(-1,i-7),-1):
+            cand=clean_product_name(L[j])
+            if _is_noise_line(cand) or PRICE.search(cand) or SIZE.fullmatch(cand): continue
+            if product_name_issue(cand): continue
+            name=cand;break
+        if not name: continue
+        im=best_img(imgs,name)
+        row=CollectedOffer(source.key,source.store_name,source.retailer,name,cat(name),price,
+            unit_price=upr(block),unit_price_unit=upr_unit(block),quantity=q,unit=u,valid_from=vf,valid_to=vt,
+            source_text=block,source_url=source.url,image_url=im['url'] if im else None,
+            image_alt=im['alt'] if im else None,confidence=.86)
+        if evaluate_offer(row).accepted: out.append(row)
+    seen=set();res=[]
+    for r in out:
+        k=(r.product_name.lower(),r.price,r.quantity,r.unit)
+        if k not in seen: seen.add(k);res.append(r)
+    return res
+
+def parse_rewe_text(source,text,imgs=None):
+    L=[x.strip() for x in text.splitlines() if x.strip()];imgs=imgs or [];out=[]
+    rvf,rvt,_,_=infer_validity(text)
+    vf=rvf.strftime("%d.%m.%Y") if rvf else None
+    vt=rvt.strftime("%d.%m.%Y") if rvt else None
+
+    noise={
+        'aktion','knaller','angebote im markt','top-angebote in deinem markt',
+        'unsere angebots-highlights','die aktuellen angebote findest du direkt im markt.',
+        'zu allen angeboten','zu den angeboten','angebots-highlights'
