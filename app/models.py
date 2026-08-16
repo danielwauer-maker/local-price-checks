@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
-from sqlalchemy import Boolean, Date, Float, ForeignKey, String, Text, UniqueConstraint
+from datetime import date, datetime
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -96,3 +96,17 @@ class Offer(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     store: Mapped[Store] = relationship()
     product: Mapped[MasterProduct] = relationship()
+
+
+class CollectionRun(Base):
+    __tablename__ = "collection_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(80), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    offers_received: Mapped[int] = mapped_column(Integer, default=0)
+    offers_imported: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    store: Mapped[Store] = relationship()
