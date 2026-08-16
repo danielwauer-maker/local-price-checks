@@ -1,0 +1,225 @@
+    if _x_overlap(desc,pb)>.15:cost-=30
+    yov=max(0.0,min(desc.y1,pb.y1)-max(desc.y0,pb.y0))
+    if yov>0:cost-=20
+    return cost
+
+
+def _linear_assignment(cost:list[list[float]])->list[tuple[int,int]]:
+    if not cost or not cost[0]:return []
+    n=len(cost);m=len(cost[0]);transposed=False;a=cost
+    if n>m:
+        transposed=True;a=[[cost[i][j] for i in range(n)] for j in range(m)];n,m=m,n
+    u=[0.0]*(n+1);v=[0.0]*(m+1);p=[0]*(m+1);way=[0]*(m+1)
+    for i in range(1,n+1):
+        p[0]=i;j0=0;minv=[float('inf')]*(m+1);used=[False]*(m+1)
+        while True:
+            used[j0]=True;i0=p[j0];delta=float('inf');j1=0
+            for j in range(1,m+1):
+                if not used[j]:
+                    cur=a[i0-1][j-1]-u[i0]-v[j]
+                    if cur<minv[j]:minv[j]=cur;way[j]=j0
+                    if minv[j]<delta:delta=minv[j];j1=j
+            for j in range(m+1):
+                if used[j]:u[p[j]]+=delta;v[j]-=delta
+                else:minv[j]-=delta
+            j0=j1
+            if p[j0]==0:break
+        while True:
+            j1=way[j0];p[j0]=p[j1];j0=j1
+            if j0==0:break
+    pairs=[]
+    for j in range(1,m+1):
+        if p[j]:
+            i=p[j]-1;jj=j-1;pairs.append((jj,i) if transposed else (i,jj))
+    return pairs
+
+
+def _select_primary_app(prices:list[float],product:PdfBlock)->tuple[float|None,float|None]:
+    vals=sorted({round(float(x),2) for x in prices if x is not None and x>0})
+    if not vals:return None,None
+    if len(vals)==1:return vals[0],None
+    expected=_expected_price_candidates(product)
+    if expected:
+        primary=min(vals,key=lambda p:min(abs(p-e)/max(e,.05) for e in expected));lower=[p for p in vals if p<primary]
+        return primary,(min(lower) if lower else None)
+    return max(vals),min(vals)
+
+
+def _select_pack_metadata(text:str,price:float|None)->tuple[float|None,str|None,float|None,str|None]:
+    qs,unit=_quantity_values(text);ups,upu=_unit_price_values(text)
+    if qs and ups and unit and upu:
+        def calc(q,u):
+            if unit=='g' and upu=='kg':return q*u/1000
+            if unit=='kg' and upu=='kg':return q*u
+            if unit=='ml' and upu=='l':return q*u/1000
+            if unit=='l' and upu=='l':return q*u
+            return None
+        options=[]
+        if len(qs)==len(ups):
+            for uv in (ups,list(reversed(ups)) if len(ups)>1 else ups):
+                pairs=list(zip(qs,uv));score=sum(abs((calc(q,u) or 1e9)-(price or calc(q,u) or 0)) for q,u in pairs);options.append((score,pairs))
+        else:options=[(0,[(q,u) for q in qs for u in ups])]
+        if options:
+            options.sort(key=lambda x:x[0]);pairs=options[0][1]
+            if price is not None:q,u=min(pairs,key=lambda qu:abs((calc(qu[0],qu[1]) or 1e9)-price))
+            else:q,u=pairs[0]
+            return q,unit,u,upu
+    q,unit=_extract_quantity(text);up,upu=_extract_unit_price(text)
+    if q is None and re.search(r'\bje\s+(?:St\.?|Stück|Topf|Pckg\.?|Packung|Schale)\b',text,re.I):q,unit=1.0,'stück'
+    return q,unit,up,upu
+
+
+def _clean_offer_name(name:str)->str:
+    n=clean_product_name(name)
+    countries=r'(?:Deutschland|Niederlande|Spanien|Italien|Frankreich|Portugal|Griechenland|Türkei|Polen|Belgien|Österreich|Costa Rica|Panama)'
+    n=re.sub(r'\s+'+countries+r'(?:\s*[/,]\s*'+countries+r')*\s*,?\s*Kl\.?\s*[IVX]+.*$','',n,flags=re.I)
+    n=re.sub(r'\s+Ursprung:\s*.*$','',n,flags=re.I);n=re.sub(r'\s+Sorte und Kocheigenschaft:?.*$','',n,flags=re.I)
+    n=re.sub(r'\s+(?:100\s*%\s+Baumwolle|Maße\s+ca\.?|Medizinprodukt;|Hackfleischzubereitung\s+vom\s+Rind\s+mit).*$','',n,flags=re.I)
+    n=re.sub(r'\s+(?:mit|oder|aus|von|für|und)\s*$','',n,flags=re.I)
+    return n.strip(' ,;-')
+
+
+def _is_context_block_for_price(b:PdfBlock, price_block:PdfBlock, retailer:str)->bool:
+    if b is price_block:return False
+    text=(b.text or '').strip(); low=text.lower()
+    if not re.search(r'[A-Za-zÄÖÜäöüß]',text):return False
+    if any(x in low for x in ('gültig am','gültig von','gültig ab','kw 33','netto-online.de','aldi-sued.de','rewe.de','artikel mit diesem hinweis','filialangebote:','onlineangebote:')):return False
+    if low in GENERIC_HEADERS:return False
+    cx=(b.x0+b.x1)/2; pcx=(price_block.x0+price_block.x1)/2
+    if abs(cx-pcx)>165 and _x_overlap(b,price_block)<.08:return False
+    if b.y0>price_block.y1+65:return False
+    if price_block.y0-b.y1>300:return False
+    return True
+
+
+def _fallback_description_for_price(blocks:list[PdfBlock], group:tuple[PdfBlock,list[float]], retailer:str, wide:bool=False)->PdfBlock|None:
+    pb,_=group;candidates=[];pcx=(pb.x0+pb.x1)/2
+    for b in blocks:
+        if wide:
+            text=(b.text or '').strip(); low=text.lower()
+            if b is pb or not re.search(r'[A-Za-zÄÖÜäöüß]',text):continue
+            if any(x in low for x in ('gültig am','gültig von','gültig ab','kw 33','netto-online.de','aldi-sued.de','rewe.de','artikel mit diesem hinweis','filialangebote:','onlineangebote:')):continue
+            if abs(((b.x0+b.x1)/2)-pcx)>420 or max(0,pb.y0-b.y1,b.y0-pb.y1)>230:continue
+        elif not _is_context_block_for_price(b,pb,retailer):continue
+        name0=_clean_offer_name(_product_title(b.text,retailer))
+        if not _has_alpha_product_name(name0) or product_name_issue(name0):continue
+        cx=(b.x0+b.x1)/2;vertical_gap=max(0,pb.y0-b.y1,b.y0-pb.y1);horizontal=abs(cx-pcx);penalty=vertical_gap+horizontal*.22
+        if b.y0>pb.y1:penalty+=90
+        q,u=_extract_quantity(b.text);up,upu=_extract_unit_price(b.text);name=_product_title(b.text,retailer)
+        if _has_alpha_product_name(name):penalty-=35
+        if q is not None or up is not None:penalty-=45
+        if retailer=='Netto Marken-Discount' and 'FrankfurterEF-Medium' in (b.first_font or ''):penalty-=30
+        candidates.append((penalty,b))
+    if not candidates:return None
+    candidates.sort(key=lambda x:x[0]);best=candidates[0][1];merge=[best]
+    for _,b in candidates[1:6]:
+        if b.y1<=best.y0+3 and 0<=best.y0-b.y1<=45 and _x_overlap(b,best)>=.25:merge.insert(0,b);break
+    if len(merge)==1:return best
+    return PdfBlock(min(x.x0 for x in merge),min(x.y0 for x in merge),max(x.x1 for x in merge),max(x.y1 for x in merge),'\n'.join(x.text for x in merge),max(x.max_font for x in merge),merge[0].first_font,merge[0].first_size,tuple(v for x in merge for v in x.emphasis_prices))
+
+def _anchor_first_page_rows(page,source:RetailSource,retailer:str,page_no:int,row_vf:str|None,row_vt:str|None,source_url:str)->tuple[list[CollectedOffer],int,int]:
+    blocks=_page_blocks(page);groups=_price_groups_page(page,retailer);descs=_description_candidates(blocks,retailer)
+    if not groups:return [],0,0
+    matrix=[[_assignment_cost(d,g,retailer) for g in groups] for d in descs] if descs else [];pairs=_linear_assignment(matrix) if matrix else [];chosen={}
+    for di,gi in pairs:
+        cost=matrix[di][gi]
+        if cost<=650:
+            d=descs[di];nm=_clean_offer_name(_product_title(d.text,retailer))
+            if _has_alpha_product_name(nm) and not product_name_issue(nm):chosen[gi]=(d,cost)
+    rows=[];matched=0
+    for gi,g in enumerate(groups):
+        d=chosen.get(gi,(None,None))[0]
+        if d is None:d=_fallback_description_for_price(blocks,g,retailer,wide=(len(groups)==1))
+        if d is None:continue
+        price,app_price=_select_primary_app(g[1],d)
+        if price is None:continue
+        expected=_expected_price_candidates(d)
+        if expected:
+            rel_now=min(abs(price-e)/max(e,.05) for e in expected)
+            if rel_now>.10:
+                page_prices=[]
+                for _gb,_vals in groups:
+                    for _p in _vals:page_prices.append(float(_p))
+                candidates=[]
+                for e in expected:
+                    for p0 in page_prices:
+                        delta=abs(p0-e);rel=delta/max(e,.05)
+                        if delta<=max(.03,.018*e):candidates.append((rel,delta,p0,e))
+                if candidates:
+                    candidates.sort(key=lambda x:(x[0],x[1]));corrected=candidates[0][2]
+                    if app_price is not None and app_price>=corrected:app_price=None
+                    price=corrected
+        selected_text=_variant_text_for_price(d.text,price);name=_clean_offer_name(_product_title(selected_text,retailer))
+        if not _has_alpha_product_name(name) or product_name_issue(name):continue
+        q,unit,up,upu=_select_pack_metadata(selected_text,price);gb=g[0];combined=selected_text
+        if gb is not d:combined+='\n'+gb.text
+        regular=_extract_regular_price(gb.text,price)
+        row=CollectedOffer(source.key,source.store_name,retailer,name,cat(name),price,regular_price=regular,app_price=app_price,unit_price=up,unit_price_unit=upu,quantity=q,unit=unit,valid_from=row_vf,valid_to=row_vt,source_text=f"PDF Seite {page_no}: {combined[:1200]}",source_url=source_url,local_store_offer=True,confidence=.997 if retailer=='REWE' else .990)
+        quality=evaluate_offer(row)
+        if quality.accepted:rows.append(row);matched+=1
+    return rows,len(groups),matched
+
+def _dominant_document_validity(doc,full_text:str)->tuple[date|None,date|None]:
+    from collections import Counter
+    vals=[]
+    for page in doc:
+        v=_parse_pdf_validity(page.get_text("text") or "")
+        if v[0]:vals.append(v)
+    if vals:return Counter(vals).most_common(1)[0][0]
+    return _parse_pdf_validity(full_text)
+
+def parse_pdf_bytes(source:RetailSource,pdf_bytes:bytes,filename:str|None=None,source_url:str|None=None)->PdfParseResult:
+    doc=fitz.open(stream=pdf_bytes,filetype="pdf");full_text=_document_text(doc);detected=detect_retailer(full_text);retailer=source.retailer;vf_doc,vt_doc=_dominant_document_validity(doc,full_text);rows=[];notes=[]
+    if detected and detected!=retailer:
+        notes.append(f"PDF-Händler erkannt als {detected}; Zielmarkt ist {retailer}.");return PdfParseResult(retailer,len(doc),len(full_text),[],vf_doc,vt_doc,_market_id(full_text,filename),notes)
+    if retailer=="EDEKA":
+        notes.append("EDEKA-PDF bleibt Kontrollquelle: Bildprospekt benötigt häufig OCR; Markt-Webseite bleibt primär.");return PdfParseResult(retailer,len(doc),len(full_text),[],vf_doc,vt_doc,_market_id(full_text,filename),notes)
+    for page_no,page in enumerate(doc,1):
+        page_text=page.get_text("text") or "";row_vf,row_vt=_row_validity(page_text,full_text)
+        if row_vf and vf_doc:
+            try:
+                rv=datetime.strptime(row_vf,"%d.%m.%Y").date()
+                if rv < vf_doc-timedelta(days=1):continue
+            except Exception:pass
+        low_page=page_text.lower()
+        if retailer=="Netto Marken-Discount":
+            online_hits=len(re.findall(r'\bnur\s+online\b',low_page))
+            if online_hits>=2 and 'online-kracher' in low_page:continue
+        page_rows,anchor_count,matched_count=_anchor_first_page_rows(page,source,retailer,page_no,row_vf,row_vt,source_url or source.url);rows.extend(page_rows)
+    def row_plausibility(row):
+        if row.quantity and row.unit_price and row.unit_price_unit:
+            exp=None
+            if row.unit=='g' and row.unit_price_unit=='kg': exp=row.quantity*row.unit_price/1000
+            elif row.unit=='kg' and row.unit_price_unit=='kg': exp=row.quantity*row.unit_price
+            elif row.unit=='ml' and row.unit_price_unit=='l': exp=row.quantity*row.unit_price/1000
+            elif row.unit=='l' and row.unit_price_unit=='l': exp=row.quantity*row.unit_price
+            if exp is not None and row.price:return abs(row.price-exp)/max(row.price,.05)
+        return .08
+    best={};order=[]
+    for row in rows:
+        key=(row.product_name.lower(),round(float(row.quantity),3) if row.quantity is not None else None,row.unit,row.valid_from,row.valid_to);score=row_plausibility(row)
+        if key not in best:best[key]=(score,row);order.append(key)
+        elif score < best[key][0]-1e-9:best[key]=(score,row)
+    dedup=[best[k][1] for k in order]
+    from collections import Counter
+    periods=[]
+    for r in dedup:
+        if r.valid_from and r.valid_to:periods.append((r.valid_from,r.valid_to))
+    if periods:
+        (pvf,pvt),_=Counter(periods).most_common(1)[0]
+        try:vf_doc=datetime.strptime(pvf,"%d.%m.%Y").date()
+        except Exception:pass
+        try:vt_doc=datetime.strptime(pvt,"%d.%m.%Y").date()
+        except Exception:pass
+    market_id=_market_id(full_text,filename)
+    if retailer=="REWE":
+        source_ids=re.findall(r'(?<!\d)(\d{6})(?!\d)',source.url or "")
+        if market_id and source_ids and market_id not in source_ids:
+            notes.append(f"REWE-Markt-ID {market_id} passt nicht zur Zielquelle {source_ids[0]}; PDF nicht importiert.");dedup=[]
+    notes.append(f"PDF-native Parser: {len(dedup)} hochkonfidente Produktangebote aus {len(doc)} Seiten.")
+    return PdfParseResult(retailer,len(doc),len(full_text),dedup,vf_doc,vt_doc,market_id,notes)
+
+
+def parse_pdf_file(source:RetailSource,path:str|Path)->PdfParseResult:
+    p=Path(path)
+    return parse_pdf_bytes(source,p.read_bytes(),p.name,str(p))
