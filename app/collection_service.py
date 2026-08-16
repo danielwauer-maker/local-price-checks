@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
+from .engine_v140.collectors import collect_one
 from .engine_v140.prospect_pdf_engine import PdfParseResult, parse_pdf_file
 from .engine_v140.source_registry import source_for_store
 
@@ -31,7 +32,7 @@ def _finish_run(
     imported: int = 0,
     message: str | None = None,
 ):
-    run.finished_at = datetime.utcnow()
+    run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     run.status = status
     run.offers_received = received
     run.offers_imported = imported
@@ -39,13 +40,7 @@ def _finish_run(
     db.commit()
 
 
-def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
-    """Parse one official/local prospect and import only validated local offers.
-
-    This is the first production adapter around the benchmarked 1.4.0 engine.
-    Network discovery is deliberately kept separate so a downloaded prospect can
-    be benchmarked and imported through exactly the same parser path.
-    """
+def _store_and_source(db: Session, store_name: str):
     store = db.query(Store).filter(Store.name == store_name).first()
     if not store:
         raise CollectionError(f"Unbekannter Markt: {store_name}")
@@ -54,8 +49,32 @@ def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
         raise CollectionError(f"Keine Quelle registriert für: {store.name}")
     if source.retailer != store.retailer:
         raise CollectionError(f"Quellen-/Markt-Händler stimmen nicht überein: {store.name}")
+    return store, source
 
-    run = _start_run(db, store, source.key)
+
+def collect_structured_for_store(db: Session, store_name: str):
+    """Fetch the official source using the full 1.4 web collector and import it."""
+    store, source = _store_and_source(db, store_name)
+    run = _start_run(db, store, source.key + ":web")
+    try:
+        result = collect_one(source)
+        rows = result.get("offers") or []
+        summary = import_collected_offers(db, rows)
+        status = "success" if summary.imported else "no_offers"
+        message = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
+        _finish_run(db, run, status, len(rows), summary.imported, message[:1000])
+        return result, summary, run
+    except Exception as exc:
+        db.rollback()
+        run = db.get(CollectionRun, run.id)
+        _finish_run(db, run, "failed", 0, 0, str(exc)[:1000])
+        raise
+
+
+def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
+    """Parse one official/local prospect and import only validated local offers."""
+    store, source = _store_and_source(db, store_name)
+    run = _start_run(db, store, source.key + ":pdf")
     try:
         parsed: PdfParseResult = parse_pdf_file(source, pdf_path)
         summary: ImportSummary = import_collected_offers(db, parsed.rows)
@@ -71,7 +90,6 @@ def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
 
 
 def latest_collection_runs(db: Session) -> dict[int, CollectionRun]:
-    """Latest collection result for each store, keyed by store_id."""
     rows = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).all()
     latest: dict[int, CollectionRun] = {}
     for row in rows:
