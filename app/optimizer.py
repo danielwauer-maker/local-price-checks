@@ -22,6 +22,7 @@ class PlanResult:
     single_store_total: float | None
     multi_store_saving: float | None
     multi_store_worth_it: bool | None
+    period: str
 
 
 def _route_km(user: UserProfile, stores: list[Store]) -> float:
@@ -41,8 +42,9 @@ def _route_km(user: UserProfile, stores: list[Store]) -> float:
     return km * settings.route_distance_factor
 
 
-def optimize_current_shopping(db: Session, user: UserProfile, items: list[ShoppingItem]) -> PlanResult:
-    offers = offers_for_selected_stores(db, user, "current")
+def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem], period: str = "current") -> PlanResult:
+    period = "next" if period == "next" else "current"
+    offers = offers_for_selected_stores(db, user, period)
     by_product: dict[int, list[Offer]] = {}
     for offer in offers:
         by_product.setdefault(offer.master_product_id, []).append(offer)
@@ -111,4 +113,10 @@ def optimize_current_shopping(db: Session, user: UserProfile, items: list[Shoppi
         single_store_total=single_total,
         multi_store_saving=saving,
         multi_store_worth_it=worth,
+        period=period,
     )
+
+
+def optimize_current_shopping(db: Session, user: UserProfile, items: list[ShoppingItem]) -> PlanResult:
+    """Backward-compatible wrapper used by existing tests/callers."""
+    return optimize_shopping(db, user, items, "current")
