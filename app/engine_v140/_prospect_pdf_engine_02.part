@@ -1,0 +1,248 @@
+                    max(prev.max_font,b.max_font),prev.first_font or b.first_font,prev.first_size or b.first_size,
+                    tuple(prev.emphasis_prices)+tuple(b.emphasis_prices))
+                name=_product_title(merged.text,retailer)
+        if not name or product_name_issue(name):
+            continue
+        low=name.lower()
+        if any(x in low for x in ("gültig ab","gültig von","wochenknüller","prospekt","punkte","coupon","empfohlene körpergröße","auf stardrink")):
+            continue
+        qty,unit=_extract_quantity(merged.text)
+        up,upu=_extract_unit_price(merged.text)
+        if qty is None and up is None:
+            strong_price=bool(merged.emphasis_prices and merged.max_font>=35 and retailer in {"REWE","ALDI SÜD"})
+            if not strong_price:
+                continue
+        out.append(merged)
+    ded=[];seen=set()
+    for b in out:
+        k=(round(b.x0,1),round(b.y0,1),round(b.x1,1),round(b.y1,1),b.text)
+        if k not in seen: seen.add(k);ded.append(b)
+    return ded
+
+def _candidate_price_blocks(blocks:list[PdfBlock], retailer:str)->list[tuple[PdfBlock,float]]:
+    out=[]
+    if retailer=="REWE":
+        marker_blocks=[b for b in blocks if re.search(r'\b(?:Aktion|Knaller)\b',b.text,re.I)]
+        raw_price=[]
+        for b in blocks:
+            if _is_bad_price_context(b.text):continue
+            vals=list(b.emphasis_prices) if b.emphasis_prices else _price_values(b.text)
+            if vals and b.max_font>=35 and len(b.text)<180:
+                raw_price.append((b,vals[-1]))
+        for marker in marker_blocks:
+            vals=list(marker.emphasis_prices) or _price_values(marker.text)
+            if vals:
+                out.append((marker,vals[-1]));continue
+            ranked=[]
+            for pb,price in raw_price:
+                d=_rect_distance(marker,pb)
+                if d<=65: ranked.append((d,pb,price))
+            if ranked:
+                ranked.sort(key=lambda x:x[0]);_,pb,price=ranked[0]
+                loc=PdfBlock(min(marker.x0,pb.x0),min(marker.y0,pb.y0),max(marker.x1,pb.x1),max(marker.y1,pb.y1),marker.text+"\n"+pb.text,max(marker.max_font,pb.max_font),marker.first_font,marker.first_size,tuple(marker.emphasis_prices)+tuple(pb.emphasis_prices))
+                out.append((loc,price))
+        for pb,price in raw_price:
+            if not any(_rect_distance(pb,x[0])<8 for x in out):
+                out.append((pb,price))
+        return out
+
+    threshold=22 if retailer=="Netto Marken-Discount" else 35
+    for b in blocks:
+        if b.max_font < threshold or _is_bad_price_context(b.text): continue
+        low=b.text.lower()
+        if len(b.text)>700: continue
+        vals=list(b.emphasis_prices)
+        if not vals: continue
+        price=vals[-1]
+        if retailer=="Netto Marken-Discount" and ('einzelpreis' in low and '*' not in low and 'aktion' not in low):
+            if ' für ' not in (' '+low+' '):continue
+        if retailer=="Netto Marken-Discount" and '*' not in b.text and 'aktion' not in low:
+            is_saving=False
+            for other in blocks:
+                if other is b or 'sparen' not in other.text.lower():continue
+                if _rect_distance(b,other)>50:continue
+                ovals=list(other.emphasis_prices) or _price_values(other.text)
+                if any(abs(v-price)<.011 for v in ovals):
+                    is_saving=True;break
+            if is_saving:continue
+        out.append((b,price))
+    return out
+
+def _embedded_price_from_product_block(b:PdfBlock,retailer:str)->float|None:
+    ls=_lines(b.text)
+    for idx,line in enumerate(ls):
+        if re.fullmatch(r'\d{1,3}[.,]\d{2}\s*\*?',line.strip()):
+            pre=ls[idx-1].lower() if idx else ''
+            if 'kg-preis' in pre or 'l-preis' in pre or '/ kg' in pre or '/ l' in pre: continue
+            return float(line.replace('*','').replace(',','.'))
+    m=STAR_PRICE_RE.search(b.text)
+    if m:return float(m.group(1).replace(',','.'))
+    return None
+
+def _quantity_values(text:str)->tuple[list[float],str|None]:
+    cleaned=re.sub(r'\([^)]*(?:=|/)\s*\d+(?:[.,]\d+)?[^)]*(?:kg|l)[^)]*\)',' ',text or '',flags=re.I)
+    units={'liter':'l','kg':'kg','g':'g','ml':'ml','l':'l'}
+    values=[]
+    for m in re.finditer(r'\b(\d{1,3})\s*[x×]\s*(\d{1,3})\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[-]?\s*(kg|g|l|liter|ml)\b',cleaned,re.I):
+        a=float(m.group(1));b=float(m.group(2));q=float(m.group(3).replace(',','.'));u=units[m.group(4).lower()]
+        values.append((a*b*q,u,m.start(),True))
+    for m in re.finditer(r'\b(\d{1,3})\s*[x×]\s*(\d+(?:[.,]\d+)?)\s*[-]?\s*(kg|g|l|liter|ml)\b',cleaned,re.I):
+        prefix=cleaned[max(0,m.start()-12):m.start()]
+        if re.search(r'\d+\s*[x×]\s*$',prefix):continue
+        cnt=float(m.group(1));q=float(m.group(2).replace(',','.'));u=units[m.group(3).lower()]
+        values.append((cnt*q,u,m.start(),True))
+    for m in re.finditer(r'(?<![\d.,])(\d+(?:[.,]\d+)?)\s*[-]?\s*(kg|g|l|liter|ml)\b',cleaned,re.I):
+        pre=cleaned[max(0,m.start()-10):m.start()]
+        if re.search(r'[x×]\s*$',pre):continue
+        q=float(m.group(1).replace(',','.'));u=units[m.group(2).lower()]
+        values.append((q,u,m.start(),False))
+    if not values:
+        q,u=_extract_quantity(cleaned)
+        return ([q] if q is not None else []),u
+    weight=[x for x in values if x[1] in {'kg','g'}]
+    volume=[x for x in values if x[1] in {'l','ml'}]
+    chosen=weight if weight and not volume else (volume if volume and not weight else values)
+    if chosen is values:
+        u=chosen[0][1]; vals=[q for q,uu,_,_ in chosen if uu==u]
+    elif chosen is weight:
+        u='g'; vals=[q*1000 if uu=='kg' else q for q,uu,_,_ in chosen]
+    else:
+        u='ml'; vals=[q*1000 if uu=='l' else q for q,uu,_,_ in chosen]
+    out=[]
+    for v in vals:
+        if v not in out and v>0:out.append(v)
+    return out,u
+
+
+def _variant_text_for_price(text:str,price:float|None)->str:
+    if price is None:return text
+    lines=_lines(text)
+    if len(lines)<4:return text
+    raw_qty=[]
+    for i,line in enumerate(lines):
+        if re.search(r'\([^)]*(?:/|=)[^)]*\)',line):continue
+        if re.search(r'\b\d+(?:[.,]\d+)?\s*[-]?\s*(?:kg|g|l|liter|ml)\b',line,re.I):raw_qty.append(i)
+    if len(raw_qty)<2:return text
+    qty_indices=[raw_qty[0]]
+    for qi in raw_qty[1:]:
+        prev=qty_indices[-1]; between=lines[prev+1:qi]; productish=False
+        for ln in between:
+            low=ln.lower().strip(' .,:;-')
+            if not re.search(r'[A-Za-zÄÖÜäöüß]{3,}',ln):continue
+            if any(low.startswith(x) for x in ('versch','gekühlt','tiefgekühlt','ursprung','klasse','kl.','zzgl','bzw','oder')):continue
+            if re.fullmatch(r'(?:kg|l|100 g|100 ml).*',low):continue
+            productish=True;break
+        if productish:qty_indices.append(qi)
+    if len(qty_indices)<2:return text
+    candidates=[]
+    for qi in qty_indices:
+        prev=max([x for x in qty_indices if x<qi],default=-1); nxt=min([x for x in qty_indices if x>qi],default=len(lines)); start=prev+1
+        seg='\n'.join(lines[start:min(len(lines),nxt+2)])
+        qs,u=_quantity_values(seg);ups,upu=_unit_price_values(seg)
+        if not qs or not ups or not u or not upu:continue
+        def calc(q,up):
+            if u=='g' and upu=='kg':return q*up/1000
+            if u=='kg' and upu=='kg':return q*up
+            if u=='ml' and upu=='l':return q*up/1000
+            if u=='l' and upu=='l':return q*up
+        ex=[calc(q,up) for q in qs for up in ups];ex=[v for v in ex if v is not None]
+        if not ex:continue
+        rel=min(abs(v-price)/max(price,.05) for v in ex);candidates.append((rel,seg))
+    if candidates:
+        candidates.sort(key=lambda x:x[0])
+        if candidates[0][0]<=.18:return candidates[0][1]
+    return text
+
+def _unit_price_values(text:str)->tuple[list[float],str|None]:
+    t=text or ''; vals_by_unit={'kg':[],'l':[]}
+    for m in re.finditer(r'\b(kg|l)[- ]?preis\s*((?:\d+(?:[.,]\d+)?\s*(?:,|–|-|bzw\.|oder)?\s*){1,8})',t,re.I):
+        u=m.group(1).lower()
+        for x in re.findall(r'\d+(?:[.,]\d+)?',m.group(2)):
+            v=float(x.replace(',','.'))
+            if v not in vals_by_unit[u]:vals_by_unit[u].append(v)
+    for m in re.finditer(r'\(\s*((?:\d+(?:[.,]\d+)?\s*(?:-|–|,|bzw\.|oder)?\s*){1,8})\s*/\s*(kg|l)\s*\)',t,re.I):
+        u=m.group(2).lower()
+        for x in re.findall(r'\d+(?:[.,]\d+)?',m.group(1)):
+            v=float(x.replace(',','.'))
+            if v not in vals_by_unit[u]:vals_by_unit[u].append(v)
+    for m in re.finditer(r'\(\s*(?:1\s*)?(kg|l|100\s*g|100\s*ml)\s*=\s*(\d+(?:[.,]\d+)?)\s*\)',t,re.I):
+        raw=m.group(1).lower().replace(' ','');v=float(m.group(2).replace(',','.'))
+        if raw=='100g':u='kg';v*=10
+        elif raw=='100ml':u='l';v*=10
+        else:u=raw
+        if v not in vals_by_unit[u]:vals_by_unit[u].append(v)
+    nonempty=[(u,v) for u,v in vals_by_unit.items() if v]
+    if len(nonempty)==1:return nonempty[0][1],nonempty[0][0]
+    qs,u=_quantity_values(t)
+    if u in {'g','kg'} and vals_by_unit['kg']:return vals_by_unit['kg'],'kg'
+    if u in {'ml','l'} and vals_by_unit['l']:return vals_by_unit['l'],'l'
+    up,upu=_extract_unit_price(t)
+    return ([up] if up is not None else []),upu
+
+def _expected_price_candidates(product:PdfBlock)->list[float]:
+    qs,unit=_quantity_values(product.text);ups,upu=_unit_price_values(product.text)
+    if not qs or not ups or not unit or not upu:return []
+    def calc(q,up):
+        if unit=='g' and upu=='kg': return q*up/1000
+        if unit=='kg' and upu=='kg': return q*up
+        if unit=='ml' and upu=='l': return q*up/1000
+        if unit=='l' and upu=='l': return q*up
+        return None
+    sequences=[]
+    if len(qs)==len(ups):
+        for uv in (ups,list(reversed(ups)) if len(ups)>1 else ups):
+            vals=[calc(q,u) for q,u in zip(qs,uv)];vals=[v for v in vals if v is not None and .02<=v<=5000]
+            if vals:sequences.append((max(vals)-min(vals),vals))
+    if not sequences:
+        vals=[calc(q,u) for q in qs for u in ups];vals=[v for v in vals if v is not None and .02<=v<=5000]
+        if vals: sequences.append((max(vals)-min(vals),vals))
+    if not sequences:return []
+    sequences.sort(key=lambda x:x[0]);vals=sequences[0][1]
+    if max(vals)-min(vals)<=max(.04,.015*sum(vals)/len(vals)):return [round(sum(vals)/len(vals)+1e-9,2)]
+    return sorted({round(v+1e-9,2) for v in vals})
+
+
+def _is_bad_price_context(text:str)->bool:
+    low=(text or '').lower()
+    if any(k in low for k in ('gültig von','gültig ab','gültig am','montag','dienstag','mittwoch','donnerstag','freitag','samstag','sonntag','kw 3','pfand')):
+        if 'pfand' in low and ('*' in low or 'aktion' in low):return False
+        return True
+    if 'sparen' in low and '*' not in low and 'aktion' not in low:return True
+    if 'bonus' in low:return True
+    return False
+
+def _expected_price_from_base(product:PdfBlock)->float|None:
+    vals=_expected_price_candidates(product)
+    return vals[0] if len(vals)==1 else None
+
+def _match_price(product:PdfBlock, price_blocks:list[tuple[PdfBlock,float]], retailer:str)->tuple[float|None,PdfBlock|None]:
+    embedded=_embedded_price_from_product_block(product,retailer)
+    if embedded is not None and 0.02<=embedded<=5000:return embedded,product
+    expected_candidates=_expected_price_candidates(product);ranked=[]
+    for pb,price in price_blocks:
+        if _is_bad_price_context(pb.text):continue
+        d=_rect_distance(product,pb)
+        if d>360:continue
+        if retailer in {"Netto Marken-Discount","ALDI SÜD"} and pb.y1 < product.y0-8:continue
+        score=d
+        if expected_candidates:
+            rel=min(abs(price-e)/max(e,.05) for e in expected_candidates);score += min(rel,4.0)*220
+            if rel<=.025:score-=120
+            elif rel<=.08:score-=55
+        if _x_overlap(product,pb)>.15:score-=35
+        y_overlap=max(0,min(product.y1,pb.y1)-max(product.y0,pb.y0))
+        if y_overlap>0:score-=25
+        ranked.append((score,d,price,pb))
+    if ranked:
+        ranked.sort(key=lambda x:(x[0],x[1]));_,_,price,pb=ranked[0]
+        if expected_candidates:
+            best_exp=min(expected_candidates,key=lambda e:abs(e-price))
+            if abs(price-best_exp)/max(best_exp,.05)>.22:
+                closer=[x for x in ranked if min(abs(x[2]-e)/max(e,.05) for e in expected_candidates)<=.12]
+                if closer:
+                    closer.sort(key=lambda x:(min(abs(x[2]-e)/max(e,.05) for e in expected_candidates),x[1]));return closer[0][2],closer[0][3]
+        return price,pb
+    return (expected_candidates[0],None) if len(expected_candidates)==1 else (None,None)
+
+def _document_text(doc)->str:
+    chunks=[]
