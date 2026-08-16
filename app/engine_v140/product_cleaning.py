@@ -9,8 +9,11 @@ def normalize_known_product_name(text:str)->str:
     if re.match(r"^ramont\s+weichkäse\b",t,re.I): t=re.sub(r"^ramont\b","Géramont",t,flags=re.I)
     return t
 
-BAD_EXACT={"filiale","filiale & shop","aktion","knaller","angebote","angebot","zu den angeboten","alle anzeigen","image","online-shop","onlineshop","tiefgefroren","gekühlt","original","classic","natur","versch. sorten"}
+BAD_EXACT={"filiale","filiale & shop","aktion","knaller","angebote","angebot","zu den angeboten","alle anzeigen","image","online-shop","onlineshop","tiefgefroren","gekühlt","original","classic","natur","versch. sorten","100% pflanzlich"}
 PACK_ONLY=re.compile(r"^[,;:\-–\s]*(?:je\s+)?\d+(?:[.,]\d+)?\s*[-]?\s*(?:kg|g|l|ml|stück|stk\.?|pckg\.?|btl\.?|fl\.?|becher|dose|flasche)(?:\s*[-,;:].*)?$",re.I)
+SET_ONLY=re.compile(r"^\d+er[-\s]*set$",re.I)
+ALCOHOL_DESCRIPTOR=re.compile(r"^(?:\d{1,2}(?:[.,]\d+)?\s*[-–]\s*)?\d{1,2}(?:[.,]\d+)?\s*%\s*vol\.?\b.*$",re.I)
+PERCENT_DESCRIPTOR=re.compile(r"^\d{1,3}(?:[.,]\d+)?\s*%\s+(?:pflanzlich|fett|frucht|kakao|saft)\b.*$",re.I)
 PRICE_SUFFIX=re.compile(r"(?:\s+|^)(?:\d{1,3}[.,]\d{2})\s*(?:€)?\s*(?:App)?\s*$",re.I)
 VALIDITY_SUFFIX=re.compile(r"\s+Gültig\s+(?:ab|vom)\s+\d{1,2}\.\d{1,2}\.(?:20)?\d{2}(?:\s+bis\s+(?:zum\s+)?\d{1,2}\.\d{1,2}\.(?:20)?\d{2})?\s*",re.I)
 PAYBACK_SUFFIX=re.compile(r"\s+\d+\s*Extra\s*[°º]?\s*P\b.*$",re.I)
@@ -47,6 +50,9 @@ def product_name_issue(name:str|None)->str|None:
     if not text or len(text)<2:return "Produktname fehlt/zu kurz"
     if low in BAD_EXACT:return "Navigation/Überschrift/Eigenschaft statt Produkt"
     if re.fullmatch(r'\d{1,3}(?:[.,]\d+)?\s*%\s*(?:vol\.?)?', text, re.I):return "Nur Alkohol-/Prozentangabe, kein Produkt"
+    if ALCOHOL_DESCRIPTOR.match(text):return "Alkoholangabe statt Produktname"
+    if PERCENT_DESCRIPTOR.match(text):return "Prozent-/Eigenschaftsangabe statt Produktname"
+    if SET_ONLY.match(text):return "Set-Angabe statt Produktname"
     if PACK_ONLY.match(text):return "Nur Packungsangabe, kein Produktname"
     if text.startswith((",",".",";",":","-","–")):return "Produktname beginnt mit Satz-/Packungsfragment"
     if len(text)>110:return "Produktname ungewöhnlich lang"
