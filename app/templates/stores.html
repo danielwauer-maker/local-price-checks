@@ -1,1 +1,166 @@
-{% extends 'base.html' %}{% block content %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3yn5haTCI9pTtO4d7W77d1XjVhWlA=" crossorigin=""><h1>Meine Märkte</h1><form method="post" action="/maerkte/standort"><div class="row"><input name="postal_code" placeholder="PLZ" value="{{ user.postal_code or '' }}" required><input name="city" placeholder="Ort" value="{{ user.city or '' }}" required></div><label>Radius <input type="number" name="radius_km" min="1" max="50" step="1" value="{{ user.radius_km }}"> km</label><button>Standort speichern</button></form><p class="muted">Keine GPS-Abfrage. Es werden nur PLZ, Ort, Radius und deine Marktauswahl gespeichert.</p>{% if user.latitude is not none and user.longitude is not none %}<div id="map" style="height:320px;border-radius:16px;overflow:hidden;margin:1rem 0"></div>{% else %}<div class="map-placeholder">Bitte zuerst PLZ und Ort speichern.</div>{% endif %}{% for store,distance,selected in rows %}<article><div><b>{{ store.name }}</b><small>{{ store.address }}, {{ store.postal_code }} {{ store.city }}{% if distance is not none %} · {{ '%.1f'|format(distance) }} km{% endif %}</small></div>{% if store.benchmark_verified %}<form method="post" action="/maerkte/{{ store.id }}/toggle"><button class="ghost">{{ '★ Ausgewählt' if selected else '☆ Auswählen' }}</button></form>{% else %}<span class="badge">noch nicht freigegeben</span>{% endif %}</article>{% endfor %}{% if user.latitude is not none and user.longitude is not none %}<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script><script>const center=[{{ user.latitude }},{{ user.longitude }}];const map=L.map('map').setView(center,11);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);L.marker(center).addTo(map).bindPopup('Hauptstandort: {{ user.postal_code }} {{ user.city }}');L.circle(center,{radius:{{ user.radius_km * 1000 }},fillOpacity:.05}).addTo(map);{% for store,distance,selected in rows %}{% if store.latitude is not none and store.longitude is not none %}L.marker([{{ store.latitude }},{{ store.longitude }}]).addTo(map).bindPopup({{ (store.name ~ '<br>' ~ store.address ~ '<br>' ~ ('★ ausgewählt' if selected else ('verfügbar' if store.benchmark_verified else 'noch nicht freigegeben')))|tojson }});{% endif %}{% endfor %}</script>{% endif %}{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3yn5haTCI9pTtO4d7W77d1XjVhWlA=" crossorigin="">
+
+<section class="stores-page">
+  <header class="page-header">
+    <h1>Meine Märkte</h1>
+    <p class="muted">Lege deinen Hauptstandort, den Suchradius und deine bevorzugten Märkte fest.</p>
+  </header>
+
+  <form class="location-card" method="post" action="/maerkte/standort">
+    <div class="location-row">
+      <label>
+        <span>PLZ</span>
+        <input name="postal_code" inputmode="numeric" autocomplete="postal-code" placeholder="PLZ" value="{{ user.postal_code or '' }}" required>
+      </label>
+      <label>
+        <span>Ort</span>
+        <input name="city" autocomplete="address-level2" placeholder="Ort" value="{{ user.city or '' }}" required>
+      </label>
+    </div>
+    <label class="radius-field">
+      <span>Radius</span>
+      <div class="input-suffix">
+        <input type="number" name="radius_km" min="1" max="50" step="1" value="{{ user.radius_km }}">
+        <span>km</span>
+      </div>
+    </label>
+    <button class="location-save">Standort speichern</button>
+    <p class="privacy-note">Keine GPS-Abfrage. Gespeichert werden nur PLZ, Ort, Radius und deine Marktauswahl.</p>
+  </form>
+
+  {% if user.latitude is not none and user.longitude is not none %}
+    <section class="market-summary" aria-label="Standortübersicht">
+      <div><small>Hauptstandort</small><strong>{{ user.postal_code }} {{ user.city }}</strong></div>
+      <div><small>Radius</small><strong>{{ '%.0f'|format(user.radius_km) }} km</strong></div>
+      <div><small>Gefunden</small><strong>{{ rows|length }}</strong></div>
+      <div><small>Ausgewählt</small><strong>{{ rows|selectattr('2')|list|length }}</strong></div>
+    </section>
+
+    <div class="map-shell">
+      <div id="map" aria-label="Karte mit Hauptstandort und Märkten"></div>
+      <div class="map-legend">
+        <span><i class="legend-dot home"></i>Standort</span>
+        <span><i class="legend-dot selected"></i>Ausgewählt</span>
+        <span><i class="legend-dot available"></i>Verfügbar</span>
+      </div>
+    </div>
+  {% else %}
+    <div class="map-placeholder">Bitte zuerst PLZ und Ort speichern.</div>
+  {% endif %}
+
+  <div class="markets-heading">
+    <div>
+      <h2>Märkte im Umkreis</h2>
+      <p class="muted">Nur ausgewählte, freigegebene Märkte werden später im Preisvergleich berücksichtigt.</p>
+    </div>
+  </div>
+
+  <section class="market-list">
+    {% for store,distance,selected in rows %}
+      <article class="market-card {{ 'is-selected' if selected else '' }}">
+        <div class="market-card-main">
+          <div class="market-title-row">
+            <strong>{{ store.name }}</strong>
+            {% if selected %}<span class="selected-pill">Ausgewählt</span>{% endif %}
+          </div>
+          <div class="market-meta">{{ store.address }}, {{ store.postal_code }} {{ store.city }}</div>
+          {% if distance is not none %}<div class="distance">{{ '%.1f'|format(distance) }} km entfernt</div>{% endif %}
+        </div>
+        <div class="market-card-action">
+          {% if store.benchmark_verified %}
+            <form method="post" action="/maerkte/{{ store.id }}/toggle">
+              <button class="{{ 'market-toggle selected' if selected else 'market-toggle' }}">{{ '★ Ausgewählt' if selected else '☆ Auswählen' }}</button>
+            </form>
+          {% else %}
+            <span class="badge">noch nicht freigegeben</span>
+          {% endif %}
+        </div>
+      </article>
+    {% else %}
+      <div class="empty-card">In diesem Radius wurden noch keine Märkte gefunden.</div>
+    {% endfor %}
+  </section>
+</section>
+
+{% if user.latitude is not none and user.longitude is not none %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+(function () {
+  const center = [{{ user.latitude }}, {{ user.longitude }}];
+  const radiusMeters = {{ user.radius_km * 1000 }};
+  const map = L.map('map', { zoomControl: true, scrollWheelZoom: false });
+
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  const homeIcon = L.divIcon({
+    className: 'market-map-icon-wrap',
+    html: '<span class="market-map-icon home">⌂</span>',
+    iconSize: [36, 36],
+    iconAnchor: [18, 18]
+  });
+  const selectedIcon = L.divIcon({
+    className: 'market-map-icon-wrap',
+    html: '<span class="market-map-icon selected">★</span>',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17]
+  });
+  const availableIcon = L.divIcon({
+    className: 'market-map-icon-wrap',
+    html: '<span class="market-map-icon available">●</span>',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15]
+  });
+  const lockedIcon = L.divIcon({
+    className: 'market-map-icon-wrap',
+    html: '<span class="market-map-icon locked">●</span>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+
+  const bounds = L.latLngBounds([center]);
+  L.circle(center, {
+    radius: radiusMeters,
+    color: '#176b45',
+    weight: 2,
+    opacity: .55,
+    fillColor: '#176b45',
+    fillOpacity: .07
+  }).addTo(map);
+
+  L.marker(center, { icon: homeIcon, zIndexOffset: 1000 })
+    .addTo(map)
+    .bindPopup({{ ('<strong>Hauptstandort</strong><br>' ~ user.postal_code ~ ' ' ~ user.city)|tojson }});
+
+  {% for store,distance,selected in rows %}
+    {% if store.latitude is not none and store.longitude is not none %}
+      (function () {
+        const point = [{{ store.latitude }}, {{ store.longitude }}];
+        const marker = L.marker(point, {
+          icon: {{ 'selectedIcon' if selected else ('availableIcon' if store.benchmark_verified else 'lockedIcon') }}
+        }).addTo(map);
+        marker.bindPopup({{ ('<strong>' ~ store.name ~ '</strong><br>' ~ store.address ~ '<br>' ~ (('%.1f km entfernt'|format(distance)) if distance is not none else '') ~ '<br>' ~ ('★ ausgewählt' if selected else ('verfügbar' if store.benchmark_verified else 'noch nicht freigegeben')))|tojson }});
+        bounds.extend(point);
+      })();
+    {% endif %}
+  {% endfor %}
+
+  map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
+
+  // Leaflet kann in dynamischen/responsiven Containern zunächst eine falsche Breite messen.
+  // Nach dem ersten Layout erzwingen wir daher eine Neuberechnung und zentrieren erneut.
+  requestAnimationFrame(function () {
+    map.invalidateSize(true);
+    map.fitBounds(bounds.pad(0.18), { maxZoom: 12 });
+  });
+  window.setTimeout(function () {
+    map.invalidateSize(true);
+  }, 250);
+})();
+</script>
+{% endif %}
+{% endblock %}
