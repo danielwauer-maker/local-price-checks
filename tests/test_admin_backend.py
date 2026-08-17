@@ -1,4 +1,5 @@
 from app.admin_learning import apply_product_correction, resolve_product_alias
+from app.admin_quality import build_quality_report
 from app.admin_seed import seed_admin_catalog
 from app.db import Base, SessionLocal, engine
 from app.models import AdminAuditLog, MasterProduct, ProductAdminData, ProductAlias, ProductCategory
@@ -52,4 +53,25 @@ def test_product_correction_creates_learning_alias_and_locked_metadata():
     assert alias.master_product_id == product.id
     assert resolve_product_alias(db, key).id == product.id
     assert db.query(AdminAuditLog).filter(AdminAuditLog.entity_id == str(product.id)).count() >= 1
+    db.close()
+
+
+def test_quality_report_flags_suspicious_missing_category_and_duplicates():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    rows = [
+        ("2 Kassenbon hochladen und QR-Code scannen", "quality-bad-a"),
+        ("Test Qualitätsprodukt", "quality-dup-a"),
+        ("Test Qualitätsprodukt", "quality-dup-b"),
+    ]
+    for name, key in rows:
+        if not db.query(MasterProduct).filter_by(normalized_key=key).first():
+            db.add(MasterProduct(name=name, normalized_key=key))
+    db.commit()
+
+    report = build_quality_report(db)
+    assert report["counts"]["suspicious"] >= 1
+    assert report["counts"]["missing_category"] >= 1
+    assert report["counts"]["duplicates"] >= 1
+    assert any("Kassenbon" in product.name for product, _ in report["suspicious"])
     db.close()
