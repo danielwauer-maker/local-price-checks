@@ -10,6 +10,7 @@ import {
 import { DEFAULT_LOCATION, MARKETS, PRODUCTS, PRICES, distanceKm, type Market, type Price, type Product } from "@/data/demo";
 
 type Location = { lat: number; lng: number; label: string };
+type Profile = { displayName: string; postalCode: string; city: string };
 
 type StoreState = {
   location: Location;
@@ -17,13 +18,22 @@ type StoreState = {
   maxStops: number;
   selected: string[];
   favorites: string[];
+  productFavorites: string[];
+  checked: string[];
+  profile: Profile;
   basket: Record<string, number>;
 };
 
-type BootstrapPayload = StoreState & {
+type BootstrapPayload = Omit<StoreState, "productFavorites" | "checked" | "profile"> & {
   markets: Market[];
   products: Product[];
   prices: Price[];
+};
+
+type UxBootstrapPayload = {
+  profile: Profile;
+  productFavorites: string[];
+  checked: string[];
 };
 
 const initialState: StoreState = {
@@ -32,6 +42,9 @@ const initialState: StoreState = {
   maxStops: 2,
   selected: [],
   favorites: [],
+  productFavorites: [],
+  checked: [],
+  profile: { displayName: "", postalCode: "", city: "" },
   basket: {},
 };
 
@@ -45,6 +58,9 @@ type StoreContext = StoreState & {
   setMaxStops: (n: number) => void;
   toggleSelected: (id: string) => void;
   toggleFavorite: (id: string) => void;
+  toggleProductFavorite: (id: string) => void;
+  toggleChecked: (id: string) => void;
+  updateProfile: (profile: Profile) => Promise<void>;
   addToBasket: (productId: string, qty?: number) => void;
   setQty: (productId: string, qty: number) => void;
   clearBasket: () => void;
@@ -65,12 +81,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let live = true;
-    api("/api/bootstrap")
-      .then((r) => {
+    Promise.all([
+      api("/api/bootstrap").then((r) => {
         if (!r.ok) throw new Error(`bootstrap ${r.status}`);
         return r.json() as Promise<BootstrapPayload>;
-      })
-      .then((payload) => {
+      }),
+      api("/api/ux/bootstrap").then((r) => {
+        if (!r.ok) throw new Error(`ux bootstrap ${r.status}`);
+        return r.json() as Promise<UxBootstrapPayload>;
+      }),
+    ])
+      .then(([payload, ux]) => {
         if (!live) return;
         MARKETS.splice(0, MARKETS.length, ...payload.markets);
         PRODUCTS.splice(0, PRODUCTS.length, ...payload.products);
@@ -81,6 +102,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           maxStops: 2,
           selected: payload.selected,
           favorites: payload.favorites,
+          productFavorites: ux.productFavorites,
+          checked: ux.checked,
+          profile: ux.profile,
           basket: payload.basket,
         });
       })
@@ -144,10 +168,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             ? s.favorites.filter((x) => x !== id)
             : [...s.favorites, id],
         })),
+      toggleProductFavorite: (id) => {
+        patch((s) => ({
+          productFavorites: s.productFavorites.includes(id)
+            ? s.productFavorites.filter((x) => x !== id)
+            : [...s.productFavorites, id],
+        }));
+        void api(`/api/ux/favorites/${id}/toggle`, { method: "POST" });
+      },
+      toggleChecked: (id) => {
+        const next = !state.checked.includes(id);
+        patch((s) => ({ checked: next ? [...s.checked, id] : s.checked.filter((x) => x !== id) }));
+        void api(`/api/ux/checked/${id}`, { method: "PUT", body: JSON.stringify({ checked: next }) });
+      },
+      updateProfile: async (profile) => {
+        const response = await api("/api/ux/profile", { method: "PUT", body: JSON.stringify({ display_name: profile.displayName, postal_code: profile.postalCode, city: profile.city }) });
+        if (!response.ok) throw new Error(`profile ${response.status}`);
+        const result = await response.json() as { label?: string; lat?: number; lng?: number };
+        patch((s) => ({
+          profile,
+          location: result.lat != null && result.lng != null
+            ? { lat: result.lat, lng: result.lng, label: result.label || `${profile.postalCode} ${profile.city}`.trim() }
+            : s.location,
+        }));
+      },
       addToBasket: (productId, qty = 1) => {
         const nextQty = (state.basket[productId] ?? 0) + qty;
-        patch((s) => ({ basket: { ...s.basket, [productId]: nextQty } }));
+        patch((s) => ({ basket: { ...s.basket, [productId]: nextQty }, checked: s.checked.filter((x) => x !== productId) }));
         void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: nextQty }) });
+        void api(`/api/ux/checked/${productId}`, { method: "PUT", body: JSON.stringify({ checked: false }) });
       },
       setQty: (productId, qty) => {
         const safeQty = Math.max(0, qty);
@@ -155,12 +204,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           const next = { ...s.basket };
           if (safeQty <= 0) delete next[productId];
           else next[productId] = safeQty;
-          return { basket: next };
+          return { basket: next, checked: safeQty <= 0 ? s.checked.filter((x) => x !== productId) : s.checked };
         });
         void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: safeQty }) });
       },
       clearBasket: () => {
-        patch({ basket: {} });
+        patch({ basket: {}, checked: [] });
         void api("/api/basket", { method: "DELETE" });
       },
     };
@@ -175,7 +224,6 @@ export function useStore() {
   return ctx;
 }
 
-/** Aktive Vergleichsmärkte: gewählte Märkte innerhalb des Radius. */
 export function useActiveMarketIds() {
   const { selected, marketsInRadius } = useStore();
   return useMemo(() => {
