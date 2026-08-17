@@ -35,6 +35,8 @@ class Settings:
     stale_after_hours: int = int(os.getenv("STALE_AFTER_HOURS", "36"))
     driving_cost_per_km: float = float(os.getenv("DRIVING_COST_PER_KM", "0.30"))
     route_distance_factor: float = float(os.getenv("ROUTE_DISTANCE_FACTOR", "1.25"))
+    admin_username: str = os.getenv("ADMIN_USERNAME", "admin").strip()
+    admin_password: str = os.getenv("ADMIN_PASSWORD", "").strip()
 
 
 settings = Settings()
