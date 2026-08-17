@@ -64,20 +64,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function PageHeader({
-  title,
-  subtitle,
-  action,
-}: {
-  title: string;
-  subtitle?: string;
-  action?: ReactNode;
-}) {
+export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: ReactNode; action?: ReactNode }) {
   return (
     <header className="flex items-start justify-between gap-3 px-5 pb-3 pt-[max(1.25rem,env(safe-area-inset-top))]">
       <div>
         <h1 className="text-2xl font-semibold">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p>}
+        {subtitle && <div className="mt-0.5 text-sm text-muted-foreground">{subtitle}</div>}
       </div>
       {action}
     </header>
