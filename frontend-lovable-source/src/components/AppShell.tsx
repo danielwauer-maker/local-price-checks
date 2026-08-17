@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Home, Map, ScanLine, ListChecks, Tag } from "lucide-react";
+import { Heart, Home, ListChecks, Map, ScanLine, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { to: "/", label: "Start", icon: Home },
   { to: "/maerkte", label: "Märkte", icon: Map },
-  { to: "/scanner", label: "Scan", icon: ScanLine, center: true },
+  { to: "/favoriten", label: "Favoriten", icon: Heart },
   { to: "/liste", label: "Liste", icon: ListChecks },
   { to: "/angebote", label: "Angebote", icon: Tag },
 ] as const;
@@ -18,26 +18,26 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-frame flex flex-col">
-      <div className="flex-1 pb-28">{children}</div>
+      {pathname !== "/scanner" && (
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-50 mx-auto w-full max-w-[460px] px-4 pt-[max(.75rem,env(safe-area-inset-top))]">
+          <div className="flex justify-end">
+            <Link
+              to="/scanner"
+              className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-border/70 bg-surface/90 text-primary shadow-card backdrop-blur"
+              aria-label="Scanner öffnen"
+            >
+              <ScanLine className="h-4.5 w-4.5" strokeWidth={2.1} />
+            </Link>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 pb-24">{children}</div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-[460px] border-t border-border bg-surface/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur">
         <ul className="flex items-end justify-between">
-          {NAV.map(({ to, label, icon: Icon, ...rest }) => {
+          {NAV.map(({ to, label, icon: Icon }) => {
             const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
-            const center = "center" in rest && rest.center;
-            if (center) {
-              return (
-                <li key={to} className="flex-1">
-                  <Link
-                    to={to}
-                    className="mx-auto -mt-7 flex h-14 w-14 flex-col items-center justify-center rounded-full gradient-hero text-primary-foreground shadow-float"
-                    aria-label={label}
-                  >
-                    <Icon className="h-6 w-6" strokeWidth={2.2} />
-                  </Link>
-                </li>
-              );
-            }
             return (
               <li key={to} className="flex-1">
                 <Link
