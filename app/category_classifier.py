@@ -5,14 +5,14 @@ from sqlalchemy.orm import Session
 from .models import MasterProduct, ProductAdminData, ProductCategory
 
 CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("obst-gemuese", (
-        "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine", "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume", "tomate", "gurke", "paprika", "kartoffel", "zwiebel", "knoblauch", "salat", "möhre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "champignon", "gemüse", "obst", "avocado",
-    )),
     ("backwaren", (
         "brot", "brötchen", "croissant", "baguette", "toast", "kuchen", "torte", "muffin", "donut", "backware", "brezel", "stuten",
     )),
     ("molkerei-kuehlung", (
         "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "käse", "mozzarella", "feta", "butter", "margarine", "sahne", "schmand", "kefir", "pudding", "milchreis", "frischkäse", "skyr", "dessert", "eier", "ei ",
+    )),
+    ("obst-gemuese", (
+        "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine", "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume", "tomate", "gurke", "paprika", "kartoffel", "zwiebel", "knoblauch", "salat", "möhre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "champignon", "gemüse", "obst", "avocado",
     )),
     ("fleisch-fisch", (
         "fleisch", "rind", "schwein", "hähnchen", "huhn", "pute", "hack", "steak", "schnitzel", "braten", "wurst", "salami", "schinken", "speck", "würstchen", "bratwurst", "fisch", "lachs", "thunfisch", "garnelen", "forelle", "kabeljau", "seelachs",
