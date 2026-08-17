@@ -62,6 +62,7 @@ type StoreContext = StoreState & {
   toggleChecked: (id: string) => void;
   updateProfile: (profile: Profile) => Promise<void>;
   addToBasket: (productId: string, qty?: number) => void;
+  toggleBasket: (productId: string) => void;
   setQty: (productId: string, qty: number) => void;
   clearBasket: () => void;
 };
@@ -177,6 +178,19 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         patch((s) => ({ basket: { ...s.basket, [productId]: nextQty }, checked: s.checked.filter((x) => x !== productId) }));
         void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: nextQty }) });
         void api(`/api/ux/checked/${productId}`, { method: "PUT", body: JSON.stringify({ checked: false }) });
+      },
+      toggleBasket: (productId) => {
+        const inBasket = (state.basket[productId] ?? 0) > 0;
+        const nextQty = inBasket ? 0 : 1;
+        patch((s) => {
+          const next = { ...s.basket };
+          if (inBasket) delete next[productId]; else next[productId] = 1;
+          return { basket: next, checked: s.checked.filter((x) => x !== productId) };
+        });
+        void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: nextQty }) });
+        if (inBasket) {
+          void api(`/api/ux/checked/${productId}`, { method: "PUT", body: JSON.stringify({ checked: false }) });
+        }
       },
       setQty: (productId, qty) => {
         const safeQty = Math.max(0, qty);
