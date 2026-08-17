@@ -130,12 +130,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       .filter(([, qty]) => qty > 0)
       .map(([productId, qty]) => ({ productId, qty }));
 
+    const activeBasketCount = basketEntries.filter((entry) => !state.checked.includes(entry.productId)).length;
+
     return {
       ...state,
       hydrated,
       marketsInRadius,
       basketEntries,
-      basketCount: basketEntries.reduce((s, e) => s + e.qty, 0),
+      basketCount: activeBasketCount,
       setLocation: (location) => {
         patch({ location });
         void api("/api/location", { method: "PUT", body: JSON.stringify({ ...location, radius: state.radius }) });
