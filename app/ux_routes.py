@@ -95,6 +95,14 @@ def set_checked(product_id: int, payload: CheckedPayload, db: Session = Depends(
     return {"productId": str(product_id), "checked": payload.checked}
 
 
+@router.delete("/checked")
+def clear_checked(db: Session = Depends(get_db)):
+    user = current_user(db)
+    db.query(ShoppingItemCheck).filter(ShoppingItemCheck.user_id == user.id).delete()
+    db.commit()
+    return {"ok": True}
+
+
 def _netto_prospect_url(store: Store, offset_weeks: int = 0) -> str | None:
     if store.retailer != "Netto Marken-Discount" or not store.external_id:
         return None
@@ -109,7 +117,10 @@ def store_detail(store_id: int, db: Session = Depends(get_db)):
     if not store or not store.active:
         raise HTTPException(404, "Market not found")
     current = _netto_prospect_url(store, 0) or store.source_url
-    future = _netto_prospect_url(store, 1)
+    direct_future = _netto_prospect_url(store, 1)
+    # For retailers with a combined official offer/prospect page, reuse the
+    # official page as future entry point; the user can select "next week" there.
+    future = direct_future or store.source_url
     lat = store.latitude
     lng = store.longitude
     google = None
@@ -128,6 +139,7 @@ def store_detail(store_id: int, db: Session = Depends(get_db)):
         "lng": lng,
         "currentProspectUrl": current,
         "futureProspectUrl": future,
+        "futureProspectDirect": bool(direct_future),
         "directions": {"google": google, "apple": apple, "osm": osm},
     }
 
