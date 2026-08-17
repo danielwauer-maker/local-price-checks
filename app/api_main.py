@@ -6,6 +6,7 @@ from .media_routes import router as media_router
 from .ux_routes import router as ux_router
 from .prospect_routes import router as prospect_router
 from .admin_seed import seed_admin_catalog
+from .category_classifier import backfill_auto_categories
 from .db import SessionLocal
 
 app.include_router(router)
@@ -21,5 +22,6 @@ def startup_admin_catalog():
     db = SessionLocal()
     try:
         seed_admin_catalog(db)
+        backfill_auto_categories(db)
     finally:
         db.close()
