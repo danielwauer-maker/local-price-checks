@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Collector & Support · LocalPrices Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#a33b2c}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1500px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:800}.sub,.small{color:var(--muted)}.nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.nav a,.btn{border:1px solid var(--line);border-radius:11px;padding:9px 13px;background:#fff;color:var(--text);text-decoration:none;font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.actions{display:flex;gap:10px;flex-wrap:wrap}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8;margin-top:16px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.bad{background:#fae9e6;color:var(--danger)}.scroll{overflow:auto}@media(max-width:700px){.wrap{padding:12px}.top{flex-direction:column}}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="top"><div><div class="brand">Collector & Support</div><div class="sub">Prospekte sammeln, Imports prüfen und Supportdaten exportieren</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+  <div class="nav"><a href="/admin">← Admin-Dashboard</a><a href="/datenstatus">Datenstatus</a></div>
+
+  {% if collected %}<div class="notice">Sammlung abgeschlossen: <b>{{ collected }}</b></div>{% endif %}
+
+  <div class="card">
+    <h2>Betrieb</h2>
+    <div class="actions">
+      <form method="post" action="/admin/collector/run-all"><button class="btn primary">Alle verifizierten Märkte jetzt sammeln</button></form>
+      <a class="btn" href="/admin/support-export.zip">Support-Export ZIP herunterladen</a>
+    </div>
+    <p class="small">Scheduler: {{ 'aktiv' if scheduler_enabled else 'inaktiv' }} · Manuelle Sammlung ENV: {{ 'aktiv' if manual_collection_enabled else 'inaktiv' }}. Admin-Sammlungen sind unabhängig davon geschützt über den Admin-Login verfügbar.</p>
+    <p class="small">Der Quick-Support-Export enthält Stammdaten, aktuelle Angebote, letzte Collector-Läufe, Prospekt-Metadaten und Dateiliste. Passwörter/Secrets und große PDF-Binärdateien werden bewusst nicht mitexportiert.</p>
+  </div>
+
+  <div class="card"><h2>Märkte</h2><div class="scroll"><table>
+    <tr><th>Markt</th><th>Status</th><th>Verifiziert</th><th>Letzter Lauf</th><th>Empfangen / importiert</th><th>Diagnose</th><th></th></tr>
+    {% for s in stores %}{% set r=latest.get(s.id) %}<tr>
+      <td><b>{{ s.name }}</b><br><span class="small">{{ s.retailer }} · {{ s.city }}</span></td>
+      <td><span class="pill {% if not s.active %}bad{% endif %}">{{ 'aktiv' if s.active else 'inaktiv' }}</span></td>
+      <td>{{ 'ja' if s.benchmark_verified else 'nein' }}</td>
+      <td>{{ r.started_at if r else '–' }}<br>{% if r %}<span class="pill {% if r.status not in ['success'] %}bad{% endif %}">{{ r.status }}</span>{% endif %}</td>
+      <td>{{ r.offers_received if r else 0 }} / {{ r.offers_imported if r else 0 }}</td>
+      <td class="small">{{ r.message if r and r.message else '–' }}</td>
+      <td>{% if s.active and s.benchmark_verified %}<form method="post" action="/admin/collector/stores/{{ s.id }}/run"><button class="btn">Jetzt sammeln</button></form>{% else %}<span class="small">nicht freigegeben</span>{% endif %}</td>
+    </tr>{% endfor %}
+  </table></div></div>
+
+  <div class="card"><h2>Letzte 30 Collector-Läufe</h2><div class="scroll"><table>
+    <tr><th>Zeit</th><th>Markt</th><th>Status</th><th>Empfangen</th><th>Importiert</th><th>Diagnose</th></tr>
+    {% for r in recent %}<tr><td>{{ r.started_at }}</td><td>{{ r.store.name if r.store else r.store_id }}</td><td>{{ r.status }}</td><td>{{ r.offers_received }}</td><td>{{ r.offers_imported }}</td><td class="small">{{ r.message or '' }}</td></tr>{% endfor %}
+  </table></div></div>
+</div></body></html>
