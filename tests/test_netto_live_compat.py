@@ -1,6 +1,9 @@
+from datetime import date
+
 from app.engine_v140 import collectors
 from app.engine_v140.browser_fetch import BrowserFetchResult
 from app.engine_v140.source_registry import SOURCE_BY_KEY
+from app.engine_v140.week_utils import infer_validity, parse_any_date
 
 
 NETTO_TEXT = """
@@ -41,7 +44,6 @@ def test_netto_parser_handles_current_filial_cards_and_validity():
     source = SOURCE_BY_KEY["netto_dierdorf"]
     offers = collectors.parse_netto_text(source, NETTO_TEXT, [])
     assert len(offers) >= 2
-    by_name = {offer.product_name: offer for offer in offers}
     potatoes = next(offer for offer in offers if "Pfanni Speisekartoffeln" in offer.product_name)
     butter = next(offer for offer in offers if "Beste Butter" in offer.product_name)
     assert potatoes.price == 2.49
@@ -54,6 +56,14 @@ def test_netto_section_ignores_navigation_heading():
     section = collectors._netto_live_offer_section(NETTO_TEXT)
     assert "Pfanni Speisekartoffeln 2,5 kg Netz" in section
     assert "Preissenkung" not in section
+
+
+def test_date_parser_ignores_unit_price_ranges_and_prefers_ab_montag():
+    assert parse_any_date("0.25", date(2026, 8, 17)) is None
+    valid_from, valid_to, source, _ = infer_validity(NETTO_TEXT, date(2026, 8, 17))
+    assert valid_from == date(2026, 8, 17)
+    assert valid_to == date(2026, 8, 22)
+    assert source == "ab_montag"
 
 
 def test_netto_retries_rendered_page_when_http_shell_has_no_offers(monkeypatch):
