@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { ChevronDown, Heart, Plus, Search } from "lucide-react";
+import { ChevronDown, Heart, Search, ShoppingBasket } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
 import { currentOffers, formatEuro } from "@/data/demo";
@@ -14,7 +14,7 @@ export const Route = createFileRoute("/angebote")({
 
 function OffersPage() {
   const activeIds = useActiveMarketIds();
-  const { addToBasket, productFavorites, toggleProductFavorite } = useStore();
+  const { basket, toggleBasket, productFavorites, toggleProductFavorite } = useStore();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -60,6 +60,7 @@ function OffersPage() {
                 <div className="border-t border-border">
                   {rows.map((o) => {
                     const favorite = productFavorites.includes(o.product.id);
+                    const inBasket = (basket[o.product.id] ?? 0) > 0;
                     return (
                       <article key={`${o.product.id}-${o.market.id}`} className="flex gap-3 border-b border-border p-3 last:border-0">
                         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-3xl">
@@ -73,7 +74,11 @@ function OffersPage() {
                         </div>
                         <div className="flex flex-col items-center justify-center gap-2">
                           <button onClick={() => toggleProductFavorite(o.product.id)} className={cn("rounded-full p-2", favorite ? "bg-deal/12 text-deal" : "bg-secondary text-muted-foreground")} aria-label="Favorit"><Heart className={cn("h-4 w-4", favorite && "fill-current")} /></button>
-                          <button onClick={() => { addToBasket(o.product.id); toast.success(`${o.product.name} auf der Liste`); }} className="rounded-full bg-primary p-2.5 text-primary-foreground shadow-float" aria-label="Zur Einkaufsliste"><Plus className="h-4 w-4" strokeWidth={2.6} /></button>
+                          <button
+                            onClick={() => { toggleBasket(o.product.id); toast.success(inBasket ? `${o.product.name} von der Liste entfernt` : `${o.product.name} auf der Liste`); }}
+                            className={cn("rounded-full p-2.5 transition-colors", inBasket ? "bg-primary-soft text-primary" : "bg-secondary text-muted-foreground")}
+                            aria-label={inBasket ? "Von Einkaufsliste entfernen" : "Zur Einkaufsliste hinzufügen"}
+                          ><ShoppingBasket className={cn("h-5 w-5", inBasket && "fill-current/15")} /></button>
                         </div>
                       </article>
                     );
