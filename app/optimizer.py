@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from math import inf
 from sqlalchemy.orm import Session
 
@@ -45,56 +46,107 @@ def _route_km(user: UserProfile, stores: list[Store]) -> float:
     return km * settings.route_distance_factor
 
 
+def _evaluate_store_set(
+    user: UserProfile,
+    offered_items: list[ShoppingItem],
+    by_product: dict[int, list[Offer]],
+    store_ids: set[int],
+) -> tuple[float, float, float, list[tuple[ShoppingItem, Offer]]] | None:
+    """Return merchandise, route, total and picks for one complete store set.
+
+    A candidate is only valid when it covers every shopping-list item for which
+    at least one selected-market offer exists in the requested period.
+    """
+    picks: list[tuple[ShoppingItem, Offer]] = []
+    merchandise_total = 0.0
+    used_stores: dict[int, Store] = {}
+
+    for item in offered_items:
+        options = [o for o in by_product[item.master_product_id] if o.store_id in store_ids]
+        if not options:
+            return None
+        best = min(options, key=lambda o: o.price)
+        picks.append((item, best))
+        merchandise_total += best.price * item.quantity
+        used_stores[best.store_id] = best.store
+
+    route_km = _route_km(user, list(used_stores.values()))
+    total = merchandise_total + route_km * settings.driving_cost_per_km
+    return merchandise_total, route_km, total, picks
+
+
 def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem], period: str = "current") -> PlanResult:
     period = "next" if period == "next" else "current"
     offers = offers_for_selected_stores(db, user, period)
     by_product: dict[int, list[Offer]] = {}
+    stores_by_id: dict[int, Store] = {}
     for offer in offers:
         by_product.setdefault(offer.master_product_id, []).append(offer)
+        stores_by_id[offer.store_id] = offer.store
 
-    picks: list[tuple[ShoppingItem, Offer | None]] = []
-    merchandise_total = 0.0
-    selected_stores: dict[int, Store] = {}
-    for item in items:
-        opts = by_product.get(item.master_product_id, [])
-        if not opts:
-            picks.append((item, None))
-            continue
-        best = min(opts, key=lambda x: x.price)
-        picks.append((item, best))
-        merchandise_total += best.price * item.quantity
-        selected_stores[best.store_id] = best.store
-
-    stores = list(selected_stores.values())
-    travel_km = _route_km(user, stores)
-    travel_cost = travel_km * settings.driving_cost_per_km
-    total_with_travel = merchandise_total + travel_cost
-
-    # Best one-store alternative among selected stores. Only compare stores that
-    # have an offer for every item that has at least one offer in the selected set.
     offered_list_items = [item for item in items if by_product.get(item.master_product_id)]
-    candidate_store_ids = {o.store_id for o in offers}
+    missing_items = [item for item in items if not by_product.get(item.master_product_id)]
+    candidate_store_ids = sorted(stores_by_id)
+
+    # Evaluate all non-empty store combinations and choose the minimum of
+    # merchandise + estimated travel. This is the actual recommendation; it is
+    # deliberately not the same as choosing the cheapest store per product first.
+    best_total = inf
+    best_merchandise = 0.0
+    best_route_km = 0.0
+    best_offer_picks: list[tuple[ShoppingItem, Offer]] = []
+    best_store_ids: set[int] = set()
+
+    if offered_list_items:
+        for count in range(1, len(candidate_store_ids) + 1):
+            for combo in combinations(candidate_store_ids, count):
+                evaluation = _evaluate_store_set(user, offered_list_items, by_product, set(combo))
+                if evaluation is None:
+                    continue
+                merchandise, route_km, total, offer_picks = evaluation
+                # Prefer the cheaper total. For effectively equal totals prefer
+                # fewer actually used stores, then lower merchandise value.
+                used_ids = {offer.store_id for _, offer in offer_picks}
+                current_used = {offer.store_id for _, offer in best_offer_picks}
+                better = total < best_total - 0.005
+                tied_but_simpler = (
+                    abs(total - best_total) <= 0.005
+                    and (not current_used or len(used_ids) < len(current_used))
+                )
+                tied_same_stores_cheaper_goods = (
+                    abs(total - best_total) <= 0.005
+                    and len(used_ids) == len(current_used)
+                    and merchandise < best_merchandise
+                )
+                if better or tied_but_simpler or tied_same_stores_cheaper_goods:
+                    best_total = total
+                    best_merchandise = merchandise
+                    best_route_km = route_km
+                    best_offer_picks = offer_picks
+                    best_store_ids = used_ids
+
+    # Preserve shopping-list order and explicitly retain items without offers.
+    best_by_item_id = {item.id: offer for item, offer in best_offer_picks}
+    picks: list[tuple[ShoppingItem, Offer | None]] = [
+        (item, best_by_item_id.get(item.id)) for item in items
+    ]
+
+    selected_stores = [stores_by_id[store_id] for store_id in best_store_ids]
+    selected_stores.sort(key=lambda s: s.name)
+    travel_cost = best_route_km * settings.driving_cost_per_km
+    total_with_travel = 0.0 if best_total is inf else best_total
+
+    # Best complete one-store alternative, including its travel cost.
     best_single_name = None
     best_single_total = inf
     for store_id in candidate_store_ids:
-        line_total = 0.0
-        complete = True
-        store_obj = None
-        for item in offered_list_items:
-            opts = [o for o in by_product[item.master_product_id] if o.store_id == store_id]
-            if not opts:
-                complete = False
-                break
-            offer = min(opts, key=lambda x: x.price)
-            store_obj = offer.store
-            line_total += offer.price * item.quantity
-        if not complete or store_obj is None:
+        evaluation = _evaluate_store_set(user, offered_list_items, by_product, {store_id})
+        if evaluation is None:
             continue
-        one_route_km = _route_km(user, [store_obj])
-        total = line_total + one_route_km * settings.driving_cost_per_km
+        _, _, total, _ = evaluation
         if total < best_single_total:
             best_single_total = total
-            best_single_name = store_obj.name
+            best_single_name = stores_by_id[store_id].name
 
     if best_single_name is None:
         single_total = None
@@ -103,22 +155,21 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
     else:
         single_total = best_single_total
         saving = single_total - total_with_travel
-        worth = saving > 0.01 and len(stores) > 1
+        worth = saving > 0.01 and len(selected_stores) > 1
 
     one_market_covers_all_offered_items = (
         bool(offered_list_items)
-        and best_single_name is not None
-        and len(stores) == 1
-        and stores[0].name == best_single_name
+        and len(selected_stores) == 1
+        and best_single_name == selected_stores[0].name
     )
 
     return PlanResult(
         picks=picks,
-        merchandise_total=merchandise_total,
-        travel_km=travel_km,
+        merchandise_total=best_merchandise,
+        travel_km=best_route_km,
         travel_cost=travel_cost,
         total_with_travel=total_with_travel,
-        stores=stores,
+        stores=selected_stores,
         single_store_name=best_single_name,
         single_store_total=single_total,
         multi_store_saving=saving,
