@@ -122,10 +122,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<StoreContext>(() => {
-    const marketsInRadius = MARKETS.map((m) => ({
-      ...m,
-      distance: distanceKm(state.location, m),
-    }))
+    const marketsInRadius = MARKETS.map((m) => ({ ...m, distance: distanceKm(state.location, m) }))
       .filter((m) => m.distance <= state.radius)
       .sort((a, b) => a.distance - b.distance);
 
@@ -141,39 +138,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       basketCount: basketEntries.reduce((s, e) => s + e.qty, 0),
       setLocation: (location) => {
         patch({ location });
-        void api("/api/location", {
-          method: "PUT",
-          body: JSON.stringify({ ...location, radius: state.radius }),
-        });
+        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...location, radius: state.radius }) });
       },
       setRadius: (radius) => {
         patch({ radius });
-        void api("/api/location", {
-          method: "PUT",
-          body: JSON.stringify({ ...state.location, radius }),
-        });
+        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...state.location, radius }) });
       },
       setMaxStops: (maxStops) => patch({ maxStops }),
       toggleSelected: (id) => {
-        patch((s) => ({
-          selected: s.selected.includes(id)
-            ? s.selected.filter((x) => x !== id)
-            : [...s.selected, id],
-        }));
+        patch((s) => ({ selected: s.selected.includes(id) ? s.selected.filter((x) => x !== id) : [...s.selected, id] }));
         void api(`/api/stores/${id}/toggle`, { method: "POST" });
       },
-      toggleFavorite: (id) =>
-        patch((s) => ({
-          favorites: s.favorites.includes(id)
-            ? s.favorites.filter((x) => x !== id)
-            : [...s.favorites, id],
-        })),
+      toggleFavorite: (id) => patch((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id] })),
       toggleProductFavorite: (id) => {
-        patch((s) => ({
-          productFavorites: s.productFavorites.includes(id)
-            ? s.productFavorites.filter((x) => x !== id)
-            : [...s.productFavorites, id],
-        }));
+        patch((s) => ({ productFavorites: s.productFavorites.includes(id) ? s.productFavorites.filter((x) => x !== id) : [...s.productFavorites, id] }));
         void api(`/api/ux/favorites/${id}/toggle`, { method: "POST" });
       },
       toggleChecked: (id) => {
@@ -202,8 +180,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         const safeQty = Math.max(0, qty);
         patch((s) => {
           const next = { ...s.basket };
-          if (safeQty <= 0) delete next[productId];
-          else next[productId] = safeQty;
+          if (safeQty <= 0) delete next[productId]; else next[productId] = safeQty;
           return { basket: next, checked: safeQty <= 0 ? s.checked.filter((x) => x !== productId) : s.checked };
         });
         void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: safeQty }) });
@@ -211,6 +188,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       clearBasket: () => {
         patch({ basket: {}, checked: [] });
         void api("/api/basket", { method: "DELETE" });
+        void api("/api/ux/checked", { method: "DELETE" });
       },
     };
   }, [state, hydrated, patch]);
