@@ -96,6 +96,7 @@ def test_optimizer_uses_second_market_when_total_cost_is_lower(monkeypatch):
     assert {store.name for store in result.stores} == {"Markt A", "Markt B"}
     assert result.merchandise_total == 10.00
     assert result.total_with_travel == 12.40
-    assert result.single_store_name == "Markt A"
+    assert result.single_store_name == "Markt B"
+    assert result.single_store_total == 13.50
     assert result.multi_store_worth_it is True
     assert result.multi_store_saving is not None and result.multi_store_saving > 0
