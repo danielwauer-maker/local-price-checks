@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LocalPrices Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--green2:#4c963d;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#d97706;--danger:#c0392b}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+    a{color:inherit;text-decoration:none}.wrap{max-width:1500px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:18px}.brand{font-size:24px;font-weight:800}.sub{color:var(--muted)}
+    .nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}.nav a{padding:9px 13px;border-radius:12px;background:var(--card);border:1px solid var(--line)}.nav a.active{background:var(--green);color:#fff;border-color:var(--green)}
+    .grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.stat{padding:16px}.stat b{display:block;font-size:25px}.card{padding:16px;margin-top:16px}.card h2{margin:0 0 12px;font-size:18px}
+    table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.on{background:#def5e6;color:#086b43}.off{background:#f7e6e3;color:#a23a2d}
+    input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}textarea{min-height:65px}.row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;align-items:end}.btn{border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer;background:var(--green);color:#fff}.btn.secondary{background:#edf5e8;color:#165a3b}.btn.danger{background:#fae9e6;color:#a33b2c}.search{display:flex;gap:8px}.search input{max-width:520px}.small{font-size:12px;color:var(--muted)}.scroll{overflow:auto}.product-form{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 2fr auto;gap:8px;align-items:end}.media-preview{max-width:90px;max-height:60px;border-radius:8px}.notice{padding:12px 14px;border-radius:12px;background:#fff4d8;border:1px solid #f0d28a;margin-bottom:16px}
+    @media(max-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}.row,.product-form{grid-template-columns:1fr 1fr}.wrap{padding:12px}}@media(max-width:650px){.grid{grid-template-columns:1fr 1fr}.row,.product-form{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="top"><div><div class="brand">LocalPrices Admin</div><div class="sub">Katalog, Märkte, Lernregeln, Medien und Collector-Status</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+  <nav class="nav">
+    {% for key,label in [('dashboard','Dashboard'),('products','Artikel'),('stores','Märkte'),('categories','Kategorien'),('media','Bilder & Logos'),('settings','Einstellungen'),('audit','Audit-Log')] %}
+      <a href="/admin?tab={{ key }}" class="{% if tab==key %}active{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <a href="/datenstatus">Datenstatus</a>
+  </nav>
+
+  {% if tab=='dashboard' %}
+    <div class="grid">
+      <div class="stat"><span class="small">Artikel</span><b>{{ dashboard.products }}</b></div>
+      <div class="stat"><span class="small">Aktive Märkte</span><b>{{ dashboard.active_stores }}/{{ dashboard.stores }}</b></div>
+      <div class="stat"><span class="small">Aktuelle Angebote</span><b>{{ dashboard.current_offers }}</b></div>
+      <div class="stat"><span class="small">Manuell korrigiert</span><b>{{ dashboard.corrected }}</b></div>
+      <div class="stat"><span class="small">Gelernte Aliase</span><b>{{ dashboard.aliases }}</b></div>
+      <div class="stat"><span class="small">Medien</span><b>{{ dashboard.media }}</b></div>
+    </div>
+    <div class="card"><h2>Letzte Collector-Läufe</h2><div class="scroll"><table><tr><th>Markt</th><th>Start</th><th>Status</th><th>Empfangen</th><th>Importiert</th><th>Diagnose</th></tr>{% for r in dashboard.runs %}<tr><td>{{ r.store.name }}</td><td>{{ r.started_at }}</td><td><span class="pill {% if r.status=='success' %}on{% else %}off{% endif %}">{{ r.status }}</span></td><td>{{ r.offers_received }}</td><td>{{ r.offers_imported }}</td><td class="small">{{ r.message or '' }}</td></tr>{% endfor %}</table></div></div>
+    <div class="card"><h2>Markt-Frische</h2><div class="scroll"><table><tr><th>Markt</th><th>Status</th><th>Letzter Lauf</th></tr>{% for f in dashboard.freshness %}<tr><td>{{ f.store.name if f.store else f.store_name }}</td><td>{{ f.state }}</td><td>{{ f.last_run or f.updated_at or '' }}</td></tr>{% endfor %}</table></div></div>
+  {% endif %}
+
+  {% if tab=='products' %}
+    <div class="card"><h2>Artikeldatenbank</h2><form class="search" method="get"><input type="hidden" name="tab" value="products"><input name="q" value="{{ q }}" placeholder="Artikel suchen"><button class="btn">Suchen</button></form><p class="small">Bis zu 250 Treffer. Jede manuelle Korrektur wird als Lernregel/Alias für spätere Imports gespeichert.</p></div>
+    {% for p in products %}<div class="card">
+      <div><b>#{{ p.id }} · {{ p.name }}</b> <span class="small">Key: {{ p.normalized_key }}</span></div>
+      <form class="product-form" method="post" action="/admin/products/{{ p.id }}">
+        <label>Name<input name="name" value="{{ p.name }}" required></label>
+        <label>Marke<input name="brand" value="{{ p.brand or '' }}"></label>
+        <label>Packung<input name="package_size" value="{{ p.package_size or '' }}"></label>
+        <label>Kategorie<select name="category_id"><option value="">– keine –</option>{% for c in categories %}<option value="{{ c.id }}" {% if metas.get(p.id) and metas.get(p.id).category_id==c.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></label>
+        <label>Admin-Notiz<input name="notes" value="{{ metas.get(p.id).notes if metas.get(p.id) and metas.get(p.id).notes else '' }}"></label>
+        <button class="btn">Speichern & lernen</button>
+      </form>
+      <div class="small">Barcodes: {{ (barcodes.get(p.id) or [])|join(', ') or '–' }} · {% if metas.get(p.id) and metas.get(p.id).name_locked %}Name manuell geschützt{% else %}automatisch{% endif %}</div>
+    </div>{% else %}<div class="card">Keine Artikel gefunden.</div>{% endfor %}
+  {% endif %}
+
+  {% if tab=='stores' %}
+    <div class="card"><h2>Märkte verwalten</h2><p class="small">Deaktivierte Märkte werden aus App und Collection-Auswahl entfernt.</p><div class="scroll"><table><tr><th>Status</th><th>Händler / Markt</th><th>Adresse</th><th>Quelle</th><th>Bearbeiten</th></tr>
+      {% for s in stores_list %}<tr><td><form method="post" action="/admin/stores/{{ s.id }}/toggle"><button class="btn {% if s.active %}secondary{% else %}danger{% endif %}">{{ 'aktiv' if s.active else 'inaktiv' }}</button></form></td><td><b>{{ s.retailer }}</b><br>{{ s.name }}<br><span class="small">verified={{ s.benchmark_verified }}</span></td><td>{{ s.address }}<br>{{ s.postal_code }} {{ s.city }}</td><td class="small">{{ s.source_url or '–' }}<br>ID: {{ s.external_id or '–' }}</td><td><form method="post" action="/admin/stores/{{ s.id }}"><div class="row"><label>Name<input name="name" value="{{ s.name }}"></label><label>Straße<input name="address" value="{{ s.address }}"></label><label>PLZ<input name="postal_code" value="{{ s.postal_code }}"></label><label>Ort<input name="city" value="{{ s.city }}"></label><label>External-ID<input name="external_id" value="{{ s.external_id or '' }}"></label><label>Source URL<input name="source_url" value="{{ s.source_url or '' }}"></label></div><button class="btn" style="margin-top:8px">Speichern</button></form></td></tr>{% endfor %}
+    </table></div></div>
+  {% endif %}
+
+  {% if tab=='categories' %}
+    <div class="card"><h2>Kategorien</h2><form class="row" method="post" action="/admin/categories"><label>Neue Kategorie<input name="name" required></label><label>Sortierung<input name="sort_order" type="number" value="100"></label><button class="btn">Anlegen</button></form></div>
+    <div class="card"><div class="scroll"><table><tr><th>Name</th><th>Slug</th><th>Sortierung</th><th>Aktiv</th><th></th></tr>{% for c in categories %}<tr><form method="post" action="/admin/categories/{{ c.id }}"><td><input name="name" value="{{ c.name }}"></td><td>{{ c.slug }}</td><td><input name="sort_order" type="number" value="{{ c.sort_order }}"></td><td><select name="active"><option value="1" {% if c.active %}selected{% endif %}>Ja</option><option value="0" {% if not c.active %}selected{% endif %}>Nein</option></select></td><td><button class="btn">Speichern</button></td></form></tr>{% endfor %}</table></div></div>
+  {% endif %}
+
+  {% if tab=='media' %}
+    <div class="card"><h2>Bilder & Logos hinzufügen</h2><form method="post" action="/admin/media" enctype="multipart/form-data"><div class="row"><label>Typ<select name="kind"><option value="product">Produktbild</option><option value="store">Marktbild</option><option value="retailer_logo">Händlerlogo</option></select></label><label>Artikel<select name="product_id"><option value="">–</option>{% for p in products %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></label><label>Markt<select name="store_id"><option value="">–</option>{% for s in stores_list %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label><label>Händler<select name="retailer"><option value="">–</option>{% for r in retailers %}<option>{{ r }}</option>{% endfor %}</select></label><label>Bilddatei<input type="file" name="file" accept="image/*"></label><label>Bild-URL<input name="source_url"></label></div><div class="row" style="margin-top:8px"><label>Alt-Text<input name="alt_text"></label><label>Primärbild<select name="primary"><option value="0">Nein</option><option value="1">Ja</option></select></label><button class="btn">Bild speichern</button></div></form></div>
+    <div class="card"><h2>Medienbibliothek</h2><div class="scroll"><table><tr><th>Vorschau</th><th>Typ</th><th>Zuordnung</th><th>Quelle</th><th>Status</th></tr>{% for m in media_assets %}<tr><td>{% if m.file_path %}<img class="media-preview" src="/admin-media/{{ m.file_path }}">{% elif m.source_url %}<img class="media-preview" src="{{ m.source_url }}">{% endif %}</td><td>{{ m.kind }}{% if m.is_primary %}<br><span class="pill on">primär</span>{% endif %}</td><td>Produkt {{ m.master_product_id or '–' }} · Markt {{ m.store_id or '–' }} · {{ m.retailer or '–' }}</td><td class="small">{{ m.source_url or m.file_path or '–' }}<br>{{ m.alt_text or '' }}</td><td><form method="post" action="/admin/media/{{ m.id }}/toggle"><button class="btn secondary">{{ 'aktiv' if m.active else 'inaktiv' }}</button></form></td></tr>{% endfor %}</table></div></div>
+  {% endif %}
+
+  {% if tab=='settings' %}
+    <div class="notice"><b>Runtime/ENV:</b> Scheduler={{ settings_runtime.scheduler_enabled }}, Collection {{ settings_runtime.collection_hour }}:{{ '%02d'|format(settings_runtime.collection_minute) }}, Browser={{ settings_runtime.collector_browser_enabled }}, Timeout={{ settings_runtime.collector_timeout_seconds }}s, Stale={{ settings_runtime.stale_after_hours }}h, Fahrtkosten={{ settings_runtime.driving_cost_per_km }} €/km, Route-Faktor={{ settings_runtime.route_distance_factor }}. Diese sicherheits-/prozesskritischen Werte bleiben bewusst in <code>.env</code>.</div>
+    <div class="card"><h2>Admin-Einstellungen</h2><form class="row" method="post" action="/admin/settings"><label>Schlüssel<input name="key" placeholder="catalog.note" required></label><label>Wert<input name="value"></label><label>Beschreibung<input name="description"></label><button class="btn">Speichern</button></form></div>
+    <div class="card"><table><tr><th>Schlüssel</th><th>Wert</th><th>Beschreibung</th><th>Geändert</th></tr>{% for s in admin_settings %}<tr><td>{{ s.key }}</td><td>{{ s.value }}</td><td>{{ s.description or '' }}</td><td>{{ s.updated_at }}</td></tr>{% endfor %}</table></div>
+  {% endif %}
+
+  {% if tab=='audit' %}
+    <div class="card"><h2>Änderungsprotokoll</h2><div class="scroll"><table><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th><th>Objekt</th><th>Details</th></tr>{% for a in audit_rows %}<tr><td>{{ a.created_at }}</td><td>{{ a.actor }}</td><td>{{ a.action }}</td><td>{{ a.entity_type }} #{{ a.entity_id or '' }}</td><td>{{ a.details or '' }}</td></tr>{% endfor %}</table></div></div>
+  {% endif %}
+</div></body></html>
