@@ -6,6 +6,21 @@
   <a class="{{ 'active' if view=='next' }}" href="/sparplan?view=next">Demnächst</a>
 </div>
 
+{% if plan.total_items %}
+<article>
+  <b>{{ plan.offered_items }} von {{ plan.total_items }} Artikeln im Angebot</b>
+  <small>
+    {% if plan.stores|length == 1 %}
+      1 Markt erforderlich
+    {% elif plan.stores|length > 1 %}
+      {{ plan.stores|length }} Märkte erforderlich
+    {% else %}
+      Noch kein passendes Angebot in deinen ausgewählten Märkten
+    {% endif %}
+  </small>
+</article>
+{% endif %}
+
 {% for item,offer in plan.picks %}
 <article>
   <b>{{ item.product.name }} × {{ item.quantity|int if item.quantity == item.quantity|int else item.quantity }}</b>
@@ -24,7 +39,9 @@
 <p class="muted">Geschätzte Fahrstrecke ab Hauptstandort: {{ '%.1f'|format(plan.travel_km)|replace('.', ',') }} km · geschätzte Fahrtkosten {{ '%.2f'|format(plan.travel_cost)|replace('.', ',') }} €.</p>
 <div class="total">Mit geschätzter Fahrt <b>{{ '%.2f'|format(plan.total_with_travel)|replace('.', ',') }} €</b></div>
 
-{% if plan.single_store_total is not none %}
+{% if plan.one_market_covers_all_offered_items %}
+<p class="success"><b>Alle angebotenen Artikel bekommst du bereits in einem Markt.</b> Eine zusätzliche Fahrt zu einem weiteren Markt bringt für diesen Zeitraum keinen Vorteil.</p>
+{% elif plan.single_store_total is not none %}
 <article>
   <b>Beste Ein-Markt-Alternative</b>
   <strong>{{ '%.2f'|format(plan.single_store_total)|replace('.', ',') }} €</strong>
