@@ -6,76 +6,46 @@
     <div>
       <div class="eyebrow">LOCALPRICES</div>
       <h1>Clever einkaufen</h1>
-      <p class="hero-location">⌖ {% if user.postal_code or user.city %}{{ user.postal_code or '' }} {{ user.city or '' }}{% else %}Standort noch nicht eingerichtet{% endif %}</p>
+      <p class="hero-location"><svg class="inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>{% if user.postal_code or user.city %}{{ user.postal_code or '' }} {{ user.city or '' }}{% else %}Standort noch nicht eingerichtet{% endif %}</p>
     </div>
-    <a class="profile-dot" href="/favoriten" aria-label="Favoriten">♡</a>
+    <a class="profile-dot" href="/favoriten" aria-label="Favoriten"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg></a>
   </div>
   <div class="hero-stats">
-    <div><strong>{{ '%.2f'|format(home_plan.multi_store_saving or 0)|replace('.', ',') }} €</strong><span>mögliche Ersparnis</span></div>
+    <div>
+      {% if home_plan.multi_store_saving is not none and home_plan.multi_store_saving > 0.01 %}<strong>{{ '%.2f'|format(home_plan.multi_store_saving)|replace('.', ',') }} €</strong>{% else %}<strong>–</strong>{% endif %}
+      <span>mögliche Ersparnis</span>
+    </div>
     <div><strong>{{ selected }}</strong><span>Märkte im Vergleich</span></div>
     <div><strong>{{ favorites }}</strong><span>Favoriten</span></div>
   </div>
 </section>
 
 <section class="quick-grid">
-  <a href="/maerkte"><span class="quick-icon">⌖</span><b>Karte</b></a>
-  <a href="/scanner"><span class="quick-icon">⌗</span><b>Scannen</b></a>
-  <a href="/angebote"><span class="quick-icon">◇</span><b>Angebote</b></a>
+  <a href="/maerkte"><svg class="quick-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg><b>Karte</b></a>
+  <a href="/scanner"><svg class="quick-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg><b>Scannen</b></a>
+  <a href="/angebote"><svg class="quick-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13 13 20l-9-9V4h7z"/><circle cx="8.5" cy="8.5" r="1"/></svg><b>Angebote</b></a>
 </section>
 
 {% if not user.postal_code or selected == 0 %}
 <section class="setup-card">
-  <div>
-    <span class="section-kicker">PREISVERGLEICH EINRICHTEN</span>
-    <h2>Deine Märkte festlegen</h2>
-    <p>Lege PLZ, Ort, Radius und deine bevorzugten Märkte fest.</p>
-  </div>
+  <div><span class="section-kicker">PREISVERGLEICH EINRICHTEN</span><h2>Deine Märkte festlegen</h2><p>Lege PLZ, Ort, Radius und deine bevorzugten Märkte fest.</p></div>
   <a class="primary-pill" href="/maerkte">Jetzt einrichten →</a>
 </section>
 {% endif %}
 
 <section class="plan-preview">
-  <div class="plan-preview-head">✣ <span>DEINE OPTIMALE LISTE</span></div>
+  <div class="plan-preview-head"><svg class="inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg><span>DEINE OPTIMALE LISTE</span></div>
   <div class="plan-preview-body">
-    <div>
-      <strong>{{ '%.2f'|format(home_plan.total_with_travel)|replace('.', ',') }} €</strong>
-      <span>{{ home_plan.total_items }} Artikel · {{ home_plan.stores|length }} {{ 'Markt' if home_plan.stores|length == 1 else 'Märkte' }}</span>
-    </div>
-    {% if home_plan.multi_store_saving is not none and home_plan.multi_store_saving > 0 %}
-      <a href="/sparplan" class="saving-pill">{{ '%.2f'|format(home_plan.multi_store_saving)|replace('.', ',') }} € gespart →</a>
-    {% else %}
-      <a href="/sparplan" class="saving-pill">Plan öffnen →</a>
-    {% endif %}
+    <div><strong>{{ '%.2f'|format(home_plan.total_with_travel)|replace('.', ',') }} €</strong><span>{{ home_plan.total_items }} Artikel · {{ home_plan.stores|length }} {{ 'Markt' if home_plan.stores|length == 1 else 'Märkte' }}</span></div>
+    {% if home_plan.multi_store_saving is not none and home_plan.multi_store_saving > 0 %}<a href="/sparplan" class="saving-pill">{{ '%.2f'|format(home_plan.multi_store_saving)|replace('.', ',') }} € gespart →</a>{% else %}<a href="/sparplan" class="saving-pill">Plan öffnen →</a>{% endif %}
   </div>
 </section>
 
 <section class="home-section">
   <div class="section-title-row"><h2>Jetzt besonders günstig</h2><a href="/angebote?view=current">alle</a></div>
   <div class="offer-stack">
-    {% for o in current[:4] %}
-      <article class="deal-card">
-        <div class="deal-emoji">%</div>
-        <div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · bis {{ o.valid_to.strftime('%d.%m.') }}</span></div>
-        <div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div>
-      </article>
-    {% else %}
-      <div class="empty-soft">Keine aktuellen Angebote für deine Favoriten in den ausgewählten Märkten.</div>
-    {% endfor %}
+    {% for o in current[:4] %}<article class="deal-card"><div class="deal-emoji">%</div><div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · bis {{ o.valid_to.strftime('%d.%m.') }}</span></div><div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div></article>{% else %}<div class="empty-soft">Keine aktuellen Angebote für deine Favoriten in den ausgewählten Märkten.</div>{% endfor %}
   </div>
 </section>
-
-{% if upcoming %}
-<section class="home-section compact-section">
-  <div class="section-title-row"><h2>Demnächst</h2><a href="/angebote?view=next">alle</a></div>
-  <div class="offer-stack">
-    {% for o in upcoming[:3] %}
-      <article class="deal-card">
-        <div class="deal-emoji">↗</div>
-        <div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · ab {{ o.valid_from.strftime('%d.%m.') }}</span></div>
-        <div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div>
-      </article>
-    {% endfor %}
-  </div>
-</section>
-{% endif %}
+{% if upcoming %}<section class="home-section compact-section"><div class="section-title-row"><h2>Demnächst</h2><a href="/angebote?view=next">alle</a></div><div class="offer-stack">{% for o in upcoming[:3] %}<article class="deal-card"><div class="deal-emoji">↗</div><div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · ab {{ o.valid_from.strftime('%d.%m.') }}</span></div><div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div></article>{% endfor %}</div></section>{% endif %}
 {% endblock %}
