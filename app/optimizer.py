@@ -52,11 +52,6 @@ def _evaluate_store_set(
     by_product: dict[int, list[Offer]],
     store_ids: set[int],
 ) -> tuple[float, float, float, list[tuple[ShoppingItem, Offer]]] | None:
-    """Return merchandise, route, total and picks for one complete store set.
-
-    A candidate is only valid when it covers every shopping-list item for which
-    at least one selected-market offer exists in the requested period.
-    """
     picks: list[tuple[ShoppingItem, Offer]] = []
     merchandise_total = 0.0
     used_stores: dict[int, Store] = {}
@@ -75,8 +70,17 @@ def _evaluate_store_set(
     return merchandise_total, route_km, total, picks
 
 
-def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem], period: str = "current") -> PlanResult:
+def optimize_shopping(
+    db: Session,
+    user: UserProfile,
+    items: list[ShoppingItem],
+    period: str = "current",
+    max_stores: int | None = None,
+) -> PlanResult:
     period = "next" if period == "next" else "current"
+    if max_stores is not None:
+        max_stores = max(1, min(int(max_stores), 3))
+
     offers = offers_for_selected_stores(db, user, period)
     by_product: dict[int, list[Offer]] = {}
     stores_by_id: dict[int, Store] = {}
@@ -85,12 +89,8 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
         stores_by_id[offer.store_id] = offer.store
 
     offered_list_items = [item for item in items if by_product.get(item.master_product_id)]
-    missing_items = [item for item in items if not by_product.get(item.master_product_id)]
     candidate_store_ids = sorted(stores_by_id)
 
-    # Evaluate all non-empty store combinations and choose the minimum of
-    # merchandise + estimated travel. This is the actual recommendation; it is
-    # deliberately not the same as choosing the cheapest store per product first.
     best_total = inf
     best_merchandise = 0.0
     best_route_km = 0.0
@@ -98,14 +98,15 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
     best_store_ids: set[int] = set()
 
     if offered_list_items:
-        for count in range(1, len(candidate_store_ids) + 1):
+        combination_limit = len(candidate_store_ids)
+        if max_stores is not None:
+            combination_limit = min(combination_limit, max_stores)
+        for count in range(1, combination_limit + 1):
             for combo in combinations(candidate_store_ids, count):
                 evaluation = _evaluate_store_set(user, offered_list_items, by_product, set(combo))
                 if evaluation is None:
                     continue
                 merchandise, route_km, total, offer_picks = evaluation
-                # Prefer the cheaper total. For effectively equal totals prefer
-                # fewer actually used stores, then lower merchandise value.
                 used_ids = {offer.store_id for _, offer in offer_picks}
                 current_used = {offer.store_id for _, offer in best_offer_picks}
                 better = total < best_total - 0.005
@@ -125,7 +126,6 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
                     best_offer_picks = offer_picks
                     best_store_ids = used_ids
 
-    # Preserve shopping-list order and explicitly retain items without offers.
     best_by_item_id = {item.id: offer for item, offer in best_offer_picks}
     picks: list[tuple[ShoppingItem, Offer | None]] = [
         (item, best_by_item_id.get(item.id)) for item in items
@@ -136,7 +136,6 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
     travel_cost = best_route_km * settings.driving_cost_per_km
     total_with_travel = 0.0 if best_total is inf else best_total
 
-    # Best complete one-store alternative, including its travel cost.
     best_single_name = None
     best_single_total = inf
     for store_id in candidate_store_ids:
@@ -182,5 +181,4 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
 
 
 def optimize_current_shopping(db: Session, user: UserProfile, items: list[ShoppingItem]) -> PlanResult:
-    """Backward-compatible wrapper used by existing tests/callers."""
     return optimize_shopping(db, user, items, "current")
