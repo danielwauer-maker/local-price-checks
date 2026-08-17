@@ -23,6 +23,9 @@ class PlanResult:
     multi_store_saving: float | None
     multi_store_worth_it: bool | None
     period: str
+    total_items: int
+    offered_items: int
+    one_market_covers_all_offered_items: bool
 
 
 def _route_km(user: UserProfile, stores: list[Store]) -> float:
@@ -69,7 +72,7 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
 
     # Best one-store alternative among selected stores. Only compare stores that
     # have an offer for every item that has at least one offer in the selected set.
-    offered_items = [item for item in items if by_product.get(item.master_product_id)]
+    offered_list_items = [item for item in items if by_product.get(item.master_product_id)]
     candidate_store_ids = {o.store_id for o in offers}
     best_single_name = None
     best_single_total = inf
@@ -77,7 +80,7 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
         line_total = 0.0
         complete = True
         store_obj = None
-        for item in offered_items:
+        for item in offered_list_items:
             opts = [o for o in by_product[item.master_product_id] if o.store_id == store_id]
             if not opts:
                 complete = False
@@ -102,6 +105,13 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
         saving = single_total - total_with_travel
         worth = saving > 0.01 and len(stores) > 1
 
+    one_market_covers_all_offered_items = (
+        bool(offered_list_items)
+        and best_single_name is not None
+        and len(stores) == 1
+        and stores[0].name == best_single_name
+    )
+
     return PlanResult(
         picks=picks,
         merchandise_total=merchandise_total,
@@ -114,6 +124,9 @@ def optimize_shopping(db: Session, user: UserProfile, items: list[ShoppingItem],
         multi_store_saving=saving,
         multi_store_worth_it=worth,
         period=period,
+        total_items=len(items),
+        offered_items=len(offered_list_items),
+        one_market_covers_all_offered_items=one_market_covers_all_offered_items,
     )
 
 
