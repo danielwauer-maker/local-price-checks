@@ -13,11 +13,21 @@
   <div class="app-shell">
     <main class="app-main">{% block content %}{% endblock %}</main>
     <nav class="bottom-nav" aria-label="Hauptnavigation">
-      <a class="nav-item {{ 'active' if request.url.path == '/' else '' }}" href="/"><span class="nav-icon">⌂</span><span>Start</span></a>
-      <a class="nav-item {{ 'active' if request.url.path.startswith('/maerkte') else '' }}" href="/maerkte"><span class="nav-icon">⌖</span><span>Märkte</span></a>
-      <a class="nav-scan {{ 'active' if request.url.path.startswith('/scanner') else '' }}" href="/scanner" aria-label="Scanner"><span>⌗</span></a>
-      <a class="nav-item {{ 'active' if request.url.path.startswith('/einkauf') or request.url.path.startswith('/sparplan') else '' }}" href="/einkauf"><span class="nav-icon">☷</span><span>Liste</span></a>
-      <a class="nav-item {{ 'active' if request.url.path.startswith('/angebote') else '' }}" href="/angebote"><span class="nav-icon">◇</span><span>Angebote</span></a>
+      <a class="nav-item {{ 'active' if request.url.path == '/' else '' }}" href="/">
+        <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-7h6v7"/></svg><span>Start</span>
+      </a>
+      <a class="nav-item {{ 'active' if request.url.path.startswith('/maerkte') else '' }}" href="/maerkte">
+        <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18 3.5 20.5V6L9 3.5l6 2.5L20.5 3v14.5L15 20.5z"/><path d="M9 3.5V18M15 6v14.5"/></svg><span>Märkte</span>
+      </a>
+      <a class="nav-scan {{ 'active' if request.url.path.startswith('/scanner') else '' }}" href="/scanner" aria-label="Scanner">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8"/></svg>
+      </a>
+      <a class="nav-item {{ 'active' if request.url.path.startswith('/einkauf') or request.url.path.startswith('/sparplan') else '' }}" href="/einkauf">
+        <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6 1.5 1.5L8 5M11 6h9M4 12l1.5 1.5L8 11M11 12h9M4 18l1.5 1.5L8 17M11 18h9"/></svg><span>Liste</span>
+      </a>
+      <a class="nav-item {{ 'active' if request.url.path.startswith('/angebote') else '' }}" href="/angebote">
+        <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13 13 20l-9-9V4h7z"/><circle cx="8.5" cy="8.5" r="1"/></svg><span>Angebote</span>
+      </a>
     </nav>
   </div>
 </body>
