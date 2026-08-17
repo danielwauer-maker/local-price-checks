@@ -5,22 +5,55 @@ from app.engine_v140.source_registry import SOURCE_BY_KEY
 
 NETTO_TEXT = """
 Netto Marken-Discount
+Aktuelle Filial-Angebote
+Preissenkung
+Online-Wochenangebote
 Filial-Angebote
-gültig von Montag, 17.08.26 - Samstag, 22.08.26
+Zu den Angeboten
 Filiale
-Jacobs Krönung Kaffee 500 g
-12.98 / kg
-gemahlen oder ganze Bohnen, versch. Sorten
-statt 9.99 6.49
+Image
+Pfanni Speisekartoffeln 2,5 kg Netz
+1.- / kg
+Deutschland, unsere Besten, versch. Kocheigenschaften
+-24 %
+UVP 3.29 2.49*
+Filiale
+Image
+Frau Antje Beste Butter 250 g
+3.96 / kg
+gekühlt
+-66 %
+UVP 2.99 0.99*
+Filiale
+Image
+Lenor Waschmittel 15 - 20 WL
+0.25 - 0.33 / wl
+versch. Sorten
+Aktion
+4.99*
+Aktuelle Prospekte
+Filial-Angebote
+ab Montag, 17.08.26
 """
 
 
-def test_netto_parser_attaches_page_validity():
+def test_netto_parser_handles_current_filial_cards_and_validity():
     source = SOURCE_BY_KEY["netto_dierdorf"]
     offers = collectors.parse_netto_text(source, NETTO_TEXT, [])
-    assert offers
-    assert offers[0].valid_from == "17.08.2026"
-    assert offers[0].valid_to == "22.08.2026"
+    assert len(offers) >= 2
+    by_name = {offer.product_name: offer for offer in offers}
+    potatoes = next(offer for offer in offers if "Pfanni Speisekartoffeln" in offer.product_name)
+    butter = next(offer for offer in offers if "Beste Butter" in offer.product_name)
+    assert potatoes.price == 2.49
+    assert butter.price == 0.99
+    assert potatoes.valid_from == "17.08.2026"
+    assert potatoes.valid_to == "22.08.2026"
+
+
+def test_netto_section_ignores_navigation_heading():
+    section = collectors._netto_live_offer_section(NETTO_TEXT)
+    assert "Pfanni Speisekartoffeln 2,5 kg Netz" in section
+    assert "Preissenkung" not in section
 
 
 def test_netto_retries_rendered_page_when_http_shell_has_no_offers(monkeypatch):
