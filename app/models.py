@@ -81,9 +81,7 @@ class ShoppingItem(Base):
 
 class Offer(Base):
     __tablename__ = "offers"
-    __table_args__ = (
-        UniqueConstraint("store_id", "master_product_id", "valid_from", "price", name="uq_offer"),
-    )
+    __table_args__ = (UniqueConstraint("store_id", "master_product_id", "valid_from", "price", name="uq_offer"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
@@ -110,3 +108,72 @@ class CollectionRun(Base):
     offers_imported: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     store: Mapped[Store] = relationship()
+
+
+class ProductCategory(Base):
+    __tablename__ = "product_categories"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100)
+
+
+class ProductAdminData(Base):
+    __tablename__ = "product_admin_data"
+    __table_args__ = (UniqueConstraint("master_product_id", name="uq_product_admin_data"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("product_categories.id"), nullable=True, index=True)
+    name_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    category_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    product: Mapped[MasterProduct] = relationship()
+    category: Mapped[ProductCategory | None] = relationship()
+
+
+class ProductAlias(Base):
+    __tablename__ = "product_aliases"
+    __table_args__ = (UniqueConstraint("alias_key", name="uq_product_alias_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    alias_key: Mapped[str] = mapped_column(String(320), index=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    source: Mapped[str] = mapped_column(String(40), default="admin")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    product: Mapped[MasterProduct] = relationship()
+
+
+class MediaAsset(Base):
+    __tablename__ = "media_assets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    master_product_id: Mapped[int | None] = mapped_column(ForeignKey("master_products.id"), nullable=True, index=True)
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True, index=True)
+    retailer: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    alt_text: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AdminSetting(Base):
+    __tablename__ = "admin_settings"
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    actor: Mapped[str] = mapped_column(String(100), default="admin")
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
