@@ -25,6 +25,14 @@
     <small>{{ row.run.offers_received }} empfangen · {{ row.run.offers_imported }} importiert</small>
     {% if row.run.message %}<small>{{ row.run.message }}</small>{% endif %}
   {% endif %}
+
+  {% if row.web_run and row.pdf_run and row.web_run.id != row.pdf_run.id %}
+    <details style="margin-top:.6rem">
+      <summary><small>Collector-Diagnose anzeigen</small></summary>
+      <small><b>Web/DOM:</b> {{ row.web_run.offers_received }} empfangen · {{ row.web_run.offers_imported }} importiert{% if row.web_run.message %} · {{ row.web_run.message }}{% endif %}</small>
+      <small><b>PDF-Fallback:</b> {{ row.pdf_run.offers_received }} empfangen · {{ row.pdf_run.offers_imported }} importiert{% if row.pdf_run.message %} · {{ row.pdf_run.message }}{% endif %}</small>
+    </details>
+  {% endif %}
 </article>
 {% endfor %}
 
