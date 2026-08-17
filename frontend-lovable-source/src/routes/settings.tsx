@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MapPin, Save, UserRound } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { useStore } from "@/lib/app-store";
@@ -8,11 +8,18 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/settings")({ component: SettingsPage });
 
 function SettingsPage() {
-  const { profile, radius, setRadius, updateProfile } = useStore();
+  const { profile, radius, setRadius, updateProfile, hydrated } = useStore();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [postalCode, setPostalCode] = useState(profile.postalCode);
   const [city, setCity] = useState(profile.city);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    setDisplayName(profile.displayName);
+    setPostalCode(profile.postalCode);
+    setCity(profile.city);
+  }, [hydrated, profile.displayName, profile.postalCode, profile.city]);
 
   async function save() {
     setSaving(true);
