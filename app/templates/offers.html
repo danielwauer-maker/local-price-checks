@@ -1,1 +1,44 @@
-{% extends 'base.html' %}{% block content %}<h1>Angebote</h1><div class="tabs"><a class="{{ 'active' if view=='current' }}" href="/angebote?view=current">Jetzt</a><a class="{{ 'active' if view=='next' }}" href="/angebote?view=next">Demnächst</a></div>{% for o in offers %}<article><b>{{ o.product.name }}</b><strong>{{ '%.2f'|format(o.price) }} €</strong><small>{{ o.store.name }} · {{ o.valid_from.strftime('%d.%m.') }}–{{ o.valid_to.strftime('%d.%m.') }}</small></article>{% else %}<p class="muted">Keine passenden Angebote.</p>{% endfor %}{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Angebote – LocalPrices{% endblock %}
+{% block content %}
+<section class="page-wrap offers-page">
+  <div class="page-heading"><div><h1>Angebote</h1><p>{{ offers|length }} Aktionen in {{ selected_count }} Märkten</p></div></div>
+
+  <form method="get" action="/angebote" class="search-shell">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" name="q" value="{{ q }}" placeholder="Produkt oder Marke suchen">
+    <input type="hidden" name="view" value="{{ view }}">
+    {% if retailer %}<input type="hidden" name="retailer" value="{{ retailer }}">{% endif %}
+  </form>
+
+  <div class="tabs-modern offer-period-tabs">
+    <a class="{{ 'active' if view=='current' else '' }}" href="/angebote?view=current{% if q %}&q={{ q|urlencode }}{% endif %}{% if retailer %}&retailer={{ retailer|urlencode }}{% endif %}">Jetzt</a>
+    <a class="{{ 'active' if view=='next' else '' }}" href="/angebote?view=next{% if q %}&q={{ q|urlencode }}{% endif %}{% if retailer %}&retailer={{ retailer|urlencode }}{% endif %}">Demnächst</a>
+  </div>
+
+  <div class="filter-chips" aria-label="Marktkette filtern">
+    <a class="{{ 'active' if not retailer else '' }}" href="/angebote?view={{ view }}{% if q %}&q={{ q|urlencode }}{% endif %}">Alle</a>
+    {% for chain in retailers %}<a class="{{ 'active' if retailer|lower == chain|lower else '' }}" href="/angebote?view={{ view }}&retailer={{ chain|urlencode }}{% if q %}&q={{ q|urlencode }}{% endif %}">{{ chain }}</a>{% endfor %}
+  </div>
+
+  <section class="offer-list-modern">
+    {% for o in offers %}
+      <article class="offer-card-modern">
+        <div class="offer-avatar">{{ (o.product.name or '?')[:1]|upper }}</div>
+        <div class="offer-card-main">
+          <b>{{ o.product.name }}</b>
+          <span>{% if o.product.brand %}{{ o.product.brand }}{% endif %}{% if o.product.package_size %} · {{ o.product.package_size }}{% endif %}</span>
+          <small>{{ o.store.name }} · {% if view == 'next' %}ab {{ o.valid_from.strftime('%d.%m.') }}{% else %}bis {{ o.valid_to.strftime('%d.%m.') }}{% endif %}</small>
+          <strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong>
+        </div>
+        <form method="post" action="/einkauf/{{ o.product.id }}/add">
+          <input type="hidden" name="next_url" value="/angebote?view={{ view }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if retailer %}&retailer={{ retailer|urlencode }}{% endif %}">
+          <button class="round-add offer-add" type="submit" aria-label="{{ o.product.name }} zur Einkaufsliste hinzufügen">+</button>
+        </form>
+      </article>
+    {% else %}
+      <div class="empty-list-card"><b>Keine Angebote für diese Auswahl.</b><span>Ändere Suche, Zeitraum oder Marktfilter.</span></div>
+    {% endfor %}
+  </section>
+</section>
+{% endblock %}
