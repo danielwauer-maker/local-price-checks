@@ -47,11 +47,11 @@ function OffersPage() {
 
       <section className="mt-4 space-y-3 px-5">
         {groups.map(([category, rows], index) => {
-          const expanded = query.trim() !== "" || open[category] ?? index === 0;
+          const expanded = query.trim() !== "" || (open[category] ?? index === 0);
           return (
             <div key={category} className="surface-card overflow-hidden">
               <button onClick={() => setOpen((s) => ({ ...s, [category]: !expanded }))} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
-                <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{category}</p><p className="text-[11px] text-muted-foreground">{rows.length} {rows.length === 1 ? "Artikel" : "Artikel"}</p></div>
+                <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{category}</p><p className="text-[11px] text-muted-foreground">{rows.length} Artikel</p></div>
                 <span className="rounded-full bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary">{rows.length}</span>
                 <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")} />
               </button>
