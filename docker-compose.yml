@@ -1,10 +1,30 @@
 services:
   app:
     build: .
-    ports:
-      - "8000:8000"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
     restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend-lovable-source
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "127.0.0.1:8000:80"
+    volumes:
+      - ./deploy/localprices-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
