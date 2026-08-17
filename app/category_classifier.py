@@ -8,17 +8,17 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("obst-gemuese", (
         "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine", "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume", "tomate", "gurke", "paprika", "kartoffel", "zwiebel", "knoblauch", "salat", "möhre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "champignon", "gemüse", "obst", "avocado",
     )),
+    ("backwaren", (
+        "brot", "brötchen", "croissant", "baguette", "toast", "kuchen", "torte", "muffin", "donut", "backware", "brezel", "stuten",
+    )),
     ("molkerei-kuehlung", (
-        "milch", "joghurt", "jogurt", "quark", "käse", "mozzarella", "feta", "butter", "margarine", "sahne", "schmand", "kefir", "pudding", "milchreis", "frischkäse", "skyr", "dessert", "eier", "ei ",
+        "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "käse", "mozzarella", "feta", "butter", "margarine", "sahne", "schmand", "kefir", "pudding", "milchreis", "frischkäse", "skyr", "dessert", "eier", "ei ",
     )),
     ("fleisch-fisch", (
         "fleisch", "rind", "schwein", "hähnchen", "huhn", "pute", "hack", "steak", "schnitzel", "braten", "wurst", "salami", "schinken", "speck", "würstchen", "bratwurst", "fisch", "lachs", "thunfisch", "garnelen", "forelle", "kabeljau", "seelachs",
     )),
     ("getraenke", (
         "wasser", "cola", "limonade", "limo", "saft", "nektar", "smoothie", "bier", "pils", "radler", "wein", "sekt", "prosecco", "vodka", "wodka", "whisky", "gin ", "rum ", "likör", "kaffee", "espresso", "cappuccino", "tee ", "getränk", "energy", "eistee",
-    )),
-    ("backwaren", (
-        "brot", "brötchen", "croissant", "baguette", "toast", "kuchen", "torte", "muffin", "donut", "backware", "brezel", "stuten",
     )),
     ("tiefkuehl", (
         "tiefkühl", "tk ", "pizza", "pommes", "eiscreme", "speiseeis", "eis ", "fischstäbchen",
@@ -54,8 +54,6 @@ def ensure_auto_category(db: Session, product: MasterProduct) -> ProductAdminDat
         meta = ProductAdminData(master_product_id=product.id)
         db.add(meta)
         db.flush()
-    # Keep a previously assigned automatic non-Sonstiges category stable unless
-    # an admin explicitly changes it. This prevents category churn between runs.
     if meta.category_id is not None:
         current = db.get(ProductCategory, meta.category_id)
         if current and current.slug != "sonstiges":
