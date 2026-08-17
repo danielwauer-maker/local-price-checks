@@ -92,6 +92,26 @@ def test_products_data_status_and_saving_plan_render():
     assert "Demnächst" in upcoming.text
 
 
+def test_lovable_list_and_offer_routes_use_real_query_controls():
+    db, user, product, stores = _ensure_data()
+    if not db.query(ShoppingItem).filter_by(user_id=user.id, master_product_id=product.id).first():
+        db.add(ShoppingItem(user_id=user.id, master_product_id=product.id, quantity=1))
+        db.commit()
+    retailer = stores[0].retailer
+    db.close()
+
+    client = TestClient(app)
+    shopping = client.get("/einkauf?q=Mobile&max_stores=1")
+    assert shopping.status_code == 200
+    assert "Max. Anzahl Märkte" in shopping.text
+    assert "Mobile Test Produkt" in shopping.text
+
+    offers = client.get(f"/angebote?q=Mobile&retailer={retailer}")
+    assert offers.status_code == 200
+    assert "Produkt oder Marke suchen" in offers.text
+    assert "Mobile Test Produkt" in offers.text
+
+
 def test_optimizer_returns_travel_and_single_store_comparison():
     db, user, product, _ = _ensure_data()
     item = db.query(ShoppingItem).filter_by(user_id=user.id, master_product_id=product.id).first()
@@ -106,6 +126,18 @@ def test_optimizer_returns_travel_and_single_store_comparison():
     assert result.period == "current"
     assert result.total_items == 1
     assert result.offered_items == 1
+    db.close()
+
+
+def test_optimizer_respects_max_store_limit():
+    db, user, product, _ = _ensure_data()
+    item = db.query(ShoppingItem).filter_by(user_id=user.id, master_product_id=product.id).first()
+    if not item:
+        item = ShoppingItem(user_id=user.id, master_product_id=product.id, quantity=1)
+        db.add(item)
+        db.commit()
+    result = optimize_shopping(db, user, [item], "current", max_stores=1)
+    assert len(result.stores) <= 1
     db.close()
 
 
