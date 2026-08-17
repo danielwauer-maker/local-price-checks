@@ -146,7 +146,8 @@ def _plan_payload(db: Session, user, max_stores: int) -> dict:
         "worstTotal": round(float(plan.single_store_total or 0), 2),
         "savingsVsSingle": round(float(plan.multi_store_saving or 0), 2),
         "savingsVsWorst": round(float(plan.multi_store_saving or 0), 2),
-        "offeredItems": int(plan.offered_items),
+        "offeredItems": int(plan.covered_items),
+        "availableItems": int(plan.offered_items),
         "totalItems": int(plan.total_items),
         "missing": missing,
     }
@@ -164,9 +165,6 @@ def bootstrap(db: Session = Depends(get_db)):
     for row in db.query(ProductBarcode).all():
         barcode_by_product.setdefault(row.master_product_id, row.barcode)
 
-    # Load real current offers for every active store in the configured radius.
-    # React then filters these by the user's selected comparison markets. This
-    # means selecting a market works immediately without a second bootstrap.
     prices = [_price_payload(o) for o in _current_offer_rows(db, store_ids)]
 
     basket_rows = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
