@@ -100,3 +100,30 @@ def test_optimizer_uses_second_market_when_total_cost_is_lower(monkeypatch):
     assert result.single_store_total == 13.50
     assert result.multi_store_worth_it is True
     assert result.multi_store_saving is not None and result.multi_store_saving > 0
+
+
+def test_optimizer_returns_best_partial_plan_when_one_store_cannot_cover_everything(monkeypatch):
+    user = UserProfile(display_name="Test", latitude=50.0, longitude=7.0, radius_km=20)
+    user.id = 1
+    a = _store(1, "Markt A")
+    b = _store(2, "Markt B")
+    item1 = _item(1, 301, "Produkt 1")
+    item2 = _item(2, 302, "Produkt 2")
+    item3 = _item(3, 303, "Produkt 3")
+
+    offers = [
+        _offer(a, 301, 2.00),
+        _offer(a, 302, 3.00),
+        _offer(b, 303, 1.00),
+    ]
+    monkeypatch.setattr(optimizer, "offers_for_selected_stores", lambda *_args, **_kwargs: offers)
+    monkeypatch.setattr(optimizer, "_route_km", lambda _user, stores: 4.0 if stores else 0.0)
+
+    result = optimizer.optimize_shopping(None, user, [item1, item2, item3], "current", max_stores=1)
+
+    assert [store.name for store in result.stores] == ["Markt A"]
+    assert result.covered_items == 2
+    assert result.offered_items == 3
+    assert result.merchandise_total == 5.00
+    assert result.total_with_travel == 6.20
+    assert sum(offer is None for _, offer in result.picks) == 1
