@@ -1,1 +1,84 @@
-{% extends 'base.html' %}{% block content %}<h1>Einkaufsliste</h1><div class="actions"><a href="/produkte">Produkt hinzufügen</a><a href="/scanner">Barcode scannen</a></div>{% for row in rows %}<article><b>{{ row.product.name }}</b><form method="post" action="/einkauf/{{ row.id }}/update"><label>Menge <input type="number" name="quantity" min="0" max="999" step="1" value="{{ row.quantity }}"></label><button>Aktualisieren</button></form><form method="post" action="/einkauf/{{ row.id }}/delete"><button>Entfernen</button></form></article>{% else %}<p class="muted">Deine Einkaufsliste ist leer.</p>{% endfor %}{% if rows %}<div class="actions"><a class="primary" href="/sparplan">Sparplan erstellen</a><form method="post" action="/einkauf/clear"><button>Liste leeren</button></form></div>{% endif %}{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Einkaufsliste – LocalPrices{% endblock %}
+{% block content %}
+<section class="page-wrap list-page">
+  <div class="page-heading list-heading">
+    <div><h1>Einkaufsliste</h1><p>{{ rows|length }} Artikel · {{ selected_count }} Märkte im Vergleich</p></div>
+    {% if rows %}<form method="post" action="/einkauf/clear"><button class="soft-action" type="submit">Liste leeren</button></form>{% endif %}
+  </div>
+
+  <form method="get" action="/einkauf" class="search-shell">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input type="search" name="q" value="{{ q }}" placeholder="Artikel hinzufügen…" aria-label="Artikel suchen">
+    <input type="hidden" name="max_stores" value="{{ max_stores }}">
+  </form>
+
+  {% if suggestions %}
+  <div class="suggestion-card">
+    {% for p in suggestions %}
+      <form method="post" action="/einkauf/{{ p.id }}/add" class="suggestion-row">
+        <input type="hidden" name="next_url" value="/einkauf?max_stores={{ max_stores }}">
+        <div class="product-dot">+</div>
+        <div class="suggestion-main"><b>{{ p.name }}</b><span>{% if p.brand %}{{ p.brand }}{% endif %}{% if p.package_size %} · {{ p.package_size }}{% endif %}</span></div>
+        <button class="round-add" type="submit" aria-label="{{ p.name }} hinzufügen">+</button>
+      </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <section class="shopping-hero">
+    <div class="shopping-hero-kicker"><svg class="inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg> OPTIMALER PLAN</div>
+    <strong>{{ '%.2f'|format(plan.total_with_travel)|replace('.', ',') }} €</strong>
+    <p>
+      {% if plan.stores %}in {{ plan.stores|length }} {{ 'Markt' if plan.stores|length == 1 else 'Märkten' }}{% else %}Noch keine Angebote für deine Auswahl{% endif %}
+      {% if plan.single_store_total is not none and plan.single_store_name %} statt {{ '%.2f'|format(plan.single_store_total)|replace('.', ',') }} € bei {{ plan.single_store_name }}{% endif %}
+    </p>
+    <div class="shopping-hero-metrics">
+      <div><span>Waren</span><b>{{ '%.2f'|format(plan.merchandise_total)|replace('.', ',') }} €</b></div>
+      <div><span>Fahrt</span><b>{{ '%.2f'|format(plan.travel_cost)|replace('.', ',') }} €</b></div>
+    </div>
+    {% if plan.multi_store_saving is not none and plan.multi_store_saving > 0.01 %}<div class="saving-callout">{{ '%.2f'|format(plan.multi_store_saving)|replace('.', ',') }} € günstiger als der beste Einzelmarkt</div>{% endif %}
+  </section>
+
+  <div class="market-limit-card">
+    <span>Max. Anzahl Märkte</span>
+    <div class="market-limit-buttons">
+      {% for n in [1,2,3] %}<a class="{{ 'active' if max_stores == n else '' }}" href="/einkauf?max_stores={{ n }}{% if q %}&q={{ q|urlencode }}{% endif %}">{{ n }}</a>{% endfor %}
+    </div>
+  </div>
+
+  <section class="shopping-groups">
+    {% for group in grouped %}
+      <article class="shopping-store-card">
+        <header><span class="store-order">{{ loop.index }}</span><div><b>{{ group.store.name }}</b><span>{{ group.store.city }}</span></div><strong>{{ '%.2f'|format(group.subtotal)|replace('.', ',') }} €</strong></header>
+        <div class="shopping-lines">
+          {% for item, offer in group.lines %}
+          <div class="shopping-line">
+            <div class="product-dot">{{ (item.product.name or '?')[:1]|upper }}</div>
+            <div class="shopping-line-main"><b>{{ item.product.name }}</b><span>{% if item.product.package_size %}{{ item.product.package_size }} · {% endif %}Angebot {{ '%.2f'|format(offer.price)|replace('.', ',') }} €</span></div>
+            <div class="qty-control">
+              <form method="post" action="/einkauf/{{ item.id }}/update"><input type="hidden" name="quantity" value="{{ [0, item.quantity - 1]|max }}"><input type="hidden" name="next_url" value="/einkauf?max_stores={{ max_stores }}"><button type="submit">−</button></form>
+              <span>{{ item.quantity|int if item.quantity == item.quantity|int else item.quantity }}</span>
+              <form method="post" action="/einkauf/{{ item.id }}/update"><input type="hidden" name="quantity" value="{{ item.quantity + 1 }}"><input type="hidden" name="next_url" value="/einkauf?max_stores={{ max_stores }}"><button type="submit">+</button></form>
+            </div>
+            <strong class="line-total">{{ '%.2f'|format(offer.price * item.quantity)|replace('.', ',') }} €</strong>
+          </div>
+          {% endfor %}
+        </div>
+      </article>
+    {% endfor %}
+
+    {% if missing %}
+      <article class="shopping-store-card missing-group"><header><div><b>Ohne aktuelles Angebot</b><span>Bleibt auf deiner Liste</span></div></header><div class="shopping-lines">
+      {% for item in missing %}<div class="shopping-line"><div class="product-dot muted-dot">–</div><div class="shopping-line-main"><b>{{ item.product.name }}</b><span>Kein aktuelles Angebot in den ausgewählten Märkten</span></div><div class="qty-control"><form method="post" action="/einkauf/{{ item.id }}/update"><input type="hidden" name="quantity" value="{{ [0, item.quantity - 1]|max }}"><input type="hidden" name="next_url" value="/einkauf?max_stores={{ max_stores }}"><button type="submit">−</button></form><span>{{ item.quantity|int if item.quantity == item.quantity|int else item.quantity }}</span><form method="post" action="/einkauf/{{ item.id }}/update"><input type="hidden" name="quantity" value="{{ item.quantity + 1 }}"><input type="hidden" name="next_url" value="/einkauf?max_stores={{ max_stores }}"><button type="submit">+</button></form></div></div>{% endfor %}
+      </div></article>
+    {% endif %}
+  </section>
+
+  <a class="full-plan-link" href="/sparplan?max_stores={{ max_stores }}">Sparplan im Detail ansehen →</a>
+  {% else %}
+    <div class="empty-list-card"><b>Deine Einkaufsliste ist leer.</b><span>Suche oben nach einem Produkt oder nutze den Scanner.</span><a class="primary-pill" href="/scanner">Barcode scannen</a></div>
+  {% endif %}
+</section>
+{% endblock %}
