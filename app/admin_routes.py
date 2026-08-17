@@ -13,6 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .admin_learning import apply_product_correction, audit
+from .admin_quality import build_quality_report
 from .clock import app_today
 from .config import settings
 from .db import get_db
@@ -103,6 +104,8 @@ def admin_dashboard(request: Request, tab: str = "dashboard", q: str = "", db: S
         context.update({"products": products, "metas": metas, "barcodes": barcodes})
     elif tab == "stores":
         context["stores_list"] = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+    elif tab == "quality":
+        context["quality"] = build_quality_report(db)
     elif tab == "media":
         context["media_assets"] = db.query(MediaAsset).order_by(MediaAsset.created_at.desc()).limit(300).all()
         context["stores_list"] = db.query(Store).order_by(Store.name).all()
