@@ -187,14 +187,53 @@ def favorites_page(request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/einkauf")
-def shopping_page(request: Request, db: Session = Depends(get_db)):
+def shopping_page(
+    request: Request,
+    q: str = "",
+    max_stores: int = 2,
+    db: Session = Depends(get_db),
+):
     user = current_user(db)
     rows = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
-    return templates.TemplateResponse("shopping.html", {"request": request, "rows": rows})
+    max_stores = max(1, min(max_stores, 3))
+    plan = optimize_shopping(db, user, rows, "current", max_stores=max_stores)
+
+    suggestions = []
+    if q.strip():
+        term = f"%{q.strip()}%"
+        suggestions = (
+            db.query(MasterProduct)
+            .filter((MasterProduct.name.ilike(term)) | (MasterProduct.brand.ilike(term)))
+            .order_by(MasterProduct.name)
+            .limit(8)
+            .all()
+        )
+
+    grouped = []
+    for store in plan.stores:
+        lines = [(item, offer) for item, offer in plan.picks if offer and offer.store_id == store.id]
+        subtotal = sum(offer.price * item.quantity for item, offer in lines)
+        grouped.append({"store": store, "lines": lines, "subtotal": subtotal})
+    missing = [item for item, offer in plan.picks if offer is None]
+
+    return templates.TemplateResponse(
+        "shopping.html",
+        {
+            "request": request,
+            "rows": rows,
+            "q": q,
+            "suggestions": suggestions,
+            "selected_count": len(selected_store_ids(db, user)),
+            "plan": plan,
+            "grouped": grouped,
+            "missing": missing,
+            "max_stores": max_stores,
+        },
+    )
 
 
 @app.post("/einkauf/{product_id}/add")
-def add_shopping(product_id: int, db: Session = Depends(get_db)):
+def add_shopping(product_id: int, next_url: str = Form("/einkauf"), db: Session = Depends(get_db)):
     user = current_user(db)
     item = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id, ShoppingItem.master_product_id == product_id).first()
     if item:
@@ -202,11 +241,12 @@ def add_shopping(product_id: int, db: Session = Depends(get_db)):
     elif db.get(MasterProduct, product_id):
         db.add(ShoppingItem(user_id=user.id, master_product_id=product_id, quantity=1))
     db.commit()
-    return RedirectResponse("/einkauf", status_code=303)
+    target = next_url if next_url.startswith("/") else "/einkauf"
+    return RedirectResponse(target, status_code=303)
 
 
 @app.post("/einkauf/{item_id}/update")
-def update_shopping(item_id: int, quantity: float = Form(...), db: Session = Depends(get_db)):
+def update_shopping(item_id: int, quantity: float = Form(...), next_url: str = Form("/einkauf"), db: Session = Depends(get_db)):
     user = current_user(db)
     item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id, ShoppingItem.user_id == user.id).first()
     if item:
@@ -215,7 +255,8 @@ def update_shopping(item_id: int, quantity: float = Form(...), db: Session = Dep
         else:
             item.quantity = min(quantity, 999)
         db.commit()
-    return RedirectResponse("/einkauf", status_code=303)
+    target = next_url if next_url.startswith("/") else "/einkauf"
+    return RedirectResponse(target, status_code=303)
 
 
 @app.post("/einkauf/{item_id}/delete")
@@ -237,10 +278,37 @@ def clear_shopping(db: Session = Depends(get_db)):
 
 
 @app.get("/angebote")
-def offers_page(request: Request, view: str = "current", db: Session = Depends(get_db)):
+def offers_page(
+    request: Request,
+    view: str = "current",
+    q: str = "",
+    retailer: str = "",
+    db: Session = Depends(get_db),
+):
     user = current_user(db)
-    offers = offers_for_selected_stores(db, user, "next" if view == "next" else "current")
-    return templates.TemplateResponse("offers.html", {"request": request, "offers": offers, "view": view})
+    period = "next" if view == "next" else "current"
+    offers = offers_for_selected_stores(db, user, period)
+    retailers = sorted({o.store.retailer for o in offers if o.store and o.store.retailer})
+    if q.strip():
+        needle = q.strip().lower()
+        offers = [
+            o for o in offers
+            if needle in (o.product.name or "").lower() or needle in (o.product.brand or "").lower()
+        ]
+    if retailer.strip():
+        offers = [o for o in offers if (o.store.retailer or "").lower() == retailer.strip().lower()]
+    return templates.TemplateResponse(
+        "offers.html",
+        {
+            "request": request,
+            "offers": offers,
+            "view": period,
+            "q": q,
+            "retailer": retailer,
+            "retailers": retailers,
+            "selected_count": len(selected_store_ids(db, user)),
+        },
+    )
 
 
 @app.get("/scanner")
@@ -331,9 +399,15 @@ def collect_now():
 
 
 @app.get("/sparplan")
-def saving_plan(request: Request, view: str = "current", db: Session = Depends(get_db)):
+def saving_plan(
+    request: Request,
+    view: str = "current",
+    max_stores: int = 3,
+    db: Session = Depends(get_db),
+):
     user = current_user(db)
     items = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
     period = "next" if view == "next" else "current"
-    plan = optimize_shopping(db, user, items, period)
-    return templates.TemplateResponse("plan.html", {"request": request, "plan": plan, "view": period})
+    max_stores = max(1, min(max_stores, 3))
+    plan = optimize_shopping(db, user, items, period, max_stores=max_stores)
+    return templates.TemplateResponse("plan.html", {"request": request, "plan": plan, "view": period, "max_stores": max_stores})
