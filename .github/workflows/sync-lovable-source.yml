@@ -1,0 +1,80 @@
+name: Sync Lovable source
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-lovable-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Local Price Checks
+        uses: actions/checkout@v4
+        with:
+          path: target
+
+      - name: Checkout Lovable design source
+        uses: actions/checkout@v4
+        with:
+          repository: danielwauer-maker/price-radar-app-81-960e2446
+          ref: main
+          path: lovable-source
+
+      - name: Mirror Lovable source into main repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/frontend-lovable-source
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='.lovable/' \
+            --exclude='node_modules/' \
+            --exclude='dist/' \
+            lovable-source/ target/frontend-lovable-source/
+
+          cat > target/frontend-lovable-source/SOURCE.md <<'EOF'
+          # Lovable frontend source
+
+          This directory is a controlled mirror of:
+          `danielwauer-maker/price-radar-app-81-960e2446` (`main`).
+
+          It is a design/frontend source only. The production application,
+          collectors, database and Sparplan logic remain in the main
+          `local-price-checks` application.
+
+          Files intentionally not mirrored:
+          - `.env` / `.env.*`
+          - `.lovable/`
+          - `.git/`
+          - `node_modules/`
+          - `dist/`
+
+          Re-run the GitHub Actions workflow **Sync Lovable source** whenever a
+          new Lovable design version should be imported.
+          EOF
+
+      - name: Commit mirrored source when changed
+        working-directory: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- frontend-lovable-source && \
+             git diff --cached --quiet -- frontend-lovable-source && \
+             [ -z "$(git status --porcelain -- frontend-lovable-source)" ]; then
+            echo 'Lovable source is already up to date.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend-lovable-source
+          git commit -m 'chore: sync Lovable frontend source'
+          git push
