@@ -7,7 +7,7 @@ import { PRODUCTS, formatEuro } from "@/data/demo";
 import { cn } from "@/lib/utils";
 
 type BackendPlanLine = { product: (typeof PRODUCTS)[number]; qty: number; unitPrice: number; isOffer: boolean; lineTotal: number; saved: number; };
-type BackendPlanStop = { market: { id: string; name: string; chain: string; city: string; openUntil: string; lat?: number; lng?: number }; lines: BackendPlanLine[]; total: number; };
+type BackendPlanStop = { market: { id: string; name: string; chain: string; city: string; openUntil: string; lat?: number; lng?: number; logoUrl?: string | null }; lines: BackendPlanLine[]; total: number; };
 type BackendPlan = { stops: BackendPlanStop[]; total: number; merchandiseTotal: number; travelKm: number; travelCost: number; singleMarketTotal: number; singleMarket: { chain: string; name: string } | null; savingsVsSingle: number; offeredItems: number; totalItems: number; missing: Array<{ product: (typeof PRODUCTS)[number]; qty: number }>; };
 type RouteDetails = { legs: Array<{ from: string; to: string; km: number }>; googleMapsUrl: string | null; totalKm: number; };
 
@@ -64,7 +64,7 @@ function ListPage() {
 
       <div className="px-5">
         <div className="flex items-center gap-2 rounded-2xl bg-surface px-4 py-3 shadow-card"><Search className="h-4 w-4 text-muted-foreground" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Artikel hinzufügen…" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>
-        {suggestions.length > 0 && <ul className="mt-2 overflow-hidden rounded-2xl bg-surface shadow-card">{suggestions.map((p) => <li key={p.id}><button onClick={() => { addToBasket(p.id); setQuery(""); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-2.5 text-left last:border-0"><span className="text-xl">{p.emoji}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{p.name}</span><span className="block text-xs text-muted-foreground">{p.brand} · {p.unit}</span></span><Plus className="h-4 w-4 text-primary" /></button></li>)}</ul>}
+        {suggestions.length > 0 && <ul className="mt-2 overflow-hidden rounded-2xl bg-surface shadow-card">{suggestions.map((p) => <li key={p.id}><button onClick={() => { addToBasket(p.id); setQuery(""); }} className="flex w-full items-center gap-3 border-b border-border px-4 py-2.5 text-left last:border-0"><span className="text-xl">{p.emoji}</span><span className="min-w-0 flex-1"><span className="block text-sm font-medium">{p.name}</span><span className="block text-xs text-muted-foreground">{p.brand} · {p.unit}</span></span><Plus className="h-4 w-4 text-primary" /></button></li>)}</ul>}
       </div>
 
       {basketEntries.length === 0 ? <p className="mx-5 mt-6 surface-card p-8 text-center text-sm text-muted-foreground">Deine Liste ist leer. Füge Artikel hinzu oder übernimm Angebote.</p> : <>
@@ -89,11 +89,30 @@ function ListPage() {
 
         <section className="mt-5 space-y-4 px-5">
           {plan.stops.map((stop, i) => <article key={stop.market.id} className="surface-card overflow-hidden">
-            <header className="flex items-center gap-3 border-b border-border px-4 py-3"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{i+1}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{stop.market.name}</p><p className="text-[11px] text-muted-foreground">{stop.market.city}</p></div><span className="tabular text-sm font-bold">{formatEuro(stop.total)}</span></header>
-            <ul>{stop.lines.map((line) => { const done = checked.includes(line.product.id); return <li key={line.product.id} className={cn("flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0", done && "bg-secondary/35 opacity-65")}><CheckButton id={line.product.id} /><span className="text-xl">{line.product.emoji}</span><div className="min-w-0 flex-1"><p className={cn("truncate text-sm font-medium", done && "line-through")}>{line.product.name}</p><p className="text-[11px] text-muted-foreground">{line.product.unit}{line.isOffer && <span className="ml-1.5 rounded-full bg-deal/12 px-1.5 py-0.5 font-semibold text-deal">Angebot</span>}</p></div><div className="flex items-center gap-1.5"><button onClick={() => setQty(line.product.id, line.qty-1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-4 text-center text-sm font-semibold">{line.qty}</span><button onClick={() => setQty(line.product.id, line.qty+1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary"><Plus className="h-3.5 w-3.5" /></button></div><span className="tabular w-14 text-right text-sm font-semibold">{formatEuro(line.lineTotal)}</span></li>; })}</ul>
+            <header className="flex items-center gap-3 border-b border-border px-4 py-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">{i+1}</span>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-2 text-[10px] font-bold text-primary">
+                {stop.market.logoUrl ? <img src={stop.market.logoUrl} alt={stop.market.chain} className="h-full w-full object-contain p-1" /> : stop.market.chain.slice(0, 4).toUpperCase()}
+              </span>
+              <div className="min-w-0 flex-1"><p className="text-sm font-semibold leading-snug">{stop.market.name}</p><p className="text-[11px] text-muted-foreground">{stop.market.city}</p></div>
+              <span className="tabular shrink-0 text-sm font-bold">{formatEuro(stop.total)}</span>
+            </header>
+            <ul>{stop.lines.map((line) => { const done = checked.includes(line.product.id); return <li key={line.product.id} className={cn("flex items-center gap-2.5 border-b border-border px-4 py-3 last:border-0", done && "bg-secondary/35 opacity-65")}>
+              <CheckButton id={line.product.id} />
+              <div className="min-w-0 flex-1">
+                <p className={cn("text-sm font-medium leading-snug break-words", done && "line-through")}>{line.product.name}</p>
+                {line.product.unit && <p className="mt-0.5 text-[11px] text-muted-foreground">{line.product.unit}</p>}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button onClick={() => setQty(line.product.id, line.qty-1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary"><Minus className="h-3.5 w-3.5" /></button>
+                <span className="tabular w-4 text-center text-sm font-semibold">{line.qty}</span>
+                <button onClick={() => setQty(line.product.id, line.qty+1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary"><Plus className="h-3.5 w-3.5" /></button>
+              </div>
+              <span className="tabular w-14 shrink-0 text-right text-sm font-semibold">{formatEuro(line.lineTotal)}</span>
+            </li>; })}</ul>
           </article>)}
 
-          {plan.missing.length > 0 && <article className="surface-card overflow-hidden border border-dashed border-border"><header className="px-4 py-3 text-sm font-semibold">Aktuell ohne Angebot</header><ul>{plan.missing.map((line) => { const done = checked.includes(line.product.id); return <li key={line.product.id} className={cn("flex items-center gap-3 border-t border-border px-4 py-2.5", done && "opacity-55")}><CheckButton id={line.product.id} /><span className={cn("min-w-0 flex-1 truncate text-sm", done && "line-through")}>{line.product.name}</span><span className="text-xs text-muted-foreground">Menge {line.qty}</span></li>; })}</ul></article>}
+          {plan.missing.length > 0 && <article className="surface-card overflow-hidden border border-dashed border-border"><header className="px-4 py-3 text-sm font-semibold">Aktuell ohne Angebot</header><ul>{plan.missing.map((line) => { const done = checked.includes(line.product.id); return <li key={line.product.id} className={cn("flex items-center gap-3 border-t border-border px-4 py-2.5", done && "opacity-55")}><CheckButton id={line.product.id} /><span className={cn("min-w-0 flex-1 text-sm leading-snug break-words", done && "line-through")}>{line.product.name}</span><span className="shrink-0 text-xs text-muted-foreground">Menge {line.qty}</span></li>; })}</ul></article>}
         </section>
         <p className="px-5 pt-4 text-center text-[11px] text-muted-foreground">Abgehakte Artikel bleiben bis „Liste leeren“ sichtbar und werden beim nächsten Öffnen wiederhergestellt.</p>
       </>}
