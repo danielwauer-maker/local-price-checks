@@ -1,1 +1,81 @@
-{% extends 'base.html' %}{% block content %}<header><h1>Local Price Checks</h1><p>Dein lokaler Einkaufsassistent</p></header><section class="stats"><div><b>{{ favorites }}</b><span>Favoriten</span></div><div><b>{{ shopping }}</b><span>auf der Liste</span></div><div><b>{{ selected }}</b><span>aktive Märkte</span></div></section>{% if not user.postal_code or selected == 0 %}<article><b>Preisvergleich einrichten</b><small>Lege zuerst PLZ, Ort, Radius und deine bevorzugten Märkte fest.</small><a class="primary" href="/maerkte">Meine Märkte einrichten</a></article>{% endif %}<div class="actions"><a class="primary" href="/scanner">Barcode scannen</a><a href="/sparplan">Sparplan erstellen</a><a href="/maerkte">Meine Märkte</a><a href="/datenstatus">Datenstatus</a></div><h2>Jetzt günstig</h2>{% for o in current %}<article><b>{{ o.product.name }}</b><strong>{{ '%.2f'|format(o.price) }} €</strong><small>{{ o.store.name }} · bis {{ o.valid_to.strftime('%d.%m.') }}</small></article>{% else %}<p class="muted">Keine aktuellen Angebote für deine Favoriten in den ausgewählten Märkten.</p>{% endfor %}<h2>Demnächst</h2>{% for o in upcoming %}<article><b>{{ o.product.name }}</b><strong>{{ '%.2f'|format(o.price) }} €</strong><small>{{ o.store.name }} · ab {{ o.valid_from.strftime('%d.%m.') }}</small></article>{% else %}<p class="muted">Noch keine kommenden Angebote für deine Favoriten bekannt.</p>{% endfor %}{% endblock %}
+{% extends 'base.html' %}
+{% block title %}LocalPrices – Clever einkaufen{% endblock %}
+{% block content %}
+<section class="hero-card">
+  <div class="hero-top">
+    <div>
+      <div class="eyebrow">LOCALPRICES</div>
+      <h1>Clever einkaufen</h1>
+      <p class="hero-location">⌖ {% if user.postal_code or user.city %}{{ user.postal_code or '' }} {{ user.city or '' }}{% else %}Standort noch nicht eingerichtet{% endif %}</p>
+    </div>
+    <a class="profile-dot" href="/favoriten" aria-label="Favoriten">♡</a>
+  </div>
+  <div class="hero-stats">
+    <div><strong>{{ '%.2f'|format(home_plan.multi_store_saving or 0)|replace('.', ',') }} €</strong><span>mögliche Ersparnis</span></div>
+    <div><strong>{{ selected }}</strong><span>Märkte im Vergleich</span></div>
+    <div><strong>{{ favorites }}</strong><span>Favoriten</span></div>
+  </div>
+</section>
+
+<section class="quick-grid">
+  <a href="/maerkte"><span class="quick-icon">⌖</span><b>Karte</b></a>
+  <a href="/scanner"><span class="quick-icon">⌗</span><b>Scannen</b></a>
+  <a href="/angebote"><span class="quick-icon">◇</span><b>Angebote</b></a>
+</section>
+
+{% if not user.postal_code or selected == 0 %}
+<section class="setup-card">
+  <div>
+    <span class="section-kicker">PREISVERGLEICH EINRICHTEN</span>
+    <h2>Deine Märkte festlegen</h2>
+    <p>Lege PLZ, Ort, Radius und deine bevorzugten Märkte fest.</p>
+  </div>
+  <a class="primary-pill" href="/maerkte">Jetzt einrichten →</a>
+</section>
+{% endif %}
+
+<section class="plan-preview">
+  <div class="plan-preview-head">✣ <span>DEINE OPTIMALE LISTE</span></div>
+  <div class="plan-preview-body">
+    <div>
+      <strong>{{ '%.2f'|format(home_plan.total_with_travel)|replace('.', ',') }} €</strong>
+      <span>{{ home_plan.total_items }} Artikel · {{ home_plan.stores|length }} {{ 'Markt' if home_plan.stores|length == 1 else 'Märkte' }}</span>
+    </div>
+    {% if home_plan.multi_store_saving is not none and home_plan.multi_store_saving > 0 %}
+      <a href="/sparplan" class="saving-pill">{{ '%.2f'|format(home_plan.multi_store_saving)|replace('.', ',') }} € gespart →</a>
+    {% else %}
+      <a href="/sparplan" class="saving-pill">Plan öffnen →</a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="home-section">
+  <div class="section-title-row"><h2>Jetzt besonders günstig</h2><a href="/angebote?view=current">alle</a></div>
+  <div class="offer-stack">
+    {% for o in current[:4] %}
+      <article class="deal-card">
+        <div class="deal-emoji">%</div>
+        <div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · bis {{ o.valid_to.strftime('%d.%m.') }}</span></div>
+        <div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div>
+      </article>
+    {% else %}
+      <div class="empty-soft">Keine aktuellen Angebote für deine Favoriten in den ausgewählten Märkten.</div>
+    {% endfor %}
+  </div>
+</section>
+
+{% if upcoming %}
+<section class="home-section compact-section">
+  <div class="section-title-row"><h2>Demnächst</h2><a href="/angebote?view=next">alle</a></div>
+  <div class="offer-stack">
+    {% for o in upcoming[:3] %}
+      <article class="deal-card">
+        <div class="deal-emoji">↗</div>
+        <div class="deal-main"><b>{{ o.product.name }}</b><span>{{ o.store.name }} · ab {{ o.valid_from.strftime('%d.%m.') }}</span></div>
+        <div class="deal-price"><strong>{{ '%.2f'|format(o.price)|replace('.', ',') }} €</strong></div>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
