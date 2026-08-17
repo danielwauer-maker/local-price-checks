@@ -59,7 +59,10 @@ def parse_any_date(s: str, ref: date | None=None) -> date | None:
         except ValueError: pass
     m=re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.?",s)
     if m:
-        d=date(ref.year,int(m.group(2)),int(m.group(1)))
+        try:
+            d=date(ref.year,int(m.group(2)),int(m.group(1)))
+        except ValueError:
+            return None
         if (d-ref).days < -180: d=d.replace(year=ref.year+1)
         elif (d-ref).days > 180: d=d.replace(year=ref.year-1)
         return d
@@ -116,6 +119,14 @@ def infer_validity(text: str, ref: date | None=None):
             a=parse_any_date(m.group(1),ref); b=parse_any_date(m.group(2),ref)
             if a and b: return a,b,"explicit_range",1.0
 
+    # Prefer retailer-specific one-sided week anchors before generic short
+    # numeric ranges. This prevents unit-price ranges such as "0.25 - 0.33 / wl"
+    # from being mistaken for dates on Netto pages.
+    m=AB_MONTAG.search(text)
+    if m:
+        a=parse_any_date(m.group(1),ref)
+        if a: return a,a+timedelta(days=5),"ab_montag",0.95
+
     for pat, source_name, confidence in (
         (SHORT_BIS_RANGE, "short_bis_range", 0.94),
         (SHORT_RANGE, "short_range", 0.92),
@@ -126,11 +137,6 @@ def infer_validity(text: str, ref: date | None=None):
             if a and b:
                 if b<a: b=b.replace(year=a.year+1)
                 return a,b,source_name,confidence
-
-    m=AB_MONTAG.search(text)
-    if m:
-        a=parse_any_date(m.group(1),ref)
-        if a: return a,a+timedelta(days=5),"ab_montag",0.95
 
     m=KW_RE.search(text)
     if m:
