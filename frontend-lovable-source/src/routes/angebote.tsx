@@ -1,36 +1,38 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Plus, Search } from "lucide-react";
+import { ChevronDown, Heart, Plus, Search } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
-import { CATEGORIES, currentOffers, formatEuro, type Category } from "@/data/demo";
+import { currentOffers, formatEuro } from "@/data/demo";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/angebote")({
-  head: () => ({
-    meta: [
-      { title: "Aktuelle Angebote deiner Märkte – LocalPrices" },
-      { name: "description", content: "Alle laufenden Angebote deiner ausgewählten Supermärkte – direkt auf die Einkaufsliste setzen." },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Aktuelle Angebote deiner Märkte – LocalPrices" }] }),
   component: OffersPage,
 });
 
 function OffersPage() {
   const activeIds = useActiveMarketIds();
-  const { addToBasket } = useStore();
+  const { addToBasket, productFavorites, toggleProductFavorite } = useStore();
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<Category | "Alle">("Alle");
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   const offers = useMemo(() => {
     const q = query.trim().toLowerCase();
     return currentOffers(activeIds).filter(
-      (o) =>
-        (category === "Alle" || o.product.category === category) &&
-        (q === "" || o.product.name.toLowerCase().includes(q) || o.product.brand.toLowerCase().includes(q)),
+      (o) => q === "" || o.product.name.toLowerCase().includes(q) || o.product.brand.toLowerCase().includes(q),
     );
-  }, [activeIds, query, category]);
+  }, [activeIds, query]);
+
+  const groups = useMemo(() => {
+    const grouped = new Map<string, typeof offers>();
+    for (const offer of offers) {
+      const category = String(offer.product.category || "Sonstiges");
+      grouped.set(category, [...(grouped.get(category) ?? []), offer]);
+    }
+    return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0], "de"));
+  }, [offers]);
 
   return (
     <div>
@@ -43,42 +45,44 @@ function OffersPage() {
         </div>
       </div>
 
-      <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto px-5 pb-1">
-        {(["Alle", ...CATEGORIES] as const).map((c) => (
-          <button key={c} onClick={() => setCategory(c)} className={cn("shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors", category === c ? "bg-primary text-primary-foreground" : "bg-surface text-muted-foreground shadow-card")}>{c}</button>
-        ))}
-      </div>
-
       <section className="mt-4 space-y-3 px-5">
-        {offers.map((o) => (
-          <article key={`${o.product.id}-${o.market.id}`} className="surface-card flex gap-3 p-3">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-surface-2 text-3xl">{o.product.emoji}</div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{o.product.name}</p>
-              <p className="text-xs text-muted-foreground">{o.product.brand}{o.product.brand && o.product.unit ? " · " : ""}{o.product.unit}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">{o.market.name} · bis {o.price.offer!.until}</p>
-              <div className="mt-1.5 flex items-baseline gap-2">
-                <span className="tabular text-lg font-bold text-deal">{formatEuro(o.price.offer!.price)}</span>
-                {o.discount > 0 && o.price.price > o.price.offer!.price && (
-                  <>
-                    <span className="tabular text-xs text-muted-foreground line-through">{formatEuro(o.price.price)}</span>
-                    <span className="rounded-full gradient-deal px-2 py-0.5 text-[10px] font-bold text-deal-foreground">−{o.discount}%</span>
-                  </>
-                )}
-              </div>
+        {groups.map(([category, rows], index) => {
+          const expanded = query.trim() !== "" || open[category] ?? index === 0;
+          return (
+            <div key={category} className="surface-card overflow-hidden">
+              <button onClick={() => setOpen((s) => ({ ...s, [category]: !expanded }))} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
+                <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{category}</p><p className="text-[11px] text-muted-foreground">{rows.length} {rows.length === 1 ? "Artikel" : "Artikel"}</p></div>
+                <span className="rounded-full bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary">{rows.length}</span>
+                <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded && "rotate-180")} />
+              </button>
+
+              {expanded && (
+                <div className="border-t border-border">
+                  {rows.map((o) => {
+                    const favorite = productFavorites.includes(o.product.id);
+                    return (
+                      <article key={`${o.product.id}-${o.market.id}`} className="flex gap-3 border-b border-border p-3 last:border-0">
+                        <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-3xl">
+                          {(o.product as any).imageUrl ? <img src={(o.product as any).imageUrl} alt={o.product.name} className="h-full w-full object-cover" /> : o.product.emoji}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{o.product.name}</p>
+                          <p className="text-xs text-muted-foreground">{o.product.brand}{o.product.brand && o.product.unit ? " · " : ""}{o.product.unit}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">{o.market.name} · bis {o.price.offer!.until}</p>
+                          <div className="mt-1.5 flex items-baseline gap-2"><span className="tabular text-lg font-bold text-deal">{formatEuro(o.price.offer!.price)}</span></div>
+                        </div>
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <button onClick={() => toggleProductFavorite(o.product.id)} className={cn("rounded-full p-2", favorite ? "bg-deal/12 text-deal" : "bg-secondary text-muted-foreground")} aria-label="Favorit"><Heart className={cn("h-4 w-4", favorite && "fill-current")} /></button>
+                          <button onClick={() => { addToBasket(o.product.id); toast.success(`${o.product.name} auf der Liste`); }} className="rounded-full bg-primary p-2.5 text-primary-foreground shadow-float" aria-label="Zur Einkaufsliste"><Plus className="h-4 w-4" strokeWidth={2.6} /></button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <button
-              onClick={() => {
-                addToBasket(o.product.id);
-                toast.success(`${o.product.name} auf der Liste`);
-              }}
-              className="self-center rounded-full bg-primary p-2.5 text-primary-foreground shadow-float"
-              aria-label="Zur Einkaufsliste"
-            >
-              <Plus className="h-4 w-4" strokeWidth={2.6} />
-            </button>
-          </article>
-        ))}
+          );
+        })}
 
         {offers.length === 0 && (
           <p className="surface-card p-6 text-center text-sm text-muted-foreground">
