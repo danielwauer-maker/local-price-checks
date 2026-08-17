@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html as html_lib
 import re
 from pathlib import Path
 from urllib.parse import urljoin
@@ -9,12 +10,14 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
+from .clock import app_today
 from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
 from .engine_v140.source_registry import source_for_store
 
 PDF_RE = re.compile(r"\.pdf(?:$|[?#])", re.I)
+INLINE_PDF_RE = re.compile(r"[\"']([^\"']+\.pdf(?:\?[^\"']*)?)[\"']", re.I)
 PROSPECT_WORDS = ("prospekt", "wochenprospekt", "angebote", "handzettel", "flyer")
 
 
@@ -31,10 +34,28 @@ def _rank_link(url: str, text: str = "") -> tuple[int, int]:
     return score, -len(url)
 
 
+def _inline_pdf_links(base_url: str, html: str) -> list[str]:
+    """Find PDF references embedded in script/config strings of flipbook pages."""
+    decoded = html_lib.unescape(html).replace("\\/", "/")
+    seen: set[str] = set()
+    links: list[str] = []
+    for raw in INLINE_PDF_RE.findall(decoded):
+        url = urljoin(base_url, raw)
+        if url not in seen:
+            seen.add(url)
+            links.append(url)
+    return links
+
+
 def _links_from_html(base_url: str, html: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     candidates: list[tuple[tuple[int, int], str]] = []
     seen: set[str] = set()
+
+    for url in _inline_pdf_links(base_url, html):
+        seen.add(url)
+        candidates.append((_rank_link(url, "prospekt pdf"), url))
+
     for tag in soup.find_all(["a", "iframe", "embed", "object"]):
         raw = tag.get("href") or tag.get("src") or tag.get("data")
         if not raw:
@@ -107,13 +128,33 @@ def download_pdf(url: str, target_dir: Path) -> Path:
     return target
 
 
+def netto_weekly_prospect_url(store: Store) -> str:
+    """Build Netto's official store-specific weekly prospect URL.
+
+    Netto links the current leaflet as hz<ISO week>_kess and identifies the
+    selected branch with the official storeid query parameter.
+    """
+    if store.retailer != "Netto Marken-Discount":
+        raise CollectionError(f"Kein Netto-Markt: {store.name}")
+    if not store.external_id:
+        raise CollectionError(f"Netto storeid fehlt: {store.name}")
+    week = app_today().isocalendar().week
+    return f"https://wochenprospekt.netto-online.de/hz{week:02d}_kess/?storeid={store.external_id}"
+
+
+def _collect_netto_from_official_prospect(db: Session, store: Store, source):
+    prospect_url = netto_weekly_prospect_url(store)
+    pdf_url = discover_official_pdf(prospect_url)
+    pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
+    return collect_pdf_for_store(db, store.name, pdf_path)
+
+
 def collect_store_from_web(db: Session, store_name: str):
     """Collect one verified market from its official source.
 
-    Prefer the mature 1.4 structured/DOM/network collector. If it cannot
-    produce a validated offer set, discover and parse the official prospect PDF
-    through the benchmarked PDF engine. Both paths use the same Web-MVP import
-    quality gate and record separate CollectionRun entries.
+    Netto is collected from its separate official store-specific weekly
+    prospect host. Other retailers prefer the mature structured collector and
+    fall back to an official PDF prospect when needed.
     """
     store = db.query(Store).filter(Store.name == store_name).first()
     if not store:
@@ -123,6 +164,9 @@ def collect_store_from_web(db: Session, store_name: str):
     source = source_for_store(store.name)
     if not source:
         raise CollectionError(f"Keine Quelle registriert für: {store.name}")
+
+    if store.retailer == "Netto Marken-Discount":
+        return _collect_netto_from_official_prospect(db, store, source)
 
     structured_error = None
     try:
