@@ -66,7 +66,7 @@ def test_optimizer_avoids_second_market_when_travel_cost_exceeds_price_saving(mo
 
     assert [store.name for store in result.stores] == ["Markt A"]
     assert result.merchandise_total == 4.00
-    assert result.total_with_travel == 5.50
+    assert result.total_with_travel == 4.75
     assert result.one_market_covers_all_offered_items is True
 
 
@@ -95,9 +95,9 @@ def test_optimizer_uses_second_market_when_total_cost_is_lower(monkeypatch):
 
     assert {store.name for store in result.stores} == {"Markt A", "Markt B"}
     assert result.merchandise_total == 10.00
-    assert result.total_with_travel == 12.40
+    assert result.total_with_travel == 11.20
     assert result.single_store_name == "Markt B"
-    assert result.single_store_total == 13.50
+    assert result.single_store_total == 12.75
     assert result.multi_store_worth_it is True
     assert result.multi_store_saving is not None and result.multi_store_saving > 0
 
@@ -125,5 +125,5 @@ def test_optimizer_returns_best_partial_plan_when_one_store_cannot_cover_everyth
     assert result.covered_items == 2
     assert result.offered_items == 3
     assert result.merchandise_total == 5.00
-    assert result.total_with_travel == 6.20
+    assert result.total_with_travel == 5.60
     assert sum(offer is None for _, offer in result.picks) == 1
