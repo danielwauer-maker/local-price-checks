@@ -7,7 +7,7 @@ from app.main import app
 from app.models import FavoriteStore, MasterProduct, Offer, ProductBarcode, ShoppingItem, Store, UserProfile
 from app.optimizer import optimize_current_shopping, optimize_shopping
 from app.seed import seed_stores
-from app.web_collector import _links_from_html
+from app.web_collector import _links_from_html, netto_weekly_prospect_url
 
 
 def _ensure_data():
@@ -42,6 +42,22 @@ def _ensure_data():
 def test_pdf_link_discovery_prefers_prospect_pdf():
     html = '<a href="/foo">Foo</a><a href="/kw33/wochenprospekt.pdf">Wochenprospekt</a>'
     assert _links_from_html("https://example.test/markt", html)[0] == "https://example.test/kw33/wochenprospekt.pdf"
+
+
+def test_pdf_link_discovery_finds_flipbook_script_reference():
+    html = '<script>window.reader={"pdf":"assets\\/hz34_kess.pdf"};</script>'
+    assert _links_from_html("https://wochenprospekt.netto-online.de/hz34_kess/", html)[0] == (
+        "https://wochenprospekt.netto-online.de/hz34_kess/assets/hz34_kess.pdf"
+    )
+
+
+def test_netto_weekly_prospect_url_uses_kw_and_official_storeid(monkeypatch):
+    db, _, _, _ = _ensure_data()
+    store = db.query(Store).filter(Store.name == "Netto Dierdorf").one()
+    assert store.external_id == "6822"
+    monkeypatch.setattr("app.web_collector.app_today", lambda: date(2026, 8, 17))
+    assert netto_weekly_prospect_url(store) == "https://wochenprospekt.netto-online.de/hz34_kess/?storeid=6822"
+    db.close()
 
 
 def test_scanner_can_link_unknown_barcode_and_reopen_product():
