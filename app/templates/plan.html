@@ -1,60 +1,78 @@
 {% extends 'base.html' %}
+{% block title %}Sparplan – LocalPrices{% endblock %}
 {% block content %}
-<h1>Sparplan</h1>
-<div class="tabs">
-  <a class="{{ 'active' if view=='current' }}" href="/sparplan?view=current">Jetzt</a>
-  <a class="{{ 'active' if view=='next' }}" href="/sparplan?view=next">Demnächst</a>
-</div>
+<section class="page-wrap">
+  <header class="page-heading">
+    <div>
+      <h1>Sparplan</h1>
+      <p>Dein günstigster Einkauf inklusive geschätzter Fahrtkosten.</p>
+    </div>
+  </header>
 
-{% if plan.total_items %}
-<article>
-  <b>{{ plan.offered_items }} von {{ plan.total_items }} Artikeln im Angebot</b>
-  <small>
-    {% if plan.stores|length == 1 %}
-      1 Markt erforderlich
-    {% elif plan.stores|length > 1 %}
-      {{ plan.stores|length }} Märkte erforderlich
-    {% else %}
-      Noch kein passendes Angebot in deinen ausgewählten Märkten
-    {% endif %}
-  </small>
-</article>
-{% endif %}
+  <div class="tabs tabs-modern">
+    <a class="{{ 'active' if view=='current' }}" href="/sparplan?view=current">Jetzt</a>
+    <a class="{{ 'active' if view=='next' }}" href="/sparplan?view=next">Demnächst</a>
+  </div>
 
-{% for item,offer in plan.picks %}
-<article>
-  <b>{{ item.product.name }} × {{ item.quantity|int if item.quantity == item.quantity|int else item.quantity }}</b>
-  {% if offer %}
-    <strong>{{ '%.2f'|format(offer.price * item.quantity)|replace('.', ',') }} €</strong>
-    <small>{{ offer.store.name }} · Einzelpreis {{ '%.2f'|format(offer.price)|replace('.', ',') }} €</small>
-    <small>{{ offer.valid_from.strftime('%d.%m.') }}–{{ offer.valid_to.strftime('%d.%m.%Y') }}</small>
-  {% else %}
-    <small>{% if view == 'next' %}Kein kommendes Angebot{% else %}Kein aktuelles Angebot{% endif %} in deinen ausgewählten Märkten</small>
+  {% if plan.total_items %}
+  <section class="plan-hero">
+    <span class="section-kicker">✣ OPTIMALER PLAN</span>
+    <strong>{{ '%.2f'|format(plan.total_with_travel)|replace('.', ',') }} €</strong>
+    <p>{{ plan.offered_items }} von {{ plan.total_items }} Artikeln im Angebot · {{ plan.stores|length }} {{ 'Markt' if plan.stores|length == 1 else 'Märkte' }}</p>
+    <div class="plan-hero-metrics">
+      <div><span>Waren</span><b>{{ '%.2f'|format(plan.merchandise_total)|replace('.', ',') }} €</b></div>
+      <div><span>Fahrt</span><b>{{ '%.2f'|format(plan.travel_cost)|replace('.', ',') }} €</b></div>
+    </div>
+  </section>
   {% endif %}
-</article>
-{% endfor %}
 
-<div class="total">Waren im Angebot <b>{{ '%.2f'|format(plan.merchandise_total)|replace('.', ',') }} €</b></div>
-{% if plan.stores %}<p><b>Empfohlene Märkte:</b> {{ plan.stores|map(attribute='name')|join(', ') }}</p>{% endif %}
-<p class="muted">Geschätzte Fahrstrecke ab Hauptstandort: {{ '%.1f'|format(plan.travel_km)|replace('.', ',') }} km · geschätzte Fahrtkosten {{ '%.2f'|format(plan.travel_cost)|replace('.', ',') }} €.</p>
-<div class="total">Mit geschätzter Fahrt <b>{{ '%.2f'|format(plan.total_with_travel)|replace('.', ',') }} €</b></div>
+  {% if plan.stores %}
+  <section class="market-summary-card">
+    <span class="section-kicker">EMPFOHLENE MÄRKTE</span>
+    <div class="market-chip-row">
+      {% for store in plan.stores %}<span class="market-chip">{{ loop.index }} · {{ store.name }}</span>{% endfor %}
+    </div>
+    <p>Geschätzte Gesamtstrecke: {{ '%.1f'|format(plan.travel_km)|replace('.', ',') }} km</p>
+  </section>
+  {% endif %}
 
-{% if plan.one_market_covers_all_offered_items %}
-<p class="success"><b>Alle angebotenen Artikel bekommst du bereits in einem Markt.</b> Eine zusätzliche Fahrt zu einem weiteren Markt bringt für diesen Zeitraum keinen Vorteil.</p>
-{% elif plan.single_store_total is not none %}
-<article>
-  <b>Beste Ein-Markt-Alternative</b>
-  <strong>{{ '%.2f'|format(plan.single_store_total)|replace('.', ',') }} €</strong>
-  <small>{{ plan.single_store_name }} inklusive geschätzter Fahrtkosten</small>
-</article>
-{% if plan.multi_store_worth_it %}
-<p class="success"><b>Mehrere Märkte lohnen sich voraussichtlich.</b> Vorteil gegenüber der besten Ein-Markt-Lösung: {{ '%.2f'|format(plan.multi_store_saving)|replace('.', ',') }} €.</p>
-{% elif plan.multi_store_saving is not none %}
-<p class="muted">Ein zusätzlicher Markt lohnt sich nach der aktuellen Schätzung nicht.</p>
-{% endif %}
-{% else %}
-<p class="muted">Für einen belastbaren Ein-Markt-Vergleich gibt es noch nicht für alle angebotenen Listenartikel Angebote in demselben Markt.</p>
-{% endif %}
+  <section class="plan-lines">
+    {% for item,offer in plan.picks %}
+    <article class="plan-line {{ 'missing' if not offer else '' }}">
+      <div class="plan-line-main">
+        <b>{{ item.product.name }}</b>
+        <span>Menge {{ item.quantity|int if item.quantity == item.quantity|int else item.quantity }}</span>
+        {% if offer %}
+          <small>{{ offer.store.name }} · {{ offer.valid_from.strftime('%d.%m.') }}–{{ offer.valid_to.strftime('%d.%m.%Y') }}</small>
+        {% else %}
+          <small>{% if view == 'next' %}Kein kommendes Angebot{% else %}Kein aktuelles Angebot{% endif %} in deinen ausgewählten Märkten</small>
+        {% endif %}
+      </div>
+      <div class="plan-line-price">
+        {% if offer %}<strong>{{ '%.2f'|format(offer.price * item.quantity)|replace('.', ',') }} €</strong><span>{{ '%.2f'|format(offer.price)|replace('.', ',') }} € / Stk.</span>{% else %}<span>—</span>{% endif %}
+      </div>
+    </article>
+    {% else %}
+      <div class="empty-soft">Deine Einkaufsliste ist noch leer.</div>
+    {% endfor %}
+  </section>
 
-<small class="muted">Die Fahrstrecke ist im lokalen MVP eine Näherung aus Marktkoordinaten und einem Straßenfaktor, noch keine Live-Routingstrecke.</small>
+  {% if plan.one_market_covers_all_offered_items %}
+  <section class="insight success-card"><b>✓ Ein Markt reicht aus.</b><span>Eine zusätzliche Fahrt bringt für diesen Zeitraum keinen Vorteil.</span></section>
+  {% elif plan.single_store_total is not none %}
+  <section class="comparison-card">
+    <div><span>Beste Ein-Markt-Alternative</span><b>{{ plan.single_store_name }}</b></div>
+    <strong>{{ '%.2f'|format(plan.single_store_total)|replace('.', ',') }} €</strong>
+  </section>
+  {% if plan.multi_store_worth_it %}
+    <section class="insight success-card"><b>✓ Mehrere Märkte lohnen sich.</b><span>Vorteil gegenüber der besten Ein-Markt-Lösung: {{ '%.2f'|format(plan.multi_store_saving)|replace('.', ',') }} €.</span></section>
+  {% elif plan.multi_store_saving is not none %}
+    <section class="insight neutral-card"><b>Ein zusätzlicher Markt lohnt sich nicht.</b><span>Die Fahrkosten fressen die Preisersparnis auf.</span></section>
+  {% endif %}
+  {% else %}
+  <p class="muted plan-note">Für einen belastbaren Ein-Markt-Vergleich gibt es noch nicht für alle angebotenen Listenartikel Angebote in demselben Markt.</p>
+  {% endif %}
+
+  <p class="muted plan-note">Die Fahrstrecke ist aktuell eine Näherung aus Marktkoordinaten und Straßenfaktor, noch keine Live-Routingstrecke.</p>
+</section>
 {% endblock %}
