@@ -26,14 +26,19 @@ function Index() {
 
   return (
     <div>
-      <section className="gradient-hero rounded-b-[2rem] px-5 pb-8 pt-[max(1.5rem,env(safe-area-inset-top))] text-primary-foreground">
-        <div className="flex items-start justify-between pr-10">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] opacity-75">LocalPrices</p>
-            <h1 className="mt-1 text-2xl font-semibold">{profile.displayName ? `Hallo, ${profile.displayName}` : "Clever einkaufen"}</h1>
-            <Link to="/settings" className="mt-1 flex items-center gap-1 text-sm opacity-85 hover:opacity-100"><MapPin className="h-3.5 w-3.5" /> {location.label}</Link>
-          </div>
-          <Link to="/settings" className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15" aria-label="Einstellungen"><Settings className="h-5 w-5" /></Link>
+      <section className="gradient-hero relative rounded-b-[2rem] px-5 pb-8 pt-[max(1.5rem,env(safe-area-inset-top))] text-primary-foreground">
+        <Link
+          to="/settings"
+          className="absolute right-5 top-[max(1.25rem,env(safe-area-inset-top))] flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition-colors hover:bg-white/20"
+          aria-label="Einstellungen"
+        >
+          <Settings className="h-5 w-5" />
+        </Link>
+
+        <div className="pr-14">
+          <p className="text-xs font-medium uppercase tracking-[0.18em] opacity-75">LocalPrices</p>
+          <h1 className="mt-1 text-2xl font-semibold">{profile.displayName ? `Hallo, ${profile.displayName}` : "Clever einkaufen"}</h1>
+          <Link to="/settings" className="mt-1 flex items-center gap-1 text-sm opacity-85 hover:opacity-100"><MapPin className="h-3.5 w-3.5" /> {location.label}</Link>
         </div>
 
         <div className="mt-6 grid grid-cols-3 gap-2 text-center">
