@@ -25,6 +25,12 @@ class LocationPayload(BaseModel):
     radius: float | None = None
 
 
+def _media_url(row: MediaAsset | None) -> str | None:
+    if not row:
+        return None
+    return f"/media/{row.file_path}" if row.file_path else row.source_url
+
+
 def _primary_media(db: Session, *, kind: str, product_id: int | None = None, store_id: int | None = None, retailer: str | None = None) -> str | None:
     q = db.query(MediaAsset).filter(MediaAsset.kind == kind, MediaAsset.active.is_(True))
     if product_id is not None:
@@ -34,9 +40,38 @@ def _primary_media(db: Session, *, kind: str, product_id: int | None = None, sto
     if retailer is not None:
         q = q.filter(MediaAsset.retailer == retailer)
     row = q.order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc()).first()
-    if not row:
-        return None
-    return f"/media/{row.file_path}" if row.file_path else row.source_url
+    return _media_url(row)
+
+
+def _retailer_logo(db: Session, retailer: str) -> str | None:
+    # Preferred future type: retailer_logo. Existing admin uploads were saved
+    # as kind=store with retailer set and no concrete store assignment; keep
+    # those working as retailer-wide logos so nothing has to be re-uploaded.
+    logo = (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "retailer_logo",
+            MediaAsset.retailer == retailer,
+            MediaAsset.active.is_(True),
+        )
+        .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
+        .first()
+    )
+    if logo:
+        return _media_url(logo)
+
+    legacy_logo = (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "store",
+            MediaAsset.retailer == retailer,
+            MediaAsset.store_id.is_(None),
+            MediaAsset.active.is_(True),
+        )
+        .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
+        .first()
+    )
+    return _media_url(legacy_logo)
 
 
 def _market(db: Session, store: Store) -> dict:
@@ -52,7 +87,7 @@ def _market(db: Session, store: Store) -> dict:
         "rating": 0,
         "verified": bool(store.benchmark_verified),
         "imageUrl": _primary_media(db, kind="store", store_id=store.id),
-        "logoUrl": _primary_media(db, kind="retailer_logo", retailer=store.retailer),
+        "logoUrl": _retailer_logo(db, store.retailer),
     }
 
 
