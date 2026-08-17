@@ -66,9 +66,22 @@ def home(request: Request, db: Session = Depends(get_db)):
     favorite_ids = {row.master_product_id for row in favorite_rows}
     current = [o for o in offers_for_selected_stores(db, user, "current") if o.master_product_id in favorite_ids]
     upcoming = [o for o in offers_for_selected_stores(db, user, "next") if o.master_product_id in favorite_ids]
-    shopping = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).count()
+    shopping_items = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
     selected = len(selected_store_ids(db, user))
-    return templates.TemplateResponse("index.html", {"request": request, "user": user, "current": current[:6], "upcoming": upcoming[:6], "favorites": len(favorite_rows), "shopping": shopping, "selected": selected})
+    home_plan = optimize_shopping(db, user, shopping_items, "current")
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "user": user,
+            "current": current[:6],
+            "upcoming": upcoming[:6],
+            "favorites": len(favorite_rows),
+            "shopping": len(shopping_items),
+            "selected": selected,
+            "home_plan": home_plan,
+        },
+    )
 
 
 @app.get("/maerkte")
