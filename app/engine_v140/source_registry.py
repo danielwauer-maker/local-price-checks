@@ -27,13 +27,13 @@ SOURCES = [
     ),
     RetailSource(
         "netto_dierdorf", "Netto Marken-Discount", "Netto Dierdorf",
-        "https://www.netto-online.de/filialen/dierdorf/koenigsberger-str-24/6822",
-        "store_page", "store_specific", "Filialseite mit Digitalem Wochenprospekt.", True, True,
+        "https://wochenprospekt.netto-online.de/",
+        "weekly_prospect", "store_specific", "Offizieller digitaler Netto-Wochenprospekt; storeid=6822.", True, True,
     ),
     RetailSource(
         "netto_oberhonnefeld", "Netto Marken-Discount", "Netto Oberhonnefeld-Gierend",
-        "https://www.netto-online.de/filialen/oberhonnefeld-gierend/ueber-dem-stellweg-25/2648",
-        "store_page", "store_specific", "Filialspezifische Netto-Quelle.", True, True,
+        "https://wochenprospekt.netto-online.de/",
+        "weekly_prospect", "store_specific", "Offizieller digitaler Netto-Wochenprospekt; storeid=2648.", True, True,
     ),
     RetailSource(
         "aldi_dierdorf", "ALDI SÜD", "ALDI SÜD Dierdorf",
@@ -66,7 +66,7 @@ RETAILER_FALLBACK_URLS = {
     "Lidl": "https://www.lidl.de/c/online-prospekte/s10005610",
     "ALDI SÜD": "https://www.aldi-sued.de/angebote",
     "EDEKA": "https://edeka-fellenzer.de/angebote/",
-    "Netto Marken-Discount": "https://www.netto-online.de/angebote/",
+    "Netto Marken-Discount": "https://wochenprospekt.netto-online.de/",
     "REWE": "https://www.rewe.de/angebote/",
 }
 
