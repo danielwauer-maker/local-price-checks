@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .models import MasterProduct, Offer, Store
 from .admin_learning import resolve_product_alias
+from .category_classifier import ensure_auto_category
 from .engine_v140.collectors import CollectedOffer
 from .engine_v140.offer_quality import evaluate_offer
 from .engine_v140.product_cleaning import clean_product_name
@@ -111,6 +112,10 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
             db.add(product)
             db.flush()
             counts["created_products"] += 1
+
+        # Automatically categorize unclassified products. Manual admin
+        # categories are protected by category_locked and are never overwritten.
+        ensure_auto_category(db, product)
 
         offer = db.query(Offer).filter(Offer.store_id == store.id, Offer.master_product_id == product.id, Offer.valid_from == valid_from, Offer.price == float(row.price)).first()
         if not offer:
