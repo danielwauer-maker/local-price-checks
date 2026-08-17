@@ -27,21 +27,29 @@ _base_parse_netto_text = parse_netto_text
 def _netto_live_offer_section(text: str) -> list[str]:
     """Return the real filial-offer block from the current Netto filial page.
 
-    The global navigation contains "Aktuelle Filial-Angebote" before the actual
-    offer cards. The current live page later renders a standalone heading
-    "Filial-Angebote" followed by the cards and then "Aktuelle Prospekte".
-    Matching the standalone heading avoids parsing the navigation/catalog shell.
+    The page contains a navigation item named "Aktuelle Filial-Angebote", then
+    the actual standalone heading "Filial-Angebote" above the product cards,
+    and later another "Filial-Angebote" label inside "Aktuelle Prospekte".
+    Select the standalone heading that occurs before the first
+    "Aktuelle Prospekte" boundary and whose following lines contain local-card
+    markers. This avoids both false matches.
     """
     lines = [x.strip() for x in text.splitlines() if x.strip()]
-    starts = [i for i, line in enumerate(lines) if line.lower().strip() == "filial-angebote"]
+    prospect_idx = next(
+        (i for i, line in enumerate(lines) if line.lower().strip() == "aktuelle prospekte"),
+        len(lines),
+    )
+    starts = [
+        i for i, line in enumerate(lines[:prospect_idx])
+        if line.lower().strip() == "filial-angebote"
+    ]
     if not starts:
         return []
+
+    # Prefer the last valid standalone heading before "Aktuelle Prospekte".
+    # On the live filial page this is the real product-card section.
     start = starts[-1] + 1
-    end = len(lines)
-    for i in range(start, len(lines)):
-        if lines[i].lower().strip() == "aktuelle prospekte":
-            end = i
-            break
+    end = prospect_idx
     return lines[start:end]
 
 
@@ -64,37 +72,33 @@ def _parse_netto_live_cards(source, text, imgs=None):
 
     marker_lines = {"filiale", "filiale & shop", "image", "zu den angeboten", "alle filialangebote ansehen"}
     pair_re = re.compile(r"\b(?:UVP|statt)\s+(\d{1,3}[.,]\d{2})\s+(\d{1,3}[.,]\d{2})\*?", re.I)
-    action_re = re.compile(r"\bAktion\s+(\d{1,3}[.,]\d{2})\*?", re.I)
+    bare_action_price = re.compile(r"^(\d{1,3}[.,]\d{2})\*?$", re.I)
 
     i = 0
     while i < len(section):
-        line = section[i].strip()
-        low = line.lower()
-        q, u = size(line)
-        if q is None or low in marker_lines or _is_noise_line(line):
-            i += 1
-            continue
-
-        # Unit-price-only lines such as "3.96 / kg" must not become products.
-        if re.fullmatch(r"\d{1,3}(?:[.,]\d{1,2})?\s*(?:€\s*)?/\s*(?:kg|l|100\s*g|100\s*ml|wl)", line, re.I):
-            i += 1
-            continue
-
-        name = clean_product_name(line)
-        if not name or product_name_issue(name):
+        marker = section[i].lower().strip()
+        if marker not in {"filiale", "filiale & shop"}:
             i += 1
             continue
 
         j = i + 1
-        while j < len(section) and section[j].lower().strip() not in {"filiale", "filiale & shop"}:
-            # Stop at the next obvious product row even if the marker is omitted.
-            if j > i + 2 and size(section[j])[0] is not None:
-                maybe_prices = " ".join(section[i:j])
-                if pair_re.search(maybe_prices) or action_re.search(maybe_prices):
-                    break
+        while j < len(section) and section[j].lower().strip() in {"image", "zu den angeboten"}:
             j += 1
+        if j >= len(section):
+            break
 
-        block = " ".join(section[i:j])
+        name_line = section[j].strip()
+        name = clean_product_name(name_line)
+        if not name or product_name_issue(name):
+            i += 1
+            continue
+
+        k = j + 1
+        while k < len(section) and section[k].lower().strip() not in {"filiale", "filiale & shop"}:
+            k += 1
+        block_lines = section[j:k]
+        block = " ".join(block_lines)
+
         pair = pair_re.search(block)
         regular = None
         promo = None
@@ -102,19 +106,24 @@ def _parse_netto_live_cards(source, text, imgs=None):
             regular = float(pair.group(1).replace(",", "."))
             promo = float(pair.group(2).replace(",", "."))
         else:
-            action = action_re.search(block)
-            if action:
-                promo = float(action.group(1).replace(",", "."))
-            else:
-                vals = _price_without_unit_prices(block)
-                if vals:
-                    promo = min(vals)
+            # "Aktion" is usually a separate line followed by a bare price.
+            for idx, value in enumerate(block_lines[:-1]):
+                if value.lower().strip() == "aktion":
+                    m = bare_action_price.match(block_lines[idx + 1].strip())
+                    if m:
+                        promo = float(m.group(1).replace(",", "."))
+                        break
 
         if promo is None or promo <= 0:
-            i += 1
+            i = max(i + 1, k)
             continue
 
-        # Netto+ / app prices are often printed as a lower trailing price.
+        q, u = size(name_line)
+        if q is None and re.search(r"\bstück\b", name_line, re.I):
+            q, u = 1.0, "stück"
+
+        # Lower trailing prices can be Netto+/app prices. Only classify them as
+        # such when the card explicitly mentions the digital mechanism.
         app_price = None
         lower_vals = [v for v in _price_without_unit_prices(block) if v < promo]
         if lower_vals and re.search(r"\b(?:netto\+|app|coupon|vorteilspreis|digitaler\s+coupon)\b", block, re.I):
@@ -129,7 +138,7 @@ def _parse_netto_live_cards(source, text, imgs=None):
             image_url=im["url"] if im else None, image_alt=im["alt"] if im else None,
             confidence=.97 if vf and vt else .84,
         ))
-        i = max(i + 1, j)
+        i = max(i + 1, k)
 
     seen = set()
     result = []
