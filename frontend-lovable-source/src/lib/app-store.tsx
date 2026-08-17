@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { DEFAULT_LOCATION, MARKETS, distanceKm } from "@/data/demo";
+import { DEFAULT_LOCATION, MARKETS, PRODUCTS, PRICES, distanceKm, type Market, type Price, type Product } from "@/data/demo";
 
 type Location = { lat: number; lng: number; label: string };
 
@@ -20,15 +20,19 @@ type StoreState = {
   basket: Record<string, number>;
 };
 
-const STORAGE_KEY = "localprices.state.v1";
+type BootstrapPayload = StoreState & {
+  markets: Market[];
+  products: Product[];
+  prices: Price[];
+};
 
 const initialState: StoreState = {
   location: DEFAULT_LOCATION,
-  radius: 10,
+  radius: 15,
   maxStops: 2,
-  selected: ["rewe-hundertmark", "aldi-dierdorf", "lidl-dierdorf"],
-  favorites: ["rewe-hundertmark"],
-  basket: { p2: 1, p5: 1, p16: 2, p9: 1, p20: 2, p23: 1 },
+  selected: [],
+  favorites: [],
+  basket: {},
 };
 
 type StoreContext = StoreState & {
@@ -48,24 +52,44 @@ type StoreContext = StoreState & {
 
 const Ctx = createContext<StoreContext | null>(null);
 
+function api(path: string, init?: RequestInit) {
+  return fetch(path, {
+    ...init,
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+  });
+}
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StoreState>(initialState);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setState({ ...initialState, ...(JSON.parse(raw) as StoreState) });
-    } catch {
-      /* ignore */
-    }
-    setHydrated(true);
+    let live = true;
+    api("/api/bootstrap")
+      .then((r) => {
+        if (!r.ok) throw new Error(`bootstrap ${r.status}`);
+        return r.json() as Promise<BootstrapPayload>;
+      })
+      .then((payload) => {
+        if (!live) return;
+        MARKETS.splice(0, MARKETS.length, ...payload.markets);
+        PRODUCTS.splice(0, PRODUCTS.length, ...payload.products);
+        PRICES.splice(0, PRICES.length, ...payload.prices);
+        setState({
+          location: payload.location,
+          radius: payload.radius,
+          maxStops: 2,
+          selected: payload.selected,
+          favorites: payload.favorites,
+          basket: payload.basket,
+        });
+      })
+      .catch((error) => console.error("LocalPrices bootstrap failed", error))
+      .finally(() => live && setHydrated(true));
+    return () => {
+      live = false;
+    };
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
 
   const patch = useCallback(
     (p: Partial<StoreState> | ((s: StoreState) => Partial<StoreState>)) =>
@@ -91,31 +115,54 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       marketsInRadius,
       basketEntries,
       basketCount: basketEntries.reduce((s, e) => s + e.qty, 0),
-      setLocation: (location) => patch({ location }),
-      setRadius: (radius) => patch({ radius }),
+      setLocation: (location) => {
+        patch({ location });
+        void api("/api/location", {
+          method: "PUT",
+          body: JSON.stringify({ ...location, radius: state.radius }),
+        });
+      },
+      setRadius: (radius) => {
+        patch({ radius });
+        void api("/api/location", {
+          method: "PUT",
+          body: JSON.stringify({ ...state.location, radius }),
+        });
+      },
       setMaxStops: (maxStops) => patch({ maxStops }),
-      toggleSelected: (id) =>
+      toggleSelected: (id) => {
         patch((s) => ({
           selected: s.selected.includes(id)
             ? s.selected.filter((x) => x !== id)
             : [...s.selected, id],
-        })),
+        }));
+        void api(`/api/stores/${id}/toggle`, { method: "POST" });
+      },
       toggleFavorite: (id) =>
         patch((s) => ({
           favorites: s.favorites.includes(id)
             ? s.favorites.filter((x) => x !== id)
             : [...s.favorites, id],
         })),
-      addToBasket: (productId, qty = 1) =>
-        patch((s) => ({ basket: { ...s.basket, [productId]: (s.basket[productId] ?? 0) + qty } })),
-      setQty: (productId, qty) =>
+      addToBasket: (productId, qty = 1) => {
+        const nextQty = (state.basket[productId] ?? 0) + qty;
+        patch((s) => ({ basket: { ...s.basket, [productId]: nextQty } }));
+        void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: nextQty }) });
+      },
+      setQty: (productId, qty) => {
+        const safeQty = Math.max(0, qty);
         patch((s) => {
           const next = { ...s.basket };
-          if (qty <= 0) delete next[productId];
-          else next[productId] = qty;
+          if (safeQty <= 0) delete next[productId];
+          else next[productId] = safeQty;
           return { basket: next };
-        }),
-      clearBasket: () => patch({ basket: {} }),
+        });
+        void api(`/api/basket/${productId}`, { method: "PUT", body: JSON.stringify({ quantity: safeQty }) });
+      },
+      clearBasket: () => {
+        patch({ basket: {} });
+        void api("/api/basket", { method: "DELETE" });
+      },
     };
   }, [state, hydrated, patch]);
 
@@ -133,7 +180,6 @@ export function useActiveMarketIds() {
   const { selected, marketsInRadius } = useStore();
   return useMemo(() => {
     const inRadius = marketsInRadius.map((m) => m.id);
-    const active = selected.filter((id) => inRadius.includes(id));
-    return active.length > 0 ? active : inRadius;
+    return selected.filter((id) => inRadius.includes(id));
   }, [selected, marketsInRadius]);
 }
