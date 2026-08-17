@@ -11,6 +11,9 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("molkerei-kuehlung", (
         "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "käse", "mozzarella", "feta", "butter", "margarine", "sahne", "schmand", "kefir", "pudding", "milchreis", "frischkäse", "skyr", "dessert", "eier", "ei ",
     )),
+    ("suesswaren-snacks", (
+        "schokolade", "schoko", "keks", "kekse", "waffel", "bonbon", "gummi", "chips", "cracker", "nüsse", "nuss", "snack", "riegel", "praline", "lakritz", "popcorn",
+    )),
     ("obst-gemuese", (
         "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine", "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume", "tomate", "gurke", "paprika", "kartoffel", "zwiebel", "knoblauch", "salat", "möhre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "champignon", "gemüse", "obst", "avocado",
     )),
@@ -22,9 +25,6 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("tiefkuehl", (
         "tiefkühl", "tk ", "pizza", "pommes", "eiscreme", "speiseeis", "eis ", "fischstäbchen",
-    )),
-    ("suesswaren-snacks", (
-        "schokolade", "schoko", "keks", "kekse", "waffel", "bonbon", "gummi", "chips", "cracker", "nüsse", "nuss", "snack", "riegel", "praline", "lakritz", "popcorn",
     )),
     ("vorrat-grundnahrung", (
         "nudel", "pasta", "reis", "mehl", "zucker", "salz", "öl", "essig", "konserve", "dose", "müsli", "hafer", "cerealien", "cornflakes", "soße", "sauce", "ketchup", "senf", "mayonnaise", "mayo", "gewürz", "suppe", "brühe", "aufstrich", "marmelade", "honig",
