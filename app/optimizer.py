@@ -26,6 +26,7 @@ class PlanResult:
     period: str
     total_items: int
     offered_items: int
+    covered_items: int
     one_market_covers_all_offered_items: bool
 
 
@@ -51,7 +52,9 @@ def _evaluate_store_set(
     offered_items: list[ShoppingItem],
     by_product: dict[int, list[Offer]],
     store_ids: set[int],
-) -> tuple[float, float, float, list[tuple[ShoppingItem, Offer]]] | None:
+    *,
+    require_full_coverage: bool = True,
+) -> tuple[float, float, float, list[tuple[ShoppingItem, Offer]]]:
     picks: list[tuple[ShoppingItem, Offer]] = []
     merchandise_total = 0.0
     used_stores: dict[int, Store] = {}
@@ -59,11 +62,16 @@ def _evaluate_store_set(
     for item in offered_items:
         options = [o for o in by_product[item.master_product_id] if o.store_id in store_ids]
         if not options:
-            return None
+            if require_full_coverage:
+                return 0.0, 0.0, inf, []
+            continue
         best = min(options, key=lambda o: o.price)
         picks.append((item, best))
         merchandise_total += best.price * item.quantity
         used_stores[best.store_id] = best.store
+
+    if not picks:
+        return 0.0, 0.0, inf, []
 
     route_km = _route_km(user, list(used_stores.values()))
     total = merchandise_total + route_km * settings.driving_cost_per_km
@@ -101,12 +109,19 @@ def optimize_shopping(
         combination_limit = len(candidate_store_ids)
         if max_stores is not None:
             combination_limit = min(combination_limit, max_stores)
+
+        # First prefer a plan that covers every currently offered shopping item.
         for count in range(1, combination_limit + 1):
             for combo in combinations(candidate_store_ids, count):
-                evaluation = _evaluate_store_set(user, offered_list_items, by_product, set(combo))
-                if evaluation is None:
+                merchandise, route_km, total, offer_picks = _evaluate_store_set(
+                    user,
+                    offered_list_items,
+                    by_product,
+                    set(combo),
+                    require_full_coverage=True,
+                )
+                if not offer_picks:
                     continue
-                merchandise, route_km, total, offer_picks = evaluation
                 used_ids = {offer.store_id for _, offer in offer_picks}
                 current_used = {offer.store_id for _, offer in best_offer_picks}
                 better = total < best_total - 0.005
@@ -126,6 +141,41 @@ def optimize_shopping(
                     best_offer_picks = offer_picks
                     best_store_ids = used_ids
 
+        # If the requested store limit cannot cover every offered item (most
+        # notably max_stores=1), still return a useful plan. Prefer the store
+        # combination covering the most shopping items, then the lowest total
+        # including travel, then fewer actually used stores.
+        if not best_offer_picks and max_stores is not None:
+            best_coverage = 0
+            for count in range(1, combination_limit + 1):
+                for combo in combinations(candidate_store_ids, count):
+                    merchandise, route_km, total, offer_picks = _evaluate_store_set(
+                        user,
+                        offered_list_items,
+                        by_product,
+                        set(combo),
+                        require_full_coverage=False,
+                    )
+                    coverage = len(offer_picks)
+                    if not coverage:
+                        continue
+                    used_ids = {offer.store_id for _, offer in offer_picks}
+                    current_used = {offer.store_id for _, offer in best_offer_picks}
+                    better_coverage = coverage > best_coverage
+                    same_coverage_cheaper = coverage == best_coverage and total < best_total - 0.005
+                    same_coverage_same_total_simpler = (
+                        coverage == best_coverage
+                        and abs(total - best_total) <= 0.005
+                        and (not current_used or len(used_ids) < len(current_used))
+                    )
+                    if better_coverage or same_coverage_cheaper or same_coverage_same_total_simpler:
+                        best_coverage = coverage
+                        best_total = total
+                        best_merchandise = merchandise
+                        best_route_km = route_km
+                        best_offer_picks = offer_picks
+                        best_store_ids = used_ids
+
     best_by_item_id = {item.id: offer for item, offer in best_offer_picks}
     picks: list[tuple[ShoppingItem, Offer | None]] = [
         (item, best_by_item_id.get(item.id)) for item in items
@@ -136,13 +186,20 @@ def optimize_shopping(
     travel_cost = best_route_km * settings.driving_cost_per_km
     total_with_travel = 0.0 if best_total is inf else best_total
 
+    # A single-store comparison is only meaningful when one store can cover
+    # every shopping item that has an offer in the selected comparison set.
     best_single_name = None
     best_single_total = inf
     for store_id in candidate_store_ids:
-        evaluation = _evaluate_store_set(user, offered_list_items, by_product, {store_id})
-        if evaluation is None:
+        _, _, total, offer_picks = _evaluate_store_set(
+            user,
+            offered_list_items,
+            by_product,
+            {store_id},
+            require_full_coverage=True,
+        )
+        if not offer_picks:
             continue
-        _, _, total, _ = evaluation
         if total < best_single_total:
             best_single_total = total
             best_single_name = stores_by_id[store_id].name
@@ -158,6 +215,7 @@ def optimize_shopping(
 
     one_market_covers_all_offered_items = (
         bool(offered_list_items)
+        and len(best_offer_picks) == len(offered_list_items)
         and len(selected_stores) == 1
         and best_single_name == selected_stores[0].name
     )
@@ -176,6 +234,7 @@ def optimize_shopping(
         period=period,
         total_items=len(items),
         offered_items=len(offered_list_items),
+        covered_items=len(best_offer_picks),
         one_market_covers_all_offered_items=one_market_covers_all_offered_items,
     )
 
