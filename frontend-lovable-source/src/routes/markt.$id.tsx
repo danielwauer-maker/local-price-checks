@@ -13,6 +13,8 @@ type Detail = {
   address: string;
   lat: number | null;
   lng: number | null;
+  currentProspectUrl: string | null;
+  futureProspectUrl: string | null;
   directions: { google: string | null; apple: string | null; osm: string | null };
 };
 
@@ -28,7 +30,6 @@ type Prospect = {
 };
 
 type ProspectsPayload = { current: Prospect | null; next: Prospect | null };
-
 type ViewerState = { label: string; prospect: Prospect; page: number; zoom: number };
 
 function dateRange(p: Prospect | null) {
@@ -104,13 +105,21 @@ function MarketDetailPage() {
           <button onClick={refreshProspects} disabled={refreshing} className="inline-flex items-center gap-1 rounded-full bg-secondary px-3 py-1.5 text-xs font-semibold text-primary disabled:opacity-50"><RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> Aktualisieren</button>
         </div>
 
-        <button disabled={!prospects.current || loadingProspects} onClick={() => openViewer("Aktuelles Prospekt", prospects.current)} className="surface-card flex w-full items-center justify-between p-4 text-left disabled:opacity-45">
-          <div><p className="text-sm font-semibold">Aktuelles Prospekt</p><p className="text-xs text-muted-foreground">{loadingProspects ? "Prospekt wird gesucht…" : prospects.current ? `${dateRange(prospects.current)}${prospects.current.pageCount ? ` · ${prospects.current.pageCount} Seiten` : ""}` : "Noch kein offizielles PDF gefunden"}</p></div><ExternalLink className="h-4 w-4 text-primary" />
-        </button>
+        <div className="surface-card flex items-center gap-3 p-4">
+          <button disabled={!prospects.current || loadingProspects} onClick={() => openViewer("Aktuelles Prospekt", prospects.current)} className="min-w-0 flex-1 text-left disabled:opacity-45">
+            <p className="text-sm font-semibold">Aktuelles Prospekt</p>
+            <p className="text-xs text-muted-foreground">{loadingProspects ? "Prospekt wird gesucht…" : prospects.current ? `${dateRange(prospects.current)}${prospects.current.pageCount ? ` · ${prospects.current.pageCount} Seiten` : ""}` : "Kein direktes PDF erkannt"}</p>
+          </button>
+          {prospects.current ? <button onClick={() => openViewer("Aktuelles Prospekt", prospects.current)} className="rounded-full bg-primary-soft p-2 text-primary" aria-label="Im Viewer öffnen"><ExternalLink className="h-4 w-4" /></button> : detail.currentProspectUrl ? <a href={detail.currentProspectUrl} target="_blank" rel="noreferrer" className="rounded-full bg-secondary p-2 text-primary" aria-label="Beim Händler öffnen"><ExternalLink className="h-4 w-4" /></a> : null}
+        </div>
 
-        <button disabled={!prospects.next || loadingProspects} onClick={() => openViewer("Nächstes Prospekt", prospects.next)} className="surface-card flex w-full items-center justify-between p-4 text-left disabled:opacity-45">
-          <div><p className="text-sm font-semibold">Nächstes Prospekt</p><p className="text-xs text-muted-foreground">{prospects.next ? `${dateRange(prospects.next)}${prospects.next.pageCount ? ` · ${prospects.next.pageCount} Seiten` : ""}` : "Noch nicht vom Händler veröffentlicht oder erkannt"}</p></div><ExternalLink className="h-4 w-4 text-primary" />
-        </button>
+        <div className="surface-card flex items-center gap-3 p-4">
+          <button disabled={!prospects.next || loadingProspects} onClick={() => openViewer("Nächstes Prospekt", prospects.next)} className="min-w-0 flex-1 text-left disabled:opacity-45">
+            <p className="text-sm font-semibold">Nächstes Prospekt</p>
+            <p className="text-xs text-muted-foreground">{prospects.next ? `${dateRange(prospects.next)}${prospects.next.pageCount ? ` · ${prospects.next.pageCount} Seiten` : ""}` : "Noch nicht als PDF veröffentlicht oder erkannt"}</p>
+          </button>
+          {prospects.next ? <button onClick={() => openViewer("Nächstes Prospekt", prospects.next)} className="rounded-full bg-primary-soft p-2 text-primary" aria-label="Im Viewer öffnen"><ExternalLink className="h-4 w-4" /></button> : detail.futureProspectUrl ? <a href={detail.futureProspectUrl} target="_blank" rel="noreferrer" className="rounded-full bg-secondary p-2 text-primary" aria-label="Nächste Woche beim Händler prüfen"><ExternalLink className="h-4 w-4" /></a> : null}
+        </div>
       </section>
 
       <section className="px-5 pt-6">
