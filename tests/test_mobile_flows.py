@@ -70,6 +70,8 @@ def test_products_data_status_and_saving_plan_render():
     for path in ["/produkte?q=Mobile", "/datenstatus", "/sparplan", "/sparplan?view=next"]:
         r = client.get(path)
         assert r.status_code == 200
+    current = client.get("/sparplan")
+    assert "von" in current.text and "Artikeln im Angebot" in current.text
     upcoming = client.get("/sparplan?view=next")
     assert "Demnächst" in upcoming.text
 
@@ -86,6 +88,8 @@ def test_optimizer_returns_travel_and_single_store_comparison():
     assert result.total_with_travel >= result.merchandise_total
     assert result.single_store_total is not None
     assert result.period == "current"
+    assert result.total_items == 1
+    assert result.offered_items == 1
     db.close()
 
 
@@ -106,4 +110,6 @@ def test_optimizer_supports_next_period_without_breaking_current_wrapper():
     result = optimize_shopping(db, user, [item], "next")
     assert result.period == "next"
     assert result.merchandise_total >= 0
+    assert result.total_items == 1
+    assert result.offered_items in {0, 1}
     db.close()
