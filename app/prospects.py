@@ -62,12 +62,73 @@ def save_prospect(db: Session, store: Store, *, period_key: str, source_url: str
     return row
 
 
+def _render_rewe_digital_pdf(source_url: str, target_dir: Path) -> Path:
+    """Create a local viewer PDF from REWE's official digital offer page.
+
+    REWE no longer publishes a classic paper/PDF prospect for all markets. Its
+    official offer page contains the digital prospect/offer presentation. We
+    render that official page with Chromium and keep the resulting PDF locally,
+    so the app can show it without cross-origin iframe restrictions.
+    """
+    from playwright.sync_api import sync_playwright
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "rewe-digitalprospekt.pdf"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1280, "height": 1600}, locale="de-DE")
+        page.goto(source_url, wait_until="domcontentloaded", timeout=settings.collector_timeout_seconds * 1000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=12000)
+        except Exception:
+            pass
+        # Remove common sticky/header/consent UI from the printout where possible.
+        page.evaluate(
+            """
+            () => {
+              const selectors = [
+                'header', 'nav', '[role="banner"]', '[data-testid*="cookie"]',
+                '[class*="cookie"]', '[class*="Cookie"]', '[class*="sticky"]'
+              ];
+              for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                  if (el instanceof HTMLElement) el.style.display = 'none';
+                }
+              }
+            }
+            """
+        )
+        page.emulate_media(media="screen")
+        page.pdf(
+            path=str(target),
+            format="A4",
+            print_background=True,
+            margin={"top": "8mm", "right": "7mm", "bottom": "8mm", "left": "7mm"},
+        )
+        browser.close()
+    return target
+
+
 def discover_and_store_prospect(db: Session, store: Store, period_key: str = "current") -> Prospect | None:
     source_url = prospect_source_url(store, period_key)
     if not source_url:
         return None
-    pdf_url = discover_official_pdf(source_url)
     target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / period_key
+
+    # REWE's official public experience is a digital prospect rather than a
+    # dependable direct PDF. Render the official market offer page locally.
+    if store.retailer == "REWE" and period_key == "current":
+        pdf_path = _render_rewe_digital_pdf(source_url, target_dir)
+        return save_prospect(
+            db,
+            store,
+            period_key=period_key,
+            source_url=source_url,
+            pdf_url=source_url,
+            pdf_path=pdf_path,
+        )
+
+    pdf_url = discover_official_pdf(source_url)
     pdf_path = download_pdf(pdf_url, target_dir)
     return save_prospect(db, store, period_key=period_key, source_url=source_url, pdf_url=pdf_url, pdf_path=pdf_path)
 
