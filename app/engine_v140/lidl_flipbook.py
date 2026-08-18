@@ -96,15 +96,83 @@ def _extract_current_page(body: str) -> int | None:
 
 
 def _dismiss_cookies(page) -> None:
-    for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen", "Alle Cookies akzeptieren"):
+    """Dismiss Lidl CMP dialogs and remove residual consent overlays.
+
+    The CMP can appear late and can live in an iframe, so this is intentionally
+    idempotent and is called again before every archived leaflet image.
+    """
+    labels = (
+        "Alle ablehnen", "Ablehnen", "Nur notwendige", "Nur erforderliche",
+        "Alle akzeptieren", "Akzeptieren", "Zustimmen", "Speichern",
+    )
+    for _ in range(3):
+        clicked = False
+        for frame in list(page.frames):
+            for label in labels:
+                try:
+                    button = frame.get_by_role("button", name=re.compile(label, re.I))
+                    for idx in range(min(button.count(), 3)):
+                        node = button.nth(idx)
+                        if node.is_visible() and node.is_enabled():
+                            node.click(timeout=1200)
+                            clicked = True
+                            break
+                    if clicked:
+                        break
+                except Exception:
+                    pass
+            if clicked:
+                break
+        if clicked:
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                pass
+        else:
+            break
+
+    # Some CMP layers survive after the preference action or are rendered as a
+    # generic fixed overlay. Remove only elements that clearly contain consent
+    # language; never remove leaflet content based on class name alone.
+    cleanup_js = """
+    () => {
+      const words = [
+        'verarbeitung ihrer daten', 'cookie', 'cookies', 'datenschutz',
+        'privacy', 'consent', 'zustimmen', 'alle akzeptieren', 'ablehnen'
+      ];
+      const selectors = [
+        '[role="dialog"]', '[aria-modal="true"]',
+        '[class*="consent" i]', '[id*="consent" i]',
+        '[class*="cookie" i]', '[id*="cookie" i]',
+        '[class*="privacy" i]', '[id*="privacy" i]'
+      ];
+      const candidates = new Set();
+      for (const sel of selectors) {
+        try { document.querySelectorAll(sel).forEach(el => candidates.add(el)); } catch (_) {}
+      }
+      document.querySelectorAll('body *').forEach(el => {
+        const style = getComputedStyle(el);
+        if ((style.position === 'fixed' || style.position === 'sticky') && Number(style.zIndex || 0) >= 10) {
+          candidates.add(el);
+        }
+      });
+      for (const el of candidates) {
+        const text = (el.innerText || el.textContent || '').toLowerCase();
+        if (words.some(w => text.includes(w))) el.remove();
+      }
+      document.documentElement.style.overflow = 'auto';
+      if (document.body) document.body.style.overflow = 'auto';
+    }
+    """
+    for frame in list(page.frames):
         try:
-            button = page.get_by_role("button", name=label, exact=False)
-            if button.count() and button.first.is_visible():
-                button.first.click(timeout=1500)
-                page.wait_for_timeout(600)
-                return
+            frame.evaluate(cleanup_js)
         except Exception:
             pass
+    try:
+        page.wait_for_timeout(200)
+    except Exception:
+        pass
 
 
 def _click_next(page) -> str | None:
@@ -155,6 +223,7 @@ def _advance_and_wait(page, previous_fingerprint: str, previous_page: int | None
 
     for _ in range(12):
         page.wait_for_timeout(350)
+        _dismiss_cookies(page)
         body = _visible_body(page)
         current_page = _extract_current_page(body)
         fingerprint = _page_fingerprint(page, body)
@@ -207,15 +276,7 @@ def capture_lidl_flipbook(
     target_dir: Path,
     max_pages: int = 80,
 ) -> LidlFlipbookResult:
-    """Capture Lidl's live leaflet including manifest data and logical pages.
-
-    The current Lidl viewer advances in spreads: after the single cover page the
-    visible counter typically moves 2, 4, 6 ... while the leaflet itself contains
-    every logical page. We therefore keep viewer-state count separate from archive
-    page count and split two-page spreads into one audit page per logical leaflet
-    page. JSON/manifest responses and embedded app state are inspected recursively
-    for page-scoped product/hotspot data.
-    """
+    """Capture Lidl's live leaflet including manifest data and logical pages."""
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:
@@ -300,6 +361,7 @@ def capture_lidl_flipbook(
                 page.wait_for_load_state("networkidle", timeout=12000)
             except Exception:
                 page.wait_for_timeout(2500)
+            _dismiss_cookies(page)
 
             for state in embedded_json_states(page):
                 raw = json.dumps(state.get("data"), ensure_ascii=False, default=str)
@@ -311,6 +373,7 @@ def capture_lidl_flipbook(
             explicit_total = manifest_page_count(all_payloads) or _extract_total_pages(_visible_body(page))
 
             for logical_state in range(1, max_pages + 1):
+                _dismiss_cookies(page)
                 body = _visible_body(page)
                 if not body and logical_state > 1:
                     break
@@ -353,6 +416,9 @@ def capture_lidl_flipbook(
                         offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
                 all_offers.extend(page_offers)
 
+                # CMPs can re-appear asynchronously after navigation; clean once
+                # more immediately before the immutable archive image is taken.
+                _dismiss_cookies(page)
                 for page_no, image_payload in logical_page_images(page, current_page, explicit_total):
                     if page_no in archived_pages:
                         continue
