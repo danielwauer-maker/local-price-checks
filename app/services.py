@@ -19,19 +19,19 @@ def current_user(db: Session) -> UserProfile:
 
 
 def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return persistent market favorites independent of the current search area."""
+    """Return persistent market favorites independent of search area or benchmark state."""
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
     ids: list[int] = []
     for row in rows:
         store = row.store
-        if not store.active or not store.benchmark_verified:
+        if not store.active:
             continue
         ids.append(store.id)
     return ids
 
 
 def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return favorited markets that are currently eligible for offers and planning."""
+    """Return active favorite markets inside the current search radius."""
     favorite_ids = set(favorite_store_ids(db, user))
     if not favorite_ids:
         return []
