@@ -134,3 +134,22 @@ def test_lidl_manifest_extracts_page_scoped_hotspot_offer():
     assert row.quantity == 500.0
     assert row.unit == "g"
     assert row.source_text.startswith("PDF Seite 12:")
+
+
+def test_lidl_global_manifest_page_list_overrides_request_page_hint():
+    payloads = [{
+        "url": "https://viewer.example/manifest",
+        "page_hint": 1,
+        "data": {
+            "pages": [
+                {"hotspots": [{"type": "product", "product": {"productName": "Artikel Seite Eins", "offerPrice": 1.11}}]},
+                {"hotspots": [{"type": "product", "product": {"productName": "Artikel Seite Zwei", "offerPrice": 2.22}}]},
+                {"hotspots": [{"type": "product", "product": {"productName": "Artikel Seite Drei", "offerPrice": 3.33}}]},
+            ]
+        },
+    }]
+    rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
+    pages = {row.product_name: row.source_text.split(":", 1)[0] for row in rows}
+    assert pages["Artikel Seite Eins"] == "PDF Seite 1"
+    assert pages["Artikel Seite Zwei"] == "PDF Seite 2"
+    assert pages["Artikel Seite Drei"] == "PDF Seite 3"
