@@ -74,6 +74,53 @@ def test_verified_store_toggle_api(monkeypatch):
     assert payload["refreshStarted"] is True
 
 
+def test_unverified_active_store_can_be_favorited_and_refreshed(monkeypatch):
+    user_id, _ = _seed()
+    db = SessionLocal()
+    user = db.get(UserProfile, user_id)
+    assert user is not None
+    user.latitude = 50.6199
+    user.longitude = 7.6264
+    user.radius_km = 50
+
+    store = Store(
+        retailer="Testmarkt",
+        name="Unverifizierter aktiver Testmarkt",
+        postal_code="57614",
+        city="Steimel",
+        address="Teststraße 2",
+        latitude=50.62,
+        longitude=7.63,
+        active=True,
+        benchmark_verified=False,
+        external_id="unverified-favorite-test",
+    )
+    db.add(store)
+    db.commit()
+    store_id = store.id
+    db.close()
+
+    monkeypatch.setattr(api_routes, "_collect_store_background", lambda _store_id: None)
+    client = TestClient(app)
+    response = client.post(f"/api/stores/{store_id}/toggle")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected"] is True
+    assert str(store_id) in payload["selectedIds"]
+    assert str(store_id) in payload["activeSelectedIds"]
+    assert payload["refreshStarted"] is True
+
+    bootstrap = client.get("/api/bootstrap").json()
+    assert str(store_id) in bootstrap["selected"]
+    assert str(store_id) in bootstrap["activeSelected"]
+
+    db = SessionLocal()
+    db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).delete()
+    db.query(Store).filter_by(id=store_id).delete()
+    db.commit()
+    db.close()
+
+
 def test_favorite_market_survives_outside_search_radius():
     user_id, _ = _seed()
     db = SessionLocal()
@@ -92,7 +139,7 @@ def test_favorite_market_survives_outside_search_radius():
         latitude=52.52,
         longitude=13.405,
         active=True,
-        benchmark_verified=True,
+        benchmark_verified=False,
         external_id="outside-test",
     )
     db.add(store)
