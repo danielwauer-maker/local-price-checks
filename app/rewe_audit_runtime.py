@@ -41,129 +41,151 @@ def _validity_from_result(result):
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
-def _has_archived_prospect(db, store: Store) -> bool:
-    """Return whether an immutable archive exists for this store.
-
-    A mutable current prospect pointer may exist even when archive creation
-    failed. The audit UI and provenance depend on ProspectArchive, so only that
-    table is authoritative for deciding whether the successful-session fallback
-    can be skipped.
-    """
+def _latest_archive(db, store: Store):
     return (
-        db.query(ProspectArchive.id)
+        db.query(ProspectArchive)
         .filter(ProspectArchive.store_id == store.id)
+        .order_by(ProspectArchive.fetched_at.desc(), ProspectArchive.id.desc())
         .first()
-        is not None
     )
+
+
+def _has_archived_prospect(db, store: Store) -> bool:
+    """Return whether an immutable archive exists for this store."""
+    return _latest_archive(db, store) is not None
+
+
+def _archive_contains_consent(archive: ProspectArchive | None) -> bool:
+    """Detect whether an archived REWE web snapshot still contains the CMP."""
+    if not archive or not archive.pdf_bytes:
+        return False
+    if not str(archive.pdf_url or "").startswith("web-snapshot://"):
+        return False
+    try:
+        import fitz
+
+        doc = fitz.open(stream=archive.pdf_bytes, filetype="pdf")
+        try:
+            text = " ".join(page.get_text("text") for page in doc[: min(3, doc.page_count)])
+        finally:
+            doc.close()
+    except Exception:
+        return False
+    normalised = re.sub(r"\s+", " ", text.lower()).strip()
+    return any(marker in normalised for marker in REWE_CONSENT_MARKERS)
+
+
+def _needs_session_archive(db, store: Store) -> bool:
+    """Create a snapshot if none exists or the latest archived one still has CMP UI."""
+    archive = _latest_archive(db, store)
+    return archive is None or _archive_contains_consent(archive)
 
 
 def _clean_snapshot_dom(page) -> None:
-    """Remove scripts and residual consent overlays from already captured HTML.
+    """Remove REWE consent UI from the captured session before PDF rendering."""
+    cleanup_js = """(markers) => {
+      document.querySelectorAll('script').forEach(el => el.remove());
 
-    REWE's CMP markup does not always expose stable ``cookie``/``consent`` class
-    names. The cleanup therefore combines semantic selectors, visible consent
-    text and fixed/modal geometry. This keeps the archived audit PDF readable
-    without changing the underlying offer content.
-    """
-    page.evaluate(
-        """(markers) => {
-          document.querySelectorAll('script').forEach(el => el.remove());
+      const normalise = value => (value || '')
+        .toLowerCase()
+        .replace(/\\s+/g, ' ')
+        .trim();
+      const hasConsentText = el => {
+        const text = normalise(el && (el.innerText || el.textContent || ''));
+        return markers.some(marker => text.includes(marker));
+      };
 
-          const normalise = value => (value || '')
-            .toLowerCase()
-            .replace(/\\s+/g, ' ')
-            .trim();
-          const hasConsentText = el => {
-            const text = normalise(el && (el.innerText || el.textContent || ''));
-            return markers.some(marker => text.includes(marker));
-          };
+      const removable = new Set();
+      const selectors = [
+        '[role="dialog"]', '[aria-modal="true"]',
+        '[class*="cookie" i]', '[id*="cookie" i]',
+        '[class*="consent" i]', '[id*="consent" i]',
+        '[class*="privacy" i]', '[id*="privacy" i]',
+        '[class*="cmp" i]', '[id*="cmp" i]',
+        '[class*="overlay" i]', '[class*="modal" i]'
+      ];
 
-          const removable = new Set();
-          const selectors = [
-            '[role="dialog"]',
-            '[aria-modal="true"]',
-            '[class*="cookie" i]',
-            '[id*="cookie" i]',
-            '[class*="consent" i]',
-            '[id*="consent" i]',
-            '[class*="privacy" i]',
-            '[id*="privacy" i]',
-            '[class*="cmp" i]',
-            '[id*="cmp" i]',
-            '[class*="overlay" i]',
-            '[class*="modal" i]'
-          ];
-
-          for (const sel of selectors) {
-            try {
-              document.querySelectorAll(sel).forEach(el => {
-                if (hasConsentText(el)) removable.add(el);
-              });
-            } catch (_) {}
+      const roots = [document];
+      const seenRoots = new Set(roots);
+      for (let i = 0; i < roots.length; i += 1) {
+        const root = roots[i];
+        let elements = [];
+        try { elements = Array.from(root.querySelectorAll('*')); } catch (_) {}
+        for (const el of elements) {
+          if (el.shadowRoot && !seenRoots.has(el.shadowRoot)) {
+            seenRoots.add(el.shadowRoot);
+            roots.push(el.shadowRoot);
           }
+        }
+      }
 
-          // REWE's current CMP can use generic generated class names. Find the
-          // element containing the visible consent headline and climb to the
-          // nearest modal/fixed ancestor rather than depending on class names.
-          const all = Array.from(document.body ? document.body.querySelectorAll('*') : []);
-          for (const el of all) {
-            if (!hasConsentText(el)) continue;
+      for (const root of roots) {
+        for (const sel of selectors) {
+          try {
+            root.querySelectorAll(sel).forEach(el => {
+              if (hasConsentText(el)) removable.add(el);
+            });
+          } catch (_) {}
+        }
 
-            let node = el;
-            let best = null;
-            for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
-              const style = getComputedStyle(node);
-              const rect = node.getBoundingClientRect();
-              const modalLike =
-                node.getAttribute('role') === 'dialog' ||
-                node.getAttribute('aria-modal') === 'true' ||
-                style.position === 'fixed' ||
-                style.position === 'sticky' ||
-                (rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.35);
-              if (modalLike) best = node;
-              if (style.position === 'fixed' && rect.width >= window.innerWidth * 0.8) break;
-            }
-            removable.add(best || el);
+        let elements = [];
+        try { elements = Array.from(root.querySelectorAll('*')); } catch (_) {}
+        for (const el of elements) {
+          if (!hasConsentText(el)) continue;
+          let node = el;
+          let best = null;
+          for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
+            const style = getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            const modalLike =
+              node.getAttribute('role') === 'dialog' ||
+              node.getAttribute('aria-modal') === 'true' ||
+              style.position === 'fixed' ||
+              style.position === 'sticky' ||
+              (rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.35);
+            if (modalLike) best = node;
+            if (style.position === 'fixed' && rect.width >= window.innerWidth * 0.8) break;
           }
+          removable.add(best || el);
+        }
+      }
 
-          // Remove fixed/sticky consent backdrops that may be siblings of the
-          // dialog and therefore do not themselves contain readable text.
-          const removedRects = [];
-          for (const el of removable) {
-            if (!el || !el.isConnected) continue;
-            const rect = el.getBoundingClientRect();
-            removedRects.push({left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom});
-            el.remove();
-          }
+      const removedRects = [];
+      for (const el of removable) {
+        if (!el || !el.isConnected) continue;
+        const rect = el.getBoundingClientRect();
+        removedRects.push({left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom});
+        el.remove();
+      }
 
-          for (const el of Array.from(document.body ? document.body.children : [])) {
-            const style = getComputedStyle(el);
-            if (style.position !== 'fixed' && style.position !== 'sticky') continue;
-            const rect = el.getBoundingClientRect();
-            const coversViewport = rect.width >= window.innerWidth * 0.85 && rect.height >= window.innerHeight * 0.55;
-            const highLayer = Number.parseInt(style.zIndex || '0', 10) >= 100;
-            if (coversViewport && highLayer && !hasConsentText(el)) {
-              const overlapsRemoved = removedRects.some(r => !(rect.right < r.left || rect.left > r.right || rect.bottom < r.top || rect.top > r.bottom));
-              if (overlapsRemoved) el.remove();
-            }
-          }
+      for (const el of Array.from(document.body ? document.body.children : [])) {
+        const style = getComputedStyle(el);
+        if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+        const rect = el.getBoundingClientRect();
+        const coversViewport = rect.width >= window.innerWidth * 0.85 && rect.height >= window.innerHeight * 0.55;
+        const highLayer = Number.parseInt(style.zIndex || '0', 10) >= 100;
+        if (coversViewport && highLayer && !hasConsentText(el)) {
+          const overlapsRemoved = removedRects.some(r => !(rect.right < r.left || rect.left > r.right || rect.bottom < r.top || rect.top > r.bottom));
+          if (overlapsRemoved) el.remove();
+        }
+      }
 
-          document.documentElement.style.overflow = 'auto';
-          if (document.body) {
-            document.body.style.overflow = 'auto';
-            document.body.style.position = 'static';
-          }
-        }""",
-        list(REWE_CONSENT_MARKERS),
-    )
+      document.documentElement.style.overflow = 'auto';
+      if (document.body) {
+        document.body.style.overflow = 'auto';
+        document.body.style.position = 'static';
+      }
+    }"""
+
+    for frame in list(page.frames):
+        try:
+            frame.evaluate(cleanup_js, list(REWE_CONSENT_MARKERS))
+        except Exception:
+            pass
 
 
 def archive_rewe_from_collector_result(db, store: Store, result) -> str:
-    """Render the HTML that the successful REWE collector already received.
-
-    No second navigation to rewe.de is performed. This avoids the WAF failure
-    seen when audit archival ran as a separate browser request after scraping.
-    """
+    """Render the HTML that the successful REWE collector already received."""
     raw = result.get("raw")
     if not raw:
         raise RuntimeError("Erfolgreicher REWE-Lauf enthält kein archivierungsfähiges HTML")
@@ -197,6 +219,8 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             except Exception:
                 page.wait_for_timeout(1200)
             _clean_snapshot_dom(page)
+            page.wait_for_timeout(150)
+            _clean_snapshot_dom(page)
             page.evaluate("window.scrollTo(0,0)")
             payload = page.pdf(
                 format="A4",
@@ -224,12 +248,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
         valid_from=valid_from,
         valid_to=valid_to,
     )
-    archive = (
-        db.query(ProspectArchive)
-        .filter(ProspectArchive.store_id == store.id)
-        .order_by(ProspectArchive.fetched_at.desc(), ProspectArchive.id.desc())
-        .first()
-    )
+    archive = _latest_archive(db, store)
     linked = 0
     if archive:
         try:
@@ -251,10 +270,7 @@ def install() -> None:
         store = db.query(Store).filter(Store.name == store_name).first()
         if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
             try:
-                # The immutable archive table is authoritative. A mutable
-                # current pointer may survive a failed WAF archive attempt and
-                # must not suppress this successful-session fallback.
-                if not _has_archived_prospect(db, store):
+                if _needs_session_archive(db, store):
                     status = archive_rewe_from_collector_result(db, store, result)
                     web_collector._append_run_diagnostic(db, run, status)
             except Exception as exc:
