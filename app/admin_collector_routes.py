@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -10,7 +10,7 @@ from .admin_learning import audit
 from .admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from .admin_routes import _admin
 from .config import settings
-from .db import get_db
+from .db import SessionLocal, get_db
 from .models import CollectionRun, Store
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
@@ -20,6 +20,27 @@ from .web_collector import collect_store_from_web
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
+
+
+def _run_store_collection_background(store_id: int) -> None:
+    """Run one market collection outside the HTTP request lifecycle.
+
+    Long-running browser collectors (especially Lidl flipbooks) can exceed
+    nginx's upstream timeout. The background job therefore owns its own DB
+    session and continues independently after the admin request has returned.
+    """
+    db = SessionLocal()
+    try:
+        store = db.get(Store, store_id)
+        if not store or not store.active:
+            return
+        collect_store_from_web(db, store.name)
+    except Exception:
+        db.rollback()
+        # collect_store_from_web / collection_service persists a failed run with
+        # the concrete diagnostic whenever the collector itself was started.
+    finally:
+        db.close()
 
 
 @router.get("/admin/collector")
@@ -50,19 +71,37 @@ def collector_run_all(actor: str = Depends(_admin)):
 
 
 @router.post("/admin/collector/stores/{store_id}/run")
-def collector_run_store(store_id: int, db: Session = Depends(get_db), actor: str = Depends(_admin)):
+def collector_run_store(
+    store_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     if not store.active:
         raise HTTPException(400, "Inaktive Märkte können nicht gesammelt werden")
-    try:
-        _rows, summary, run = collect_store_from_web(db, store.name)
-        mode = "live" if store.benchmark_verified else "qa"
-        result = f"{mode}:{run.status}:{summary.imported}"
-    except Exception as exc:
-        result = f"failed:{type(exc).__name__}"
-    return RedirectResponse(f"/admin/collector?collected={store.id}:{result}", status_code=303)
+
+    # Avoid duplicate clicks while an existing collector run is still active.
+    running = (
+        db.query(CollectionRun)
+        .filter(CollectionRun.store_id == store.id, CollectionRun.status == "running")
+        .order_by(CollectionRun.started_at.desc())
+        .first()
+    )
+    if running:
+        return RedirectResponse(
+            f"/admin/collector?collected={store.id}:already-running:{running.id}",
+            status_code=303,
+        )
+
+    background_tasks.add_task(_run_store_collection_background, store.id)
+    mode = "live" if store.benchmark_verified else "qa"
+    return RedirectResponse(
+        f"/admin/collector?collected={store.id}:{mode}:gestartet",
+        status_code=303,
+    )
 
 
 @router.post("/admin/collector/stores/{store_id}/release")
