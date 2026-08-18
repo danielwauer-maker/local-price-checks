@@ -132,29 +132,28 @@ def test_lidl_recovers_page_reference_from_hotspot_product_url():
     assert rows[0].source_text.startswith("PDF Seite 1:")
 
 
-def test_lidl_online_shop_product_is_marked_non_local():
+def test_lidl_global_shop_catalogue_is_not_a_standalone_offer_source():
     payloads = [{"url": "https://viewer.example/page8", "data": {"pages": [{"pageNumber": 8, "products": [{
         "productId": "100409109", "title": "SILVERCREST Küchenmaschine", "price": "49.99",
         "canonicalUrl": "https://www.lidl.de/p/silvercrest-kuechenmaschine/p100409109",
     }]}]}}]
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    assert len(rows) == 1
-    assert rows[0].local_store_offer is False
+    assert rows == []
 
 
-def test_lidl_image_variant_duplicate_same_page_and_price_is_suppressed():
+def test_lidl_global_catalogue_variants_do_not_become_standalone_offers():
     payloads = [{"url": "https://viewer.example/page8", "data": {"pages": [{"pageNumber": 8, "products": [
         {"productId": "1", "title": "SILVERCREST Küchenmaschine", "price": "49.99"},
         {"productId": "2", "title": "SILVERCREST Küchenmaschine digital Pastell", "price": "49.99"},
     ]}]}}]
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    assert len(rows) == 1
-    assert "digital Pastell" not in rows[0].product_name
+    assert rows == []
 
 
-def test_lidl_uvp_is_kept_as_regular_price():
-    payloads = [{"url": "https://viewer.example/page9", "data": {"pages": [{"pageNumber": 9, "products": [{
-        "productId": "3", "title": "Parkside Werkzeug", "offerPrice": "19.99", "uvp": "49.99",
+def test_lidl_uvp_is_kept_on_page_scoped_hotspot_offer():
+    payloads = [{"url": "https://viewer.example/page9", "data": {"pages": [{"pageNumber": 9, "hotspots": [{
+        "type": "offer",
+        "product": {"productId": "3", "title": "Parkside Werkzeug", "offerPrice": "19.99", "uvp": "49.99"},
     }]}]}}]
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
     assert len(rows) == 1
