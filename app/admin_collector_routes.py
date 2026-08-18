@@ -35,6 +35,15 @@ def _run_store_collection_background(store_id: int) -> None:
         if not store or not store.active:
             return
         collect_store_from_web(db, store.name)
+        if store.retailer == "Lidl":
+            try:
+                from .engine_v140.lidl_manifest_debug import capture_lidl_manifest_debug
+                capture_lidl_manifest_debug(store, data_dir=settings.data_dir)
+            except Exception:
+                # Diagnostics must never turn an otherwise completed QA scrape
+                # into a failed collector run. The debug helper writes its own
+                # error field whenever the browser capture itself can start.
+                pass
     except Exception:
         db.rollback()
         # collect_store_from_web / collection_service persists a failed run with
@@ -83,7 +92,6 @@ def collector_run_store(
     if not store.active:
         raise HTTPException(400, "Inaktive Märkte können nicht gesammelt werden")
 
-    # Avoid duplicate clicks while an existing collector run is still active.
     running = (
         db.query(CollectionRun)
         .filter(CollectionRun.store_id == store.id, CollectionRun.status == "running")
