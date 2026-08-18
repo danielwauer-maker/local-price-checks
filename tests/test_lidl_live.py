@@ -2,6 +2,7 @@ from datetime import date
 import json
 
 from app.engine_v140.browser_fetch import BrowserFetchResult
+from app.engine_v140.lidl_flipbook import _extract_total_pages, _page_url
 from app.engine_v140.lidl_live import _leaflets_from_html, _select_leaflet, collect_lidl_leaflet
 from app.engine_v140.source_registry import RetailSource
 
@@ -77,3 +78,14 @@ def test_lidl_browser_network_offer_is_import_candidate(monkeypatch):
     assert offer.valid_from == "17.08.2026"
     assert offer.valid_to == "22.08.2026"
     assert offer.source_url.endswith("/current/ar/0")
+
+
+def test_lidl_flipbook_builds_concrete_page_urls():
+    url = "https://www.lidl.de/l/prospekte/demo/view/flyer/page/1?_ab=1&lf=HHZ"
+    assert _page_url(url, 17) == "https://www.lidl.de/l/prospekte/demo/view/flyer/page/17?_ab=1&lf=HHZ"
+    assert _page_url("https://www.lidl.de/l/prospekte/demo", 4).endswith("/view/flyer/page/4")
+
+
+def test_lidl_flipbook_ignores_small_carousel_counters():
+    assert _extract_total_pages("Bild 1 / 2 Seite 1 / 48 weitere Inhalte 2 / 3") == 48
+    assert _extract_total_pages("Carousel 1 / 2") is None
