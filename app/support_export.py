@@ -53,6 +53,26 @@ def _file_info(path_text: str | None) -> dict:
     }
 
 
+def _add_lidl_diagnostics(zf: zipfile.ZipFile) -> list[dict]:
+    """Add bounded Lidl structural diagnostics to the compact support bundle."""
+    root = settings.data_dir / "diagnostics" / "lidl"
+    listing: list[dict] = []
+    if not root.exists():
+        return listing
+    for path in sorted(root.glob("lidl_manifest_debug_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+        try:
+            size = path.stat().st_size
+            if size > 8 * 1024 * 1024:
+                listing.append({"file": path.name, "included": False, "reason": "groesser_8mb", "size_bytes": size})
+                continue
+            payload = path.read_bytes()
+            zf.writestr(f"diagnostics/lidl/{path.name}", payload)
+            listing.append({"file": path.name, "included": True, "size_bytes": size})
+        except OSError as exc:
+            listing.append({"file": path.name, "included": False, "reason": str(exc)})
+    return listing
+
+
 def build_support_export(db: Session) -> tuple[str, bytes]:
     """Create a compact support bundle without secrets or large prospect PDFs."""
     now = datetime.utcnow()
@@ -94,7 +114,7 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "collector_timeout_seconds": settings.collector_timeout_seconds,
                     "stale_after_hours": settings.stale_after_hours,
                 },
-                "note": "Passwoerter/Secrets und Prospekt-PDF-Binaerdaten sind bewusst nicht enthalten.",
+                "note": "Passwoerter/Secrets und Prospekt-PDF-Binaerdaten sind bewusst nicht enthalten. Lidl-Diagnosen enthalten nur bereinigte Strukturinformationen ohne URL-Querystrings.",
             },
         )
         _write_json(
@@ -192,6 +212,8 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                 except OSError:
                     pass
         _write_json(zf, "prospect_files.json", listing)
+        diagnostic_listing = _add_lidl_diagnostics(zf)
+        _write_json(zf, "lidl_diagnostics.json", diagnostic_listing)
 
     filename = f"local_price_checks_support_quick_{now.strftime('%Y%m%d_%H%M%S')}.zip"
     return filename, buffer.getvalue()
