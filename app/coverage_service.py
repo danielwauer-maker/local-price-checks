@@ -23,6 +23,25 @@ KNOWN_RETAILERS = {
 }
 
 
+def seed_initial_coverage(db: Session) -> None:
+    """Create the existing Westerwald pilot area once on upgraded installs."""
+    if db.query(CoverageRegion).count():
+        return
+    lat, lng = resolve_center("57614", "Steimel") or (50.6199, 7.6264)
+    db.add(CoverageRegion(
+        name="Westerwald – Steimel/Dierdorf",
+        postal_code="57614",
+        city="Steimel",
+        center_lat=lat,
+        center_lng=lng,
+        radius_km=15.0,
+        status="live",
+        active=True,
+        notes="Initiale Pilotregion; Nutzerangebote nur aus benchmark-verifizierten Märkten.",
+    ))
+    db.commit()
+
+
 def normalize_retailer(name: str, brand: str = "") -> str | None:
     hay = (brand or name or "").strip().lower()
     for key, value in KNOWN_RETAILERS.items():
