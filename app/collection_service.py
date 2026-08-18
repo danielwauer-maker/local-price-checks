@@ -9,7 +9,7 @@ from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
 from .engine_v140.collectors import collect_one
 from .engine_v140.prospect_pdf_engine import PdfParseResult, parse_pdf_file
-from .engine_v140.source_registry import source_for_store
+from .engine_v140.source_registry import source_for_store_record
 
 
 class CollectionError(RuntimeError):
@@ -44,9 +44,9 @@ def _store_and_source(db: Session, store_name: str):
     store = db.query(Store).filter(Store.name == store_name).first()
     if not store:
         raise CollectionError(f"Unbekannter Markt: {store_name}")
-    source = source_for_store(store.name)
+    source = source_for_store_record(store)
     if not source:
-        raise CollectionError(f"Keine Quelle registriert für: {store.name}")
+        raise CollectionError(f"Keine Quelle registriert oder automatisch ableitbar für: {store.name}")
     if source.retailer != store.retailer:
         raise CollectionError(f"Quellen-/Markt-Händler stimmen nicht überein: {store.name}")
     return store, source
