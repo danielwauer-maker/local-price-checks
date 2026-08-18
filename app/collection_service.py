@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -65,12 +66,13 @@ def collect_structured_for_store(
     db: Session,
     store_name: str,
     source_override: RetailSource | None = None,
+    collector_fn: Callable | None = None,
 ):
     """Fetch one official source with the structured collector and import it.
 
-    ``source_override`` is used for retailers such as Lidl where the public
-    landing page first has to be resolved to the concrete current leaflet URL.
-    The override must still belong to the same retailer and market.
+    ``source_override`` and ``collector_fn`` support retailers such as Lidl
+    where the public landing page first has to be resolved to the concrete
+    current leaflet and rendered with Chromium.
     """
     store, registered_source = _store_and_source(db, store_name)
     source = source_override or registered_source
@@ -79,7 +81,7 @@ def collect_structured_for_store(
 
     run = _start_run(db, store, source.key + ":web")
     try:
-        result = collect_one(source)
+        result = (collector_fn or collect_one)(source)
         rows = result.get("offers") or []
         summary = import_collected_offers(db, rows)
         status = "success" if summary.imported else "no_offers"
