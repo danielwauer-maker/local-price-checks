@@ -31,6 +31,22 @@ def _validity_from_result(result):
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
+def _has_archived_prospect(db, store: Store) -> bool:
+    """Return whether an immutable archive exists for this store.
+
+    A mutable current prospect pointer may exist even when archive creation
+    failed. The audit UI and provenance depend on ProspectArchive, so only that
+    table is authoritative for deciding whether the successful-session fallback
+    can be skipped.
+    """
+    return (
+        db.query(ProspectArchive.id)
+        .filter(ProspectArchive.store_id == store.id)
+        .first()
+        is not None
+    )
+
+
 def _clean_snapshot_dom(page) -> None:
     """Remove scripts and residual consent overlays from already captured HTML."""
     page.evaluate(
@@ -144,11 +160,10 @@ def install() -> None:
         store = db.query(Store).filter(Store.name == store_name).first()
         if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
             try:
-                from .prospects import current_prospect
-                current = current_prospect(db, store, "current")
-                # If the ordinary archival path already worked, keep it. Only
-                # use the successful-session fallback when no archive exists.
-                if not current:
+                # The immutable archive table is authoritative. A mutable
+                # current pointer may survive a failed WAF archive attempt and
+                # must not suppress this successful-session fallback.
+                if not _has_archived_prospect(db, store):
                     status = archive_rewe_from_collector_result(db, store, result)
                     web_collector._append_run_diagnostic(db, run, status)
             except Exception as exc:
