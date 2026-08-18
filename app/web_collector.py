@@ -15,7 +15,6 @@ from .collection_service import CollectionError, collect_pdf_for_store, collect_
 from .config import settings
 from .models import Store
 from .engine_v140.source_registry import source_for_store
-from .prospects import save_prospect
 
 PDF_RE = re.compile(r"\.pdf(?:$|[?#])", re.I)
 INLINE_PDF_RE = re.compile(r"[\"']([^\"']+\.pdf(?:\?[^\"']*)?)[\"']", re.I)
@@ -152,6 +151,8 @@ def _archive_downloaded_prospect(
     pdf_path: Path,
 ) -> None:
     """Persist the exact downloaded PDF before parsing/importing its offers."""
+    from .prospects import save_prospect
+
     save_prospect(
         db,
         store,
