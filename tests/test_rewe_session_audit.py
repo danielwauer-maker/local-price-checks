@@ -38,6 +38,7 @@ def test_rewe_session_fallback_checks_immutable_archive_not_current_pointer():
         retailer="REWE",
         postal_code="56269",
         city="Dierdorf",
+        address="Königsberger Str. 20-22",
         active=True,
         source_url="https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
         external_id="321019",
