@@ -3,6 +3,7 @@ import secrets
 
 from .main import app
 from .api_routes import router
+from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
 from .admin_routes import router as admin_router
 from .admin_users_routes import router as admin_users_router
@@ -51,6 +52,7 @@ async def persistent_client_identity(request, call_next):
 
 
 app.include_router(router)
+app.include_router(product_detail_router)
 app.include_router(client_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
