@@ -1,14 +1,44 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
+from .client_context import get_client_key
+from .client_models import UserClient
 from .clock import app_today
 from .geo import haversine_km
 from .models import FavoriteStore, Offer, UserProfile
 
 
 def current_user(db: Session) -> UserProfile:
+    """Return the persistent profile for the current browser/PWA client.
+
+    Before multi-client tracking existed, LocalPrices used the first UserProfile
+    for every request. The first browser seen after this migration inherits that
+    legacy profile so existing favorites/location are preserved. Every later
+    client receives its own profile.
+    """
+    client_key = get_client_key()
+    if client_key:
+        client = db.query(UserClient).filter(UserClient.client_key == client_key).first()
+        if client:
+            client.last_seen_at = datetime.utcnow()
+            db.flush()
+            return client.user
+
+        existing_clients = db.query(UserClient).count()
+        user = db.query(UserProfile).first() if existing_clients == 0 else None
+        if user is None:
+            user = UserProfile(display_name=f"Nutzer {db.query(UserProfile).count() + 1}", radius_km=15)
+            db.add(user)
+            db.flush()
+        client = UserClient(client_key=client_key, user_id=user.id, first_seen_at=datetime.utcnow(), last_seen_at=datetime.utcnow())
+        db.add(client)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # Startup/background jobs do not have an HTTP client identity.
     user = db.query(UserProfile).first()
     if not user:
         user = UserProfile(display_name="Local User", radius_km=15)
