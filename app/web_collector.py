@@ -16,7 +16,8 @@ from .clock import app_today
 from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
-from .engine_v140.lidl_live import collect_lidl_leaflet, lidl_store_page_for, resolve_lidl_leaflet
+from .engine_v140.lidl_flipbook import capture_lidl_flipbook
+from .engine_v140.lidl_live import lidl_store_page_for, resolve_lidl_leaflet
 from .engine_v140.source_registry import source_for_store_record
 
 PDF_RE = re.compile(r"\.pdf(?:$|[?#])", re.I)
@@ -284,43 +285,8 @@ def _collect_netto_from_official_prospect(db: Session, store: Store, source):
     return collect_pdf_for_store(db, store.name, pdf_path)
 
 
-def _archive_lidl_leaflet(db: Session, store: Store, leaflet) -> str:
-    """Prefer a retailer PDF; otherwise keep the exact official Lidl viewer."""
-    try:
-        pdf_url = discover_official_pdf(leaflet.url)
-        pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / "lidl_puderbach")
-        _archive_downloaded_prospect(
-            db,
-            store,
-            source_url=leaflet.url,
-            pdf_url=pdf_url,
-            pdf_path=pdf_path,
-            valid_from=leaflet.valid_from,
-            valid_to=leaflet.valid_to,
-        )
-        from .prospects import current_prospect
-        row = current_prospect(db, store, "current")
-        return f"audit=original-pdf:{row.page_count if row else '?'} Seiten"
-    except Exception as pdf_error:
-        db.rollback()
-        try:
-            return _trusted_structured_web_snapshot(
-                db,
-                store,
-                leaflet.url,
-                valid_from=leaflet.valid_from,
-                valid_to=leaflet.valid_to,
-            )
-        except Exception as snapshot_error:
-            db.rollback()
-            return (
-                f"audit_fehler={type(snapshot_error).__name__}: {snapshot_error}; "
-                f"pdf={type(pdf_error).__name__}: {pdf_error}"
-            )
-
-
 def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
-    """Resolve and scrape the exact current Lidl action leaflet for the market."""
+    """Resolve, capture and import the complete current Lidl action leaflet."""
     store_page = lidl_store_page_for(store.name)
     leaflet = resolve_lidl_leaflet(source.url, app_today(), store_page_url=store_page)
     resolved_source = replace(
@@ -335,22 +301,83 @@ def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
         store_specific=leaflet.store_context_confirmed,
     )
 
+    capture_holder = {}
+
+    def collector(src):
+        capture = capture_lidl_flipbook(
+            src,
+            valid_from=leaflet.valid_from,
+            valid_to=leaflet.valid_to,
+            target_dir=settings.data_dir / "prospects" / "viewer" / str(store.id) / "current",
+        )
+        capture_holder["capture"] = capture
+        return {
+            "source": src,
+            "raw": b"",
+            "content_type": "application/pdf+html-audit",
+            "fetch_mode": capture.fetch_mode,
+            "final_url": capture.final_url,
+            "offers": capture.offers,
+            "status": "parsed" if capture.offers else "no_safe_offers",
+            "capture_diagnostics": capture.diagnostics,
+            "audit_pdf_path": str(capture.pdf_path),
+            "audit_page_count": capture.page_count,
+        }
+
+    def archive_before_import(result):
+        capture = capture_holder.get("capture")
+        if capture is None:
+            raise CollectionError("Lidl-Flipbook wurde nicht erzeugt")
+
+        # Prefer an official retailer PDF if the viewer exposes one. Otherwise
+        # the complete multi-page viewer capture is archived and explicitly
+        # labelled as a web snapshot. Either way it exists before import so
+        # ``PDF Seite N`` provenance can attach to the immutable archive.
+        try:
+            pdf_url = discover_official_pdf(leaflet.url)
+            pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / "lidl_puderbach")
+            _archive_downloaded_prospect(
+                db,
+                store,
+                source_url=leaflet.url,
+                pdf_url=pdf_url,
+                pdf_path=pdf_path,
+                valid_from=leaflet.valid_from,
+                valid_to=leaflet.valid_to,
+            )
+            from .prospects import current_prospect
+            row = current_prospect(db, store, "current")
+            result["audit_status"] = f"audit=original-pdf:{row.page_count if row else '?'} Seiten"
+        except Exception:
+            db.rollback()
+            _archive_downloaded_prospect(
+                db,
+                store,
+                source_url=leaflet.url,
+                pdf_url=f"web-snapshot://{leaflet.url}",
+                pdf_path=capture.pdf_path,
+                valid_from=leaflet.valid_from,
+                valid_to=leaflet.valid_to,
+            )
+            from .prospects import current_prospect
+            row = current_prospect(db, store, "current")
+            result["audit_status"] = f"audit=web-snapshot:{row.page_count if row else capture.page_count} Seiten"
+
     result, summary, run = collect_structured_for_store(
         db,
         store.name,
         source_override=resolved_source,
-        collector_fn=lambda src: collect_lidl_leaflet(
-            src,
-            valid_from=leaflet.valid_from,
-            valid_to=leaflet.valid_to,
-        ),
+        collector_fn=collector,
+        before_import_fn=archive_before_import,
     )
-    audit_status = _archive_lidl_leaflet(db, store, leaflet)
     context_status = "lidl_filiale=bestätigt" if leaflet.store_context_confirmed else "lidl_filiale=nicht_bestaetigt"
     _append_run_diagnostic(
         db,
         run,
-        f"lidl_prospekt={leaflet.valid_from.isoformat()}..{leaflet.valid_to.isoformat()} | {context_status} | {audit_status}",
+        (
+            f"lidl_prospekt={leaflet.valid_from.isoformat()}..{leaflet.valid_to.isoformat()} | "
+            f"{context_status} | {result.get('capture_diagnostics','')} | {result.get('audit_status','audit=?')}"
+        ),
     )
     return result, summary, run
 
