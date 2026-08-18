@@ -33,7 +33,8 @@ registerSW({
   },
 });
 
-// Chromium/Android reports the install event. iOS does not reliably do so,
-// therefore every launch also checks standalone mode above.
+// Record every launch immediately. Chromium/Android also reports appinstalled;
+// iOS is detected through navigator.standalone / display-mode: standalone.
+sendHeartbeat();
 window.addEventListener("appinstalled", () => sendHeartbeat(true));
 window.addEventListener("pageshow", () => sendHeartbeat());
