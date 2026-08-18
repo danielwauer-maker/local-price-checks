@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from io import BytesIO
 import hashlib
 import json
 import re
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfWriter
 
 from .collectors import (
     canonical_unit_price_unit,
@@ -16,8 +15,14 @@ from .collectors import (
     parse_lidl_text,
     structured_network_offers,
 )
+from .lidl_manifest import (
+    add_image_pdf_page,
+    embedded_json_states,
+    logical_page_images,
+    manifest_offers,
+    manifest_page_count,
+)
 
-_PAGE_RE = re.compile(r"/page/(\d+)", re.I)
 _TOTAL_RE = re.compile(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b")
 
 
@@ -47,12 +52,6 @@ def _visible_body(page) -> str:
 
 
 def _visual_signature(page) -> str:
-    """Hash the visible viewer state, including canvas-based flipbooks.
-
-    Lidl's current leaflet does not expose each logical page as a distinct HTML
-    document. Much of the leaflet is rendered in canvas/image layers. A viewport
-    screenshot is therefore a more reliable page identity than URL or body text.
-    """
     try:
         payload = page.screenshot(full_page=False, animations="disabled")
         return hashlib.sha256(payload).hexdigest()
@@ -109,7 +108,6 @@ def _dismiss_cookies(page) -> None:
 
 
 def _click_next(page) -> str | None:
-    """Advance the live Lidl viewer using its real UI, not synthetic URLs."""
     css_selectors = (
         'button[aria-label*="Nächste" i]',
         'button[aria-label*="Naechste" i]',
@@ -143,8 +141,6 @@ def _click_next(page) -> str | None:
         except Exception:
             pass
 
-    # Many flipbook libraries map keyboard arrows even when their navigation
-    # controls are icon-only and have no useful accessible label.
     try:
         page.keyboard.press("ArrowRight")
         return "keyboard:ArrowRight"
@@ -177,6 +173,8 @@ def _dedupe_offers(offers: list) -> list:
     seen = set()
     out = []
     for offer in offers:
+        page_match = re.search(r"PDF Seite (\d+)", offer.source_text or "")
+        page_no = int(page_match.group(1)) if page_match else None
         key = (
             offer.product_name.lower().strip(),
             round(float(offer.price), 2),
@@ -184,12 +182,21 @@ def _dedupe_offers(offers: list) -> list:
             offer.unit,
             offer.valid_from,
             offer.valid_to,
+            page_no,
         )
         if key in seen:
             continue
         seen.add(key)
         out.append(offer)
     return out
+
+
+def _next_page_hint(current_page: int | None) -> int | None:
+    if current_page is None:
+        return None
+    if current_page <= 1:
+        return 2
+    return current_page + 2
 
 
 def capture_lidl_flipbook(
@@ -200,12 +207,14 @@ def capture_lidl_flipbook(
     target_dir: Path,
     max_pages: int = 80,
 ) -> LidlFlipbookResult:
-    """Capture Lidl's live leaflet by driving the actual flipbook controls.
+    """Capture Lidl's live leaflet including manifest data and logical pages.
 
-    The Lidl viewer keeps the same SPA document while the user turns pages. URL
-    changes alone are therefore not a reliable navigation mechanism. We open the
-    selected official leaflet once, capture page-scoped network data, print its
-    current visual state, then advance with the viewer's next control/ArrowRight.
+    The current Lidl viewer advances in spreads: after the single cover page the
+    visible counter typically moves 2, 4, 6 ... while the leaflet itself contains
+    every logical page. We therefore keep viewer-state count separate from archive
+    page count and split two-page spreads into one audit page per logical leaflet
+    page. JSON/manifest responses and embedded app state are inspected recursively
+    for page-scoped product/hotspot data.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -218,11 +227,15 @@ def capture_lidl_flipbook(
     all_offers = []
     fingerprints: set[str] = set()
     explicit_total: int | None = None
-    captured_pages = 0
+    captured_states = 0
+    archived_pages: set[int] = set()
     final_url = source.url
     vf = valid_from.strftime("%d.%m.%Y")
     vt = valid_to.strftime("%d.%m.%Y")
     navigation_methods: set[str] = set()
+    all_payloads: list[dict] = []
+    payload_hashes: set[str] = set()
+    capture_hint = {"page": 1}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -248,27 +261,34 @@ def capture_lidl_flipbook(
                     for token in (
                         "flyer", "leaflet", "prospekt", "brochure", "catalog", "page",
                         "offer", "angebot", "product", "produkt", "article", "artikel",
-                        "hotspot", "publication", "spread",
+                        "hotspot", "publication", "spread", "manifest", "annotation",
                     )
                 )
                 if "json" not in ctype and not relevant_url:
                     return
-                if len(page_payloads) >= 300:
-                    return
                 data = response.json()
                 raw = json.dumps(data, ensure_ascii=False, default=str)
-                if len(raw) > 3_000_000:
+                if len(raw) > 5_000_000:
                     return
                 low = raw.lower()
-                if any(
+                if not any(
                     token in low
                     for token in (
                         "price", "preis", "offer", "angebot", "product", "produkt",
                         "article", "artikel", "gtin", "ean", "hotspot", "flyer", "page",
-                        "publication", "spread",
+                        "publication", "spread", "manifest", "annotation",
                     )
                 ):
-                    page_payloads.append({"url": response.url, "data": data})
+                    return
+                digest = hashlib.sha256((response.url + "\n" + raw).encode("utf-8", errors="ignore")).hexdigest()
+                if digest in payload_hashes:
+                    return
+                payload_hashes.add(digest)
+                item = {"url": response.url, "data": data, "page_hint": capture_hint.get("page")}
+                if len(page_payloads) < 300:
+                    page_payloads.append(item)
+                if len(all_payloads) < 900:
+                    all_payloads.append(item)
             except Exception:
                 pass
 
@@ -281,19 +301,30 @@ def capture_lidl_flipbook(
             except Exception:
                 page.wait_for_timeout(2500)
 
-            for logical_page in range(1, max_pages + 1):
+            for state in embedded_json_states(page):
+                raw = json.dumps(state.get("data"), ensure_ascii=False, default=str)
+                digest = hashlib.sha256(("dom-state\n" + raw).encode("utf-8", errors="ignore")).hexdigest()
+                if digest not in payload_hashes:
+                    payload_hashes.add(digest)
+                    all_payloads.append(state)
+
+            explicit_total = manifest_page_count(all_payloads) or _extract_total_pages(_visible_body(page))
+
+            for logical_state in range(1, max_pages + 1):
                 body = _visible_body(page)
-                if not body and logical_page > 1:
+                if not body and logical_state > 1:
                     break
                 final_url = page.url or source.url
-                current_page = _extract_current_page(body)
+                current_page = _extract_current_page(body) or capture_hint.get("page") or logical_state
+                capture_hint["page"] = current_page
                 if explicit_total is None:
-                    explicit_total = _extract_total_pages(body)
+                    explicit_total = manifest_page_count(all_payloads) or _extract_total_pages(body)
 
                 fingerprint = _page_fingerprint(page, body)
                 if fingerprint in fingerprints:
                     break
                 fingerprints.add(fingerprint)
+                captured_states += 1
 
                 html = _inject_network_json(page.content(), list(page_payloads))
                 imgs = images(html, final_url)
@@ -306,13 +337,12 @@ def capture_lidl_flipbook(
                         page_offers.append(offer)
                         existing.add(key)
 
-                page_no = current_page or logical_page
                 for offer in page_offers:
                     offer.valid_from = vf
                     offer.valid_to = vt
                     offer.source_url = source.url
                     original = (offer.source_text or "").strip()
-                    offer.source_text = f"PDF Seite {page_no}: {original}"[:4000]
+                    offer.source_text = f"PDF Seite {current_page}: {original}"[:4000]
                     if offer.unit_price is None:
                         offer.unit_price, offer.unit_price_unit = compute_unit_price(
                             offer.app_price if offer.app_price is not None else offer.price,
@@ -323,22 +353,17 @@ def capture_lidl_flipbook(
                         offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
                 all_offers.extend(page_offers)
 
-                payload = page.pdf(
-                    format="A4",
-                    landscape=True,
-                    print_background=True,
-                    margin={"top": "4mm", "right": "4mm", "bottom": "4mm", "left": "4mm"},
-                )
-                reader = PdfReader(BytesIO(payload))
-                if not reader.pages:
-                    raise RuntimeError(f"Lidl-Viewer Seite {page_no} konnte nicht archiviert werden")
-                writer.add_page(reader.pages[0])
-                captured_pages += 1
+                for page_no, image_payload in logical_page_images(page, current_page, explicit_total):
+                    if page_no in archived_pages:
+                        continue
+                    add_image_pdf_page(writer, image_payload)
+                    archived_pages.add(page_no)
 
-                if explicit_total is not None and captured_pages >= explicit_total:
+                if explicit_total is not None and len(archived_pages) >= explicit_total:
                     break
 
                 page_payloads.clear()
+                capture_hint["page"] = _next_page_hint(current_page)
                 changed, method = _advance_and_wait(page, fingerprint, current_page)
                 if method:
                     navigation_methods.add(method)
@@ -348,12 +373,25 @@ def capture_lidl_flipbook(
             context.close()
             browser.close()
 
-    if captured_pages < 2:
+    manifest_rows = manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
+    for offer in manifest_rows:
+        if offer.unit_price is None:
+            offer.unit_price, offer.unit_price_unit = compute_unit_price(
+                offer.app_price if offer.app_price is not None else offer.price,
+                offer.quantity,
+                offer.unit,
+            )
+        elif not offer.unit_price_unit:
+            offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
+    all_offers.extend(manifest_rows)
+
+    if len(archived_pages) < 2:
         nav = ",".join(sorted(navigation_methods)) or "kein Navigationscontrol gefunden"
         raise RuntimeError(
-            "Lidl-Flipbook konnte nicht weitergeblättert werden; "
-            f"erfasst={captured_pages}, navigation={nav}"
+            "Lidl-Flipbook konnte nicht vollständig erfasst werden; "
+            f"viewer_states={captured_states}, logische_seiten={len(archived_pages)}, navigation={nav}"
         )
+
     with target.open("wb") as fh:
         writer.write(fh)
 
@@ -361,14 +399,16 @@ def capture_lidl_flipbook(
     total_label = str(explicit_total) if explicit_total is not None else "automatisch"
     nav_label = ",".join(sorted(navigation_methods)) or "unbekannt"
     diagnostics = (
-        f"lidl_flipbook={captured_pages} Seiten (viewer_total={total_label}), "
-        f"page_offers={len(offers)}, navigation={nav_label}"
+        f"lidl_flipbook={len(archived_pages)} logische Seiten "
+        f"(viewer_states={captured_states}, viewer_total={total_label}), "
+        f"page_offers={len(offers)}, manifest_payloads={len(all_payloads)}, "
+        f"manifest_offers={len(manifest_rows)}, navigation={nav_label}"
     )
     return LidlFlipbookResult(
         offers=offers,
         pdf_path=target,
-        page_count=captured_pages,
+        page_count=len(archived_pages),
         final_url=final_url,
-        fetch_mode="playwright-flipbook-ui",
+        fetch_mode="playwright-flipbook-manifest",
         diagnostics=diagnostics,
     )
