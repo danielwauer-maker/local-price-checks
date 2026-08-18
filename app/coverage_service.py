@@ -73,15 +73,31 @@ def coverage_payload(db: Session, region: CoverageRegion) -> dict[str, Any]:
     verified = [store for store in stores if store.benchmark_verified]
     store_ids = [store.id for store in verified]
     current_offers = 0
+    current_offer_rows = 0
     if store_ids:
         from .clock import app_today
         today = app_today()
-        current_offers = db.query(Offer).filter(
+        rows = db.query(Offer).filter(
             Offer.store_id.in_(store_ids),
             Offer.local_store_offer.is_(True),
             Offer.valid_from <= today,
             Offer.valid_to >= today,
-        ).count()
+        ).all()
+        current_offer_rows = len(rows)
+        # User-facing count: the same product/pack/price/validity available in
+        # several branches is one distinct promotion, not one card per store.
+        keys = {
+            (
+                row.master_product_id,
+                float(row.price),
+                float(row.unit_price) if row.unit_price is not None else None,
+                row.unit_price_unit or None,
+                row.valid_from,
+                row.valid_to,
+            )
+            for row in rows
+        }
+        current_offers = len(keys)
     return {
         "id": region.id,
         "name": region.name,
@@ -95,6 +111,7 @@ def coverage_payload(db: Session, region: CoverageRegion) -> dict[str, Any]:
         "stores": len(stores),
         "verifiedStores": len(verified),
         "currentOffers": current_offers,
+        "currentOfferRows": current_offer_rows,
     }
 
 
