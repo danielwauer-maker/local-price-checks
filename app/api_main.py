@@ -1,3 +1,6 @@
+import re
+import secrets
+
 from .main import app
 from .api_routes import router
 from .admin_routes import router as admin_router
@@ -7,6 +10,9 @@ from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .coverage_routes import router as coverage_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
+from .client_models import UserClient  # noqa: F401 - registers additive table before startup create_all
+from .client_context import reset_client_key, set_client_key
+from .config import settings
 from .coverage_service import seed_initial_coverage
 from .media_routes import router as media_router
 from .ux_routes import router as ux_router
@@ -14,6 +20,31 @@ from .prospect_routes import router as prospect_router
 from .admin_seed import seed_admin_catalog
 from .category_classifier import backfill_auto_categories
 from .db import SessionLocal
+
+_CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
+
+
+@app.middleware("http")
+async def persistent_client_identity(request, call_next):
+    """Give each browser/PWA installation a durable anonymous identity."""
+    raw = request.cookies.get("lp_client_id") or request.headers.get("x-localprices-client") or ""
+    client_key = raw if _CLIENT_RE.fullmatch(raw) else secrets.token_urlsafe(24)
+    token = set_client_key(client_key)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_client_key(token)
+    response.set_cookie(
+        "lp_client_id",
+        client_key,
+        max_age=60 * 60 * 24 * 365 * 2,
+        path="/",
+        httponly=True,
+        secure=settings.app_env == "production",
+        samesite="lax",
+    )
+    return response
+
 
 app.include_router(router)
 app.include_router(admin_router)
