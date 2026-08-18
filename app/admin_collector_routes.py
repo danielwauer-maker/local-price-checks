@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -22,6 +24,40 @@ templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
 
+def _write_lidl_debug_failure(store: Store, exc: Exception) -> None:
+    """Always persist a Lidl diagnostic record, even if capture setup fails."""
+    try:
+        target_dir = settings.data_dir / "diagnostics" / "lidl"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"lidl_manifest_debug_store_{store.id}_latest.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "created_utc": datetime.utcnow().isoformat() + "Z",
+                    "store": {
+                        "id": store.id,
+                        "name": store.name,
+                        "retailer": store.retailer,
+                        "external_id": store.external_id,
+                    },
+                    "leaflet": None,
+                    "viewer": {"states": 0, "total": None, "navigation": []},
+                    "payload_count": 0,
+                    "payloads": [],
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "stage": "diagnostic_setup",
+                    "note": "Fallback diagnostic written because Lidl manifest capture failed before its own output file was created.",
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 def _run_store_collection_background(store_id: int) -> None:
     """Run one market collection outside the HTTP request lifecycle.
 
@@ -39,11 +75,11 @@ def _run_store_collection_background(store_id: int) -> None:
             try:
                 from .engine_v140.lidl_manifest_debug import capture_lidl_manifest_debug
                 capture_lidl_manifest_debug(store, data_dir=settings.data_dir)
-            except Exception:
+            except Exception as exc:
                 # Diagnostics must never turn an otherwise completed QA scrape
-                # into a failed collector run. The debug helper writes its own
-                # error field whenever the browser capture itself can start.
-                pass
+                # into a failed collector run, but a support artifact must still
+                # exist so the concrete setup failure becomes visible.
+                _write_lidl_debug_failure(store, exc)
     except Exception:
         db.rollback()
         # collect_store_from_web / collection_service persists a failed run with
