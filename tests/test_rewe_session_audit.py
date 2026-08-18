@@ -36,6 +36,7 @@ def test_rewe_session_fallback_checks_immutable_archive_not_current_pointer():
     store = Store(
         name="REWE:XL Hundertmark",
         retailer="REWE",
+        postal_code="56269",
         city="Dierdorf",
         active=True,
         source_url="https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
