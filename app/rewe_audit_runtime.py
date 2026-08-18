@@ -41,20 +41,49 @@ def _validity_from_result(result):
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
-def _has_archived_prospect(db, store: Store) -> bool:
-    """Return whether an immutable archive exists for this store.
-
-    A mutable current prospect pointer may exist even when archive creation
-    failed. The audit UI and provenance depend on ProspectArchive, so only that
-    table is authoritative for deciding whether the successful-session fallback
-    can be skipped.
-    """
+def _latest_archive(db, store: Store):
     return (
-        db.query(ProspectArchive.id)
+        db.query(ProspectArchive)
         .filter(ProspectArchive.store_id == store.id)
+        .order_by(ProspectArchive.fetched_at.desc(), ProspectArchive.id.desc())
         .first()
-        is not None
     )
+
+
+def _has_archived_prospect(db, store: Store) -> bool:
+    """Return whether an immutable archive exists for this store."""
+    return _latest_archive(db, store) is not None
+
+
+def _archive_contains_consent(archive: ProspectArchive | None) -> bool:
+    """Detect whether an archived web-snapshot still contains REWE's CMP.
+
+    Old snapshots created before the consent cleanup must not block creation of
+    a fresh session snapshot. We inspect extracted PDF text rather than raw PDF
+    bytes because PDF streams are usually compressed.
+    """
+    if not archive or not archive.pdf_bytes:
+        return False
+    if not str(archive.pdf_url or "").startswith("web-snapshot://"):
+        return False
+    try:
+        import fitz
+
+        doc = fitz.open(stream=archive.pdf_bytes, filetype="pdf")
+        try:
+            text = " ".join(page.get_text("text") for page in doc[: min(3, doc.page_count)])
+        finally:
+            doc.close()
+    except Exception:
+        return False
+    normalised = re.sub(r"\s+", " ", text.lower()).strip()
+    return any(marker in normalised for marker in REWE_CONSENT_MARKERS)
+
+
+def _needs_session_archive(db, store: Store) -> bool:
+    """Create a session snapshot if none exists or the latest one has CMP UI."""
+    archive = _latest_archive(db, store)
+    return archive is None or _archive_contains_consent(archive)
 
 
 def _clean_snapshot_dom(page) -> None:
@@ -65,8 +94,7 @@ def _clean_snapshot_dom(page) -> None:
     text and fixed/modal geometry. This keeps the archived audit PDF readable
     without changing the underlying offer content.
     """
-    page.evaluate(
-        """(markers) => {
+    cleanup_js = """(markers) => {
           document.querySelectorAll('script').forEach(el => el.remove());
 
           const normalise = value => (value || '')
@@ -102,32 +130,37 @@ def _clean_snapshot_dom(page) -> None:
             } catch (_) {}
           }
 
-          // REWE's current CMP can use generic generated class names. Find the
-          // element containing the visible consent headline and climb to the
-          // nearest modal/fixed ancestor rather than depending on class names.
-          const all = Array.from(document.body ? document.body.querySelectorAll('*') : []);
-          for (const el of all) {
-            if (!hasConsentText(el)) continue;
+          const roots = [document];
+          const seenRoots = new Set(roots);
+          for (let i = 0; i < roots.length; i += 1) {
+            const root = roots[i];
+            let elements = [];
+            try { elements = Array.from(root.querySelectorAll('*')); } catch (_) {}
+            for (const el of elements) {
+              if (el.shadowRoot && !seenRoots.has(el.shadowRoot)) {
+                seenRoots.add(el.shadowRoot);
+                roots.push(el.shadowRoot);
+              }
+              if (!hasConsentText(el)) continue;
 
-            let node = el;
-            let best = null;
-            for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
-              const style = getComputedStyle(node);
-              const rect = node.getBoundingClientRect();
-              const modalLike =
-                node.getAttribute('role') === 'dialog' ||
-                node.getAttribute('aria-modal') === 'true' ||
-                style.position === 'fixed' ||
-                style.position === 'sticky' ||
-                (rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.35);
-              if (modalLike) best = node;
-              if (style.position === 'fixed' && rect.width >= window.innerWidth * 0.8) break;
+              let node = el;
+              let best = null;
+              for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
+                const style = getComputedStyle(node);
+                const rect = node.getBoundingClientRect();
+                const modalLike =
+                  node.getAttribute('role') === 'dialog' ||
+                  node.getAttribute('aria-modal') === 'true' ||
+                  style.position === 'fixed' ||
+                  style.position === 'sticky' ||
+                  (rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.35);
+                if (modalLike) best = node;
+                if (style.position === 'fixed' && rect.width >= window.innerWidth * 0.8) break;
+              }
+              removable.add(best || el);
             }
-            removable.add(best || el);
           }
 
-          // Remove fixed/sticky consent backdrops that may be siblings of the
-          // dialog and therefore do not themselves contain readable text.
           const removedRects = [];
           for (const el of removable) {
             if (!el || !el.isConnected) continue;
@@ -153,9 +186,15 @@ def _clean_snapshot_dom(page) -> None:
             document.body.style.overflow = 'auto';
             document.body.style.position = 'static';
           }
-        }""",
-        list(REWE_CONSENT_MARKERS),
-    )
+        }"""
+
+    # Clean the main document and any same-origin/accessible CMP frames. REWE's
+    # consent manager can move between main DOM and iframe implementations.
+    for frame in page.frames:
+        try:
+            frame.evaluate(cleanup_js, list(REWE_CONSENT_MARKERS))
+        except Exception:
+            pass
 
 
 def archive_rewe_from_collector_result(db, store: Store, result) -> str:
@@ -197,6 +236,8 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             except Exception:
                 page.wait_for_timeout(1200)
             _clean_snapshot_dom(page)
+            page.wait_for_timeout(150)
+            _clean_snapshot_dom(page)
             page.evaluate("window.scrollTo(0,0)")
             payload = page.pdf(
                 format="A4",
@@ -224,12 +265,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
         valid_from=valid_from,
         valid_to=valid_to,
     )
-    archive = (
-        db.query(ProspectArchive)
-        .filter(ProspectArchive.store_id == store.id)
-        .order_by(ProspectArchive.fetched_at.desc(), ProspectArchive.id.desc())
-        .first()
-    )
+    archive = _latest_archive(db, store)
     linked = 0
     if archive:
         try:
@@ -251,10 +287,9 @@ def install() -> None:
         store = db.query(Store).filter(Store.name == store_name).first()
         if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
             try:
-                # The immutable archive table is authoritative. A mutable
-                # current pointer may survive a failed WAF archive attempt and
-                # must not suppress this successful-session fallback.
-                if not _has_archived_prospect(db, store):
+                # A stale archive containing the CMP must not suppress a fresh
+                # cleaned snapshot. Clean archives still avoid duplicate work.
+                if _needs_session_archive(db, store):
                     status = archive_rewe_from_collector_result(db, store, result)
                     web_collector._append_run_diagnostic(db, run, status)
             except Exception as exc:
