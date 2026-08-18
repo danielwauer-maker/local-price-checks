@@ -30,20 +30,14 @@ _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 
 @app.middleware("http")
 async def persistent_client_identity(request, call_next):
-    """Give browsers/PWAs a durable anonymous identity without changing first-request legacy behavior."""
+    """Give each browser/PWA installation a durable anonymous identity."""
     raw = request.cookies.get("lp_client_id") or request.headers.get("x-localprices-client") or ""
-    has_client_identity = bool(_CLIENT_RE.fullmatch(raw))
-    client_key = raw if has_client_identity else secrets.token_urlsafe(24)
-
-    # Only an identity the browser already sent belongs to the current request.
-    # A first visit still uses the legacy/default profile; the generated ID is
-    # returned as a cookie and takes effect from the next request onward.
-    token = set_client_key(client_key if has_client_identity else None)
+    client_key = raw if _CLIENT_RE.fullmatch(raw) else secrets.token_urlsafe(24)
+    token = set_client_key(client_key)
     try:
         response = await call_next(request)
     finally:
         reset_client_key(token)
-
     response.set_cookie(
         "lp_client_id",
         client_key,
