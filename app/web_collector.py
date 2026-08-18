@@ -15,6 +15,7 @@ from .collection_service import CollectionError, collect_pdf_for_store, collect_
 from .config import settings
 from .models import Store
 from .engine_v140.source_registry import source_for_store
+from .prospects import save_prospect
 
 PDF_RE = re.compile(r"\.pdf(?:$|[?#])", re.I)
 INLINE_PDF_RE = re.compile(r"[\"']([^\"']+\.pdf(?:\?[^\"']*)?)[\"']", re.I)
@@ -142,10 +143,36 @@ def netto_weekly_prospect_url(store: Store) -> str:
     return f"https://wochenprospekt.netto-online.de/hz{week:02d}_kess/?storeid={store.external_id}"
 
 
+def _archive_downloaded_prospect(
+    db: Session,
+    store: Store,
+    *,
+    source_url: str,
+    pdf_url: str,
+    pdf_path: Path,
+) -> None:
+    """Persist the exact downloaded PDF before parsing/importing its offers."""
+    save_prospect(
+        db,
+        store,
+        period_key="current",
+        source_url=source_url,
+        pdf_url=pdf_url,
+        pdf_path=pdf_path,
+    )
+
+
 def _collect_netto_from_official_prospect(db: Session, store: Store, source):
     prospect_url = netto_weekly_prospect_url(store)
     pdf_url = discover_official_pdf(prospect_url)
     pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
+    _archive_downloaded_prospect(
+        db,
+        store,
+        source_url=prospect_url,
+        pdf_url=pdf_url,
+        pdf_path=pdf_path,
+    )
     return collect_pdf_for_store(db, store.name, pdf_path)
 
 
@@ -179,6 +206,13 @@ def collect_store_from_web(db: Session, store_name: str):
     try:
         pdf_url = discover_official_pdf(source.url)
         pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
+        _archive_downloaded_prospect(
+            db,
+            store,
+            source_url=source.url,
+            pdf_url=pdf_url,
+            pdf_path=pdf_path,
+        )
         return collect_pdf_for_store(db, store.name, pdf_path)
     except Exception as pdf_error:
         if structured_error:
