@@ -216,6 +216,11 @@ def _is_local_container_path(path: str) -> bool:
     return any(part in _LOCAL_CONTAINER_WORDS for part in parts[-3:])
 
 
+def _is_local_container_root_path(path: str) -> bool:
+    parts = re.sub(r"\[\d+\]", "", path.lower()).split(".")
+    return bool(parts) and parts[-1] in _LOCAL_CONTAINER_WORDS
+
+
 def _online_only(obj: dict) -> bool:
     for key in ("onlineOnly", "online_only", "isOnlineOnly", "webOnly", "shopOnly"):
         if obj.get(key) is True:
@@ -276,7 +281,7 @@ def _aggregate_local_container(obj: dict, path: str, page_no: int | None):
     for locality and page number; catalog data is only used to fill missing
     product fields for a referenced id.
     """
-    if page_no is None or _is_global_catalog_path(path) or not _is_local_container_path(path):
+    if page_no is None or _is_global_catalog_path(path) or not _is_local_container_root_path(path):
         return None
     nodes = list(_iter_dicts(obj))
     if len(nodes) > 80:
@@ -288,7 +293,7 @@ def _aggregate_local_container(obj: dict, path: str, page_no: int | None):
     for node in nodes:
         identifiers |= _identifiers_from(node, _PRODUCT_ID_KEYS) | _url_identifiers(node)
         if name is None:
-            name = _text_from(node, _NAME_KEYS)
+            name = _text_from(node, tuple(key for key in _NAME_KEYS if key != "label"))
         if brand is None:
             brand = _text_from(node, ("brand", "brandName", "manufacturer", "vendor"))
         if package is None:
@@ -393,8 +398,7 @@ def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: 
             if _is_global_catalog_path(path):
                 continue
 
-            # First accept complete page-scoped product objects.
-            direct = _candidate_offer(obj, path, inherited_page)
+            direct = None if (_is_local_container_path(path) and not _is_local_container_root_path(path)) else _candidate_offer(obj, path, inherited_page)
             if direct:
                 name, price, regular, explicit_page, fallback_page, _brand, online = direct
                 page_no = explicit_page or fallback_page
@@ -402,16 +406,12 @@ def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: 
                     add_offer(name, price, regular, page_no, obj, online or _tree_online_only(obj), "ManifestHotspot")
                     continue
 
-            # Then join split name/price fields inside one hotspot/annotation.
             aggregate = _aggregate_local_container(obj, path, inherited_page)
             if aggregate:
                 name, price, regular, _ids, online = aggregate
                 add_offer(name, price, regular, inherited_page, obj, online, "ManifestHotspot")
                 continue
 
-            # Finally, a page-scoped hotspot may only contain a product id/link.
-            # In that case enrich it from the global catalogue, but locality and
-            # page still come from the hotspot, never from the catalogue row.
             if inherited_page is None or not _is_local_container_path(path):
                 continue
             ids = _identifiers_from(obj, _PRODUCT_REF_KEYS) | _url_identifiers(obj)
