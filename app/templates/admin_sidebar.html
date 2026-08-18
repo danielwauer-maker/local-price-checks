@@ -2,6 +2,7 @@
   .admin-sidebar{position:fixed;inset:0 auto 0 0;width:250px;background:#10261c;color:#eef7f1;padding:20px 14px;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,.08);font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif}
   .admin-sidebar *{box-sizing:border-box}.admin-sidebar a{text-decoration:none}.admin-sidebar-brand{font-size:20px;font-weight:850;padding:4px 8px 16px}.admin-sidebar-brand small{display:block;font-size:11px;font-weight:600;color:#9fbaaa;margin-top:3px}.admin-sidebar-group{margin:12px 0 4px;padding:0 8px;color:#84a391;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}.admin-sidebar-nav{display:flex;flex-direction:column;gap:3px}.admin-sidebar-nav a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;color:#dbe9e1;font-weight:650}.admin-sidebar-nav a:hover{background:rgba(255,255,255,.07)}.admin-sidebar-nav a.active{background:#eaf4e7;color:#0d5839}.admin-sidebar-icon{width:20px;text-align:center;opacity:.9}.admin-sidebar-foot{margin-top:18px;padding:12px 8px 0;border-top:1px solid rgba(255,255,255,.09);color:#8fa99a;font-size:11px}
   .admin-sidebar + .wrap{margin-left:250px!important;max-width:none!important;padding:22px 24px!important}.admin-sidebar + .wrap .nav{display:none!important}
+  .admin-media-delete{margin-top:6px!important}.admin-media-delete button{background:#fae9e6!important;color:#a33b2c!important}
   @media(max-width:850px){.admin-sidebar{position:relative;width:auto;inset:auto;padding:10px 10px 8px}.admin-sidebar-brand{padding:3px 6px 8px;font-size:17px}.admin-sidebar-brand small,.admin-sidebar-group,.admin-sidebar-foot{display:none}.admin-sidebar-nav{display:flex;flex-direction:row;gap:5px;overflow-x:auto;padding-bottom:2px}.admin-sidebar-nav a{white-space:nowrap;padding:8px 10px;background:rgba(255,255,255,.04)}.admin-sidebar-icon{display:none}.admin-sidebar + .wrap{margin-left:0!important;padding:12px!important}}
 </style>
 <aside class="admin-sidebar">
@@ -43,3 +44,26 @@
   </nav>
   <div class="admin-sidebar-foot">Angemeldet: {{ actor or 'Admin' }}</div>
 </aside>
+{% if admin_section=='media' %}
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('form[action^="/admin/media/"][action$="/toggle"]').forEach(function (toggleForm) {
+    var match = toggleForm.getAttribute('action').match(/^\/admin\/media\/(\d+)\/toggle$/);
+    if (!match || toggleForm.parentElement.querySelector('.admin-media-delete')) return;
+    var deleteForm = document.createElement('form');
+    deleteForm.method = 'post';
+    deleteForm.action = '/admin/media/' + match[1] + '/delete';
+    deleteForm.className = 'admin-media-delete';
+    deleteForm.onsubmit = function () {
+      return window.confirm('Dieses Bild/Logo wirklich dauerhaft löschen?');
+    };
+    var button = document.createElement('button');
+    button.type = 'submit';
+    button.className = 'btn danger';
+    button.textContent = 'Löschen';
+    deleteForm.appendChild(button);
+    toggleForm.parentElement.appendChild(deleteForm);
+  });
+});
+</script>
+{% endif %}
