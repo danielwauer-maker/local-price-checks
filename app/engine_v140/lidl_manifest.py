@@ -24,6 +24,10 @@ _REGULAR_PRICE_KEYS = (
 _PACKAGE_KEYS = ("packageSize", "package_size", "packSize", "content", "quantityText", "unitText")
 _PAGE_KEYS = ("pageNumber", "pageNo", "page_no", "page", "pageIndex", "page_index")
 _TOTAL_KEYS = ("totalPages", "pageCount", "pagesCount", "numberOfPages", "totalPageCount")
+_PAGE_COLLECTION_KEYS = {
+    "pages", "leafletpages", "publicationpages", "catalogpages", "brochurepages",
+    "flyerpages", "documentpages",
+}
 _CONTEXT_WORDS = ("product", "produkt", "article", "artikel", "offer", "angebot", "hotspot", "promotion", "annotation")
 
 
@@ -85,7 +89,19 @@ def _number_from(obj: dict, keys: tuple[str, ...]) -> int | None:
     return None
 
 
+def _path_collection_name(path: str) -> str:
+    tail = path.rsplit(".", 1)[-1] if path else ""
+    tail = re.sub(r"\[\d+\]$", "", tail)
+    return tail.lower()
+
+
 def _walk(value: Any, *, path: str = "", inherited_page: int | None = None):
+    """Walk manifest data while preserving the real logical page context.
+
+    Global Lidl manifests frequently expose ``pages: [...]`` where product/hotspot
+    objects do not carry their own pageNumber. The page-list index is therefore
+    authoritative and must override a request-time page hint such as page 1.
+    """
     if isinstance(value, dict):
         page = _number_from(value, _PAGE_KEYS) or inherited_page
         yield value, path, page
@@ -93,8 +109,22 @@ def _walk(value: Any, *, path: str = "", inherited_page: int | None = None):
             child_path = f"{path}.{key}" if path else str(key)
             yield from _walk(child, path=child_path, inherited_page=page)
     elif isinstance(value, list):
+        page_collection = _path_collection_name(path) in _PAGE_COLLECTION_KEYS
         for idx, child in enumerate(value):
-            yield from _walk(child, path=f"{path}[{idx}]", inherited_page=inherited_page)
+            child_page = idx + 1 if page_collection else inherited_page
+            yield from _walk(child, path=f"{path}[{idx}]", inherited_page=child_page)
+
+
+def _has_page_collection(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key.lower() in _PAGE_COLLECTION_KEYS and isinstance(child, list) and child:
+                return True
+            if _has_page_collection(child):
+                return True
+    elif isinstance(value, list):
+        return any(_has_page_collection(child) for child in value[:50])
+    return False
 
 
 def manifest_page_count(payloads: list[dict]) -> int | None:
@@ -106,7 +136,7 @@ def manifest_page_count(payloads: list[dict]) -> int | None:
             if total:
                 candidates.append(total)
             for key, value in obj.items():
-                if key.lower() in {"pages", "leafletpages", "publicationpages"} and isinstance(value, list):
+                if key.lower() in _PAGE_COLLECTION_KEYS and isinstance(value, list):
                     if 4 <= len(value) <= 500:
                         candidates.append(len(value))
     return max(candidates) if candidates else None
@@ -153,8 +183,12 @@ def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: 
     for payload in payloads:
         data = payload.get("data")
         payload_page = payload.get("page_hint")
-        for obj, path, inherited_page in _walk(data, inherited_page=payload_page):
-            candidate = _candidate_offer(obj, path, inherited_page or payload_page)
+        # A global page collection contains its own authoritative page context.
+        # Never seed that tree with the request-time page hint (usually page 1),
+        # otherwise every child lacking pageNumber gets falsely assigned to page 1.
+        seed_page = None if _has_page_collection(data) else payload_page
+        for obj, path, inherited_page in _walk(data, inherited_page=seed_page):
+            candidate = _candidate_offer(obj, path, inherited_page)
             if not candidate:
                 continue
             name, price, regular, page_no, _price_key = candidate
@@ -247,7 +281,6 @@ def logical_page_images(page, current_page: int | None, total_pages: int | None)
 
     payload = page.screenshot(full_page=False, animations="disabled")
     image = Image.open(BytesIO(payload)).convert("RGB")
-    # Remove a little browser/viewer chrome while preserving the complete leaflet area.
     top = min(90, image.height // 10)
     bottom = max(top + 100, image.height - min(70, image.height // 12))
     image = image.crop((0, top, image.width, bottom))
