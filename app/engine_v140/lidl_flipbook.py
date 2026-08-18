@@ -7,7 +7,6 @@ import json
 import re
 from pathlib import Path
 
-from bs4 import BeautifulSoup
 from pypdf import PdfReader, PdfWriter
 
 from .collectors import (
@@ -59,9 +58,16 @@ def _visible_body(page) -> str:
 def _image_signature(page) -> str:
     try:
         rows = page.locator("img").evaluate_all(
-            """els => els.map(e => [e.currentSrc || e.src || '', e.naturalWidth || 0, e.naturalHeight || 0])
-                .filter(x => x[0] && x[1] >= 300 && x[2] >= 300)
-                .slice(0, 12)"""
+            """els => els.map(e => {
+                  const r=e.getBoundingClientRect();
+                  const s=getComputedStyle(e);
+                  return [e.currentSrc || e.src || '', e.naturalWidth || 0, e.naturalHeight || 0,
+                          Math.round(r.width), Math.round(r.height), s.display, s.visibility, s.opacity];
+                })
+                .filter(x => x[0] && x[1] >= 300 && x[2] >= 300 && x[3] >= 200 && x[4] >= 200 &&
+                             x[5] !== 'none' && x[6] !== 'hidden' && x[7] !== '0')
+                .map(x => x.slice(0,5))
+                .slice(0, 8)"""
         )
     except Exception:
         rows = []
@@ -69,9 +75,16 @@ def _image_signature(page) -> str:
 
 
 def _page_fingerprint(page, body: str) -> str:
-    # The viewer chrome is mostly constant. Large image URLs are the strongest
-    # signal that the requested leaflet page actually changed.
-    material = _image_signature(page) + "\n" + body[-1500:]
+    # Visible large page assets are the strongest signal that /page/N really
+    # moved to another leaflet page. If the viewer has no visible <img>, use a
+    # normalized text fallback that ignores navigation counters.
+    signature = _image_signature(page)
+    if signature != "[]":
+        material = signature
+    else:
+        normalized = re.sub(r"\b\d{1,3}\s*/\s*\d{1,3}\b", "PAGE/TOTAL", body)
+        normalized = re.sub(r"/page/\d+", "/page/N", normalized, flags=re.I)
+        material = normalized[-2500:]
     return hashlib.sha256(material.encode("utf-8", errors="ignore")).hexdigest()
 
 
@@ -82,7 +95,9 @@ def _extract_total_pages(body: str) -> int | None:
             c, t = int(current), int(total)
         except ValueError:
             continue
-        if 1 <= c <= t <= 120:
+        # Tiny 1/2, 1/3 counters are usually carousels in the surrounding Lidl
+        # chrome, not leaflet pagination.
+        if 1 <= c <= t <= 120 and t >= 4:
             candidates.append(t)
     return max(candidates) if candidates else None
 
@@ -224,7 +239,6 @@ def capture_lidl_flipbook(
                 fingerprints.add(fingerprint)
 
                 html = _inject_network_json(page.content(), list(page_payloads))
-                soup = BeautifulSoup(html, "html.parser")
                 imgs = images(html, final_url)
                 page_offers = parse_lidl_text(source, body, imgs)
                 structured = structured_network_offers(html, source, imgs)
