@@ -12,3 +12,11 @@ consume its CollectedOffer output and map it to MasterProduct/Offer records.
 from .lidl_schwarz_runtime import install as _install_lidl_schwarz_runtime
 
 _install_lidl_schwarz_runtime()
+
+# Many grocery cards are raster-only in the official viewer and have no
+# productDetails object. Reuse the already archived logical page images as a
+# page-aware OCR fallback. This is installed after the structured bridge so
+# structured data remains preferred and OCR only fills the gaps.
+from .lidl_ocr_runtime import install as _install_lidl_ocr_runtime
+
+_install_lidl_ocr_runtime()
