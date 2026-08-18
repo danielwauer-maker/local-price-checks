@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Crosshair, Heart, MapPin } from "lucide-react";
+import { Crosshair, Heart, MapPin, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { MapPanel } from "@/components/MapPanel";
 import { useStore } from "@/lib/app-store";
@@ -14,10 +14,11 @@ export const Route = createFileRoute("/maerkte")({
 });
 
 function MarketsPage() {
-  const { location, setLocation, radius, setRadius, marketsInRadius, selected, toggleSelected } = useStore();
+  const { location, setLocation, radius, setRadius, marketsInRadius, favoriteMarketsOutsideRadius, refreshingMarketIds, selected, toggleSelected } = useStore();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const navigate = useNavigate();
+  const activeSelectedCount = marketsInRadius.filter((market) => selected.includes(market.id)).length;
 
   function locate() {
     if (!("geolocation" in navigator)) {
@@ -57,10 +58,11 @@ function MarketsPage() {
       </div>
 
       <section className="mt-5 space-y-3 px-5">
-        <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">{marketsInRadius.length} Märkte gefunden</h2><span className="text-xs text-muted-foreground">{selected.length} im Vergleich</span></div>
+        <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">{marketsInRadius.length} Märkte gefunden</h2><span className="text-xs text-muted-foreground">{activeSelectedCount} im Vergleich</span></div>
 
         {marketsInRadius.map((m) => {
           const chosen = selected.includes(m.id);
+          const refreshing = refreshingMarketIds.includes(m.id);
           return (
             <article key={m.id} onClick={() => navigate({ to: "/markt/$id", params: { id: m.id } })} className={cn("surface-card flex cursor-pointer items-center gap-3 p-4 transition-all", activeId === m.id && "ring-2 ring-primary/40")}>
               <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-[10px] font-bold uppercase text-primary">
@@ -69,10 +71,10 @@ function MarketsPage() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">{m.name}</p>
                 <p className="truncate text-xs text-muted-foreground">{m.street}, {m.city} · {m.distance} km</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">Antippen für Markt & Prospekt</p>
+                <p className={cn("mt-1 text-[11px]", refreshing ? "text-primary" : "text-muted-foreground")}>{refreshing ? "Angebote werden aktualisiert …" : "Antippen für Markt & Prospekt"}</p>
               </div>
               <button onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }} aria-label={chosen ? "Aus Vergleich entfernen" : "Zum Vergleich hinzufügen"} className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors", chosen ? "bg-deal/12 text-deal" : "bg-secondary text-muted-foreground")}>
-                <Heart className={cn("h-5 w-5", chosen && "fill-current")} />
+                {refreshing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Heart className={cn("h-5 w-5", chosen && "fill-current")} />}
               </button>
             </article>
           );
@@ -80,6 +82,30 @@ function MarketsPage() {
 
         {marketsInRadius.length === 0 && <p className="surface-card p-5 text-center text-sm text-muted-foreground">Keine Märkte im Umkreis. Erhöhe den Radius.</p>}
       </section>
+
+      {favoriteMarketsOutsideRadius.length > 0 && (
+        <section className="mt-7 space-y-3 px-5 pb-4">
+          <div>
+            <h2 className="text-base font-semibold">Weitere Favoriten</h2>
+            <p className="text-xs text-muted-foreground">Diese Märkte bleiben gespeichert, werden aktuell aber nicht für Angebote oder den Sparplan verwendet.</p>
+          </div>
+          {favoriteMarketsOutsideRadius.map((m) => (
+            <article key={m.id} onClick={() => navigate({ to: "/markt/$id", params: { id: m.id } })} className="surface-card flex cursor-pointer items-center gap-3 p-4 opacity-75">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-[10px] font-bold uppercase text-primary">
+                {(m as any).logoUrl ? <img src={(m as any).logoUrl} alt={m.chain} className="h-full w-full object-contain p-1" /> : m.chain.slice(0, 4)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">{m.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{m.street}, {m.city} · {m.distance} km</p>
+                <p className="mt-1 text-[11px] font-medium text-muted-foreground">Markt aktuell nicht im Suchgebiet</p>
+              </div>
+              <button onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }} aria-label="Favorit entfernen" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-deal/12 text-deal">
+                <Heart className="h-5 w-5 fill-current" />
+              </button>
+            </article>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
