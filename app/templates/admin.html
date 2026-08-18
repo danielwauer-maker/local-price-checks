@@ -15,7 +15,7 @@
     @media(max-width:1000px){.grid{grid-template-columns:repeat(3,1fr)}.row,.product-form{grid-template-columns:1fr 1fr}.wrap{padding:12px}}@media(max-width:650px){.grid{grid-template-columns:1fr 1fr}.row,.product-form{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
-<body><div class="wrap">
+<body>{% set admin_section = tab %}{% include 'admin_sidebar.html' %}<div class="wrap">
   <div class="top"><div><div class="brand">LocalPrices Admin</div><div class="sub">Katalog, Märkte, Lernregeln, Medien und Collector-Status</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
   <nav class="nav">
     {% for key,label in [('dashboard','Dashboard'),('products','Artikel'),('quality','Datenqualität'),('stores','Märkte'),('categories','Kategorien'),('media','Bilder & Logos'),('settings','Einstellungen'),('audit','Audit-Log')] %}

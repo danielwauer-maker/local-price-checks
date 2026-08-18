@@ -10,7 +10,7 @@
     @media(max-width:1100px){.filters,.review,.missing-form,.offer-head{grid-template-columns:1fr 1fr}.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.wrap{padding:12px}.filters,.review,.missing-form,.offer-head{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
-<body><div class="wrap">
+<body>{% set admin_section = 'prospect_audit' %}{% include 'admin_sidebar.html' %}<div class="wrap">
   <div class="top"><div><div class="brand">Prospekt-Abgleich</div><div class="sub">Automatisch archiviertes Händler-PDF oder offizielles Web-Abbild gegen erkannte Angebote prüfen und Lernsignale speichern.</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
   <nav class="nav"><a href="/admin">Admin</a><a href="/admin?tab=products">Artikelbestand</a><a href="/admin/collector">Collector</a><a href="/admin/quality/provenance">Provenance-QA</a><a class="active" href="/admin/articles/prospect-audit">Prospekt-Abgleich</a></nav>
 

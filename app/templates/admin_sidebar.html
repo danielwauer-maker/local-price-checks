@@ -1,0 +1,44 @@
+<style>
+  .admin-sidebar{position:fixed;inset:0 auto 0 0;width:250px;background:#10261c;color:#eef7f1;padding:20px 14px;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,.08);font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif}
+  .admin-sidebar *{box-sizing:border-box}.admin-sidebar a{text-decoration:none}.admin-sidebar-brand{font-size:20px;font-weight:850;padding:4px 8px 16px}.admin-sidebar-brand small{display:block;font-size:11px;font-weight:600;color:#9fbaaa;margin-top:3px}.admin-sidebar-group{margin:12px 0 4px;padding:0 8px;color:#84a391;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}.admin-sidebar-nav{display:flex;flex-direction:column;gap:3px}.admin-sidebar-nav a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;color:#dbe9e1;font-weight:650}.admin-sidebar-nav a:hover{background:rgba(255,255,255,.07)}.admin-sidebar-nav a.active{background:#eaf4e7;color:#0d5839}.admin-sidebar-icon{width:20px;text-align:center;opacity:.9}.admin-sidebar-foot{margin-top:18px;padding:12px 8px 0;border-top:1px solid rgba(255,255,255,.09);color:#8fa99a;font-size:11px}
+  .admin-sidebar + .wrap{margin-left:250px!important;max-width:none!important;padding:22px 24px!important}.admin-sidebar + .wrap .nav{display:none!important}
+  @media(max-width:850px){.admin-sidebar{position:relative;width:auto;inset:auto;padding:10px 10px 8px}.admin-sidebar-brand{padding:3px 6px 8px;font-size:17px}.admin-sidebar-brand small,.admin-sidebar-group,.admin-sidebar-foot{display:none}.admin-sidebar-nav{display:flex;flex-direction:row;gap:5px;overflow-x:auto;padding-bottom:2px}.admin-sidebar-nav a{white-space:nowrap;padding:8px 10px;background:rgba(255,255,255,.04)}.admin-sidebar-icon{display:none}.admin-sidebar + .wrap{margin-left:0!important;padding:12px!important}}
+</style>
+<aside class="admin-sidebar">
+  <div class="admin-sidebar-brand">LocalPrices Admin<small>Zentrale Verwaltung</small></div>
+
+  <div class="admin-sidebar-group">Übersicht</div>
+  <nav class="admin-sidebar-nav">
+    <a href="/admin?tab=dashboard" class="{% if admin_section=='dashboard' %}active{% endif %}"><span class="admin-sidebar-icon">⌂</span>Dashboard</a>
+    <a href="/datenstatus" class="{% if admin_section=='data_status' %}active{% endif %}"><span class="admin-sidebar-icon">◉</span>Datenstatus</a>
+  </nav>
+
+  <div class="admin-sidebar-group">Katalog</div>
+  <nav class="admin-sidebar-nav">
+    <a href="/admin?tab=products" class="{% if admin_section=='products' %}active{% endif %}"><span class="admin-sidebar-icon">▦</span>Artikel</a>
+    <a href="/admin?tab=quality" class="{% if admin_section=='quality' %}active{% endif %}"><span class="admin-sidebar-icon">✓</span>Datenqualität</a>
+    <a href="/admin?tab=categories" class="{% if admin_section=='categories' %}active{% endif %}"><span class="admin-sidebar-icon">≡</span>Kategorien</a>
+    <a href="/admin?tab=media" class="{% if admin_section=='media' %}active{% endif %}"><span class="admin-sidebar-icon">▧</span>Bilder & Logos</a>
+  </nav>
+
+  <div class="admin-sidebar-group">Märkte & Sammlung</div>
+  <nav class="admin-sidebar-nav">
+    <a href="/admin?tab=stores" class="{% if admin_section=='stores' %}active{% endif %}"><span class="admin-sidebar-icon">⌖</span>Märkte</a>
+    <a href="/admin/coverage" class="{% if admin_section=='coverage' %}active{% endif %}"><span class="admin-sidebar-icon">◎</span>Regionen & Onboarding</a>
+    <a href="/admin/collector" class="{% if admin_section=='collector' %}active{% endif %}"><span class="admin-sidebar-icon">↻</span>Collector & Support</a>
+  </nav>
+
+  <div class="admin-sidebar-group">Prospekt-QA</div>
+  <nav class="admin-sidebar-nav">
+    <a href="/admin/articles/prospect-audit" class="{% if admin_section=='prospect_audit' %}active{% endif %}"><span class="admin-sidebar-icon">▤</span>Prospekt-Abgleich</a>
+    <a href="/admin/quality/provenance" class="{% if admin_section=='provenance' %}active{% endif %}"><span class="admin-sidebar-icon">⛓</span>Provenance-QA</a>
+  </nav>
+
+  <div class="admin-sidebar-group">System</div>
+  <nav class="admin-sidebar-nav">
+    <a href="/admin?tab=settings" class="{% if admin_section=='settings' %}active{% endif %}"><span class="admin-sidebar-icon">⚙</span>Einstellungen</a>
+    <a href="/admin?tab=audit" class="{% if admin_section=='audit' %}active{% endif %}"><span class="admin-sidebar-icon">☷</span>Audit-Log</a>
+    <a href="/admin/support-export.zip"><span class="admin-sidebar-icon">⇩</span>Support-Export ZIP</a>
+  </nav>
+  <div class="admin-sidebar-foot">Angemeldet: {{ actor or 'Admin' }}</div>
+</aside>
