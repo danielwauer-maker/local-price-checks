@@ -10,6 +10,16 @@ from .models import Store
 from .prospect_models import ProspectArchive
 
 
+REWE_CONSENT_MARKERS = (
+    "optionale cookies und technologien erlauben",
+    "alle erlauben",
+    "nur notwendige erlauben",
+    "mehr optionen",
+    "partner verwenden cookies",
+    "verarbeitung ihrer daten",
+)
+
+
 def _parse_date(value):
     if not value:
         return None
@@ -48,22 +58,103 @@ def _has_archived_prospect(db, store: Store) -> bool:
 
 
 def _clean_snapshot_dom(page) -> None:
-    """Remove scripts and residual consent overlays from already captured HTML."""
+    """Remove scripts and residual consent overlays from already captured HTML.
+
+    REWE's CMP markup does not always expose stable ``cookie``/``consent`` class
+    names. The cleanup therefore combines semantic selectors, visible consent
+    text and fixed/modal geometry. This keeps the archived audit PDF readable
+    without changing the underlying offer content.
+    """
     page.evaluate(
-        """() => {
+        """(markers) => {
           document.querySelectorAll('script').forEach(el => el.remove());
-          const words = ['cookie','cookies','datenschutz','privacy','consent','zustimmen','ablehnen','verarbeitung ihrer daten'];
-          const candidates = new Set();
-          for (const sel of ['[role="dialog"]','[aria-modal="true"]','[class*="cookie" i]','[id*="cookie" i]','[class*="consent" i]','[id*="consent" i]']) {
-            try { document.querySelectorAll(sel).forEach(el => candidates.add(el)); } catch (_) {}
+
+          const normalise = value => (value || '')
+            .toLowerCase()
+            .replace(/\\s+/g, ' ')
+            .trim();
+          const hasConsentText = el => {
+            const text = normalise(el && (el.innerText || el.textContent || ''));
+            return markers.some(marker => text.includes(marker));
+          };
+
+          const removable = new Set();
+          const selectors = [
+            '[role="dialog"]',
+            '[aria-modal="true"]',
+            '[class*="cookie" i]',
+            '[id*="cookie" i]',
+            '[class*="consent" i]',
+            '[id*="consent" i]',
+            '[class*="privacy" i]',
+            '[id*="privacy" i]',
+            '[class*="cmp" i]',
+            '[id*="cmp" i]',
+            '[class*="overlay" i]',
+            '[class*="modal" i]'
+          ];
+
+          for (const sel of selectors) {
+            try {
+              document.querySelectorAll(sel).forEach(el => {
+                if (hasConsentText(el)) removable.add(el);
+              });
+            } catch (_) {}
           }
-          for (const el of candidates) {
-            const text=(el.innerText||el.textContent||'').toLowerCase();
-            if (words.some(w => text.includes(w))) el.remove();
+
+          // REWE's current CMP can use generic generated class names. Find the
+          // element containing the visible consent headline and climb to the
+          // nearest modal/fixed ancestor rather than depending on class names.
+          const all = Array.from(document.body ? document.body.querySelectorAll('*') : []);
+          for (const el of all) {
+            if (!hasConsentText(el)) continue;
+
+            let node = el;
+            let best = null;
+            for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
+              const style = getComputedStyle(node);
+              const rect = node.getBoundingClientRect();
+              const modalLike =
+                node.getAttribute('role') === 'dialog' ||
+                node.getAttribute('aria-modal') === 'true' ||
+                style.position === 'fixed' ||
+                style.position === 'sticky' ||
+                (rect.width >= window.innerWidth * 0.55 && rect.height >= window.innerHeight * 0.35);
+              if (modalLike) best = node;
+              if (style.position === 'fixed' && rect.width >= window.innerWidth * 0.8) break;
+            }
+            removable.add(best || el);
           }
-          document.documentElement.style.overflow='auto';
-          if (document.body) document.body.style.overflow='auto';
-        }"""
+
+          // Remove fixed/sticky consent backdrops that may be siblings of the
+          // dialog and therefore do not themselves contain readable text.
+          const removedRects = [];
+          for (const el of removable) {
+            if (!el || !el.isConnected) continue;
+            const rect = el.getBoundingClientRect();
+            removedRects.push({left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom});
+            el.remove();
+          }
+
+          for (const el of Array.from(document.body ? document.body.children : [])) {
+            const style = getComputedStyle(el);
+            if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+            const rect = el.getBoundingClientRect();
+            const coversViewport = rect.width >= window.innerWidth * 0.85 && rect.height >= window.innerHeight * 0.55;
+            const highLayer = Number.parseInt(style.zIndex || '0', 10) >= 100;
+            if (coversViewport && highLayer && !hasConsentText(el)) {
+              const overlapsRemoved = removedRects.some(r => !(rect.right < r.left || rect.left > r.right || rect.bottom < r.top || rect.top > r.bottom));
+              if (overlapsRemoved) el.remove();
+            }
+          }
+
+          document.documentElement.style.overflow = 'auto';
+          if (document.body) {
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+          }
+        }""",
+        list(REWE_CONSENT_MARKERS),
     )
 
 

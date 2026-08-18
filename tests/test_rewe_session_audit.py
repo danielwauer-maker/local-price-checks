@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.models import Store
 from app.prospect_models import ProspectArchive
-from app.rewe_audit_runtime import _has_archived_prospect, _validity_from_result
+from app.rewe_audit_runtime import REWE_CONSENT_MARKERS, _has_archived_prospect, _validity_from_result
 
 
 def test_rewe_session_audit_uses_offer_validity():
@@ -26,6 +26,11 @@ def test_rewe_session_audit_accepts_iso_dates():
     valid_from, valid_to = _validity_from_result(result)
     assert valid_from.isoformat() == "2026-08-17"
     assert valid_to.isoformat() == "2026-08-22"
+
+
+def test_rewe_current_cookie_banner_headline_is_a_cleanup_marker():
+    assert "optionale cookies und technologien erlauben" in REWE_CONSENT_MARKERS
+    assert "nur notwendige erlauben" in REWE_CONSENT_MARKERS
 
 
 def test_rewe_session_fallback_checks_immutable_archive_not_current_pointer():
