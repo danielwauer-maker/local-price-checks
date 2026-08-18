@@ -96,6 +96,23 @@ class Offer(Base):
     product: Mapped[MasterProduct] = relationship()
 
 
+class OfferPriceReference(Base):
+    """Optional UVP/regular-price comparison for a concrete offer.
+
+    Kept in an additive table so existing SQLite installations do not require an
+    ALTER TABLE migration. A row is created only when the retailer actually
+    supplies a reference price above the offer price.
+    """
+    __tablename__ = "offer_price_references"
+    __table_args__ = (UniqueConstraint("offer_id", name="uq_offer_price_reference"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id"), index=True)
+    reference_price: Mapped[float] = mapped_column(Float)
+    reference_type: Mapped[str] = mapped_column(String(30), default="regular")
+    discount_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    offer: Mapped[Offer] = relationship()
+
+
 class CollectionRun(Base):
     __tablename__ = "collection_runs"
     id: Mapped[int] = mapped_column(primary_key=True)
