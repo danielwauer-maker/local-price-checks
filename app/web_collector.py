@@ -139,14 +139,111 @@ def _archive_downloaded_prospect(db: Session, store: Store, *, source_url: str, 
     save_prospect(db, store, period_key="current", source_url=source_url, pdf_url=pdf_url, pdf_path=pdf_path)
 
 
-def _ensure_audit_artifact(db: Session, store: Store) -> None:
-    """Best-effort automatic prospect/archive creation after any successful scrape."""
+def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str) -> str:
+    """Archive the official market page after a successful structured scrape.
+
+    This fallback is only used when the structured collector has already proven
+    that the market-specific official page contains usable offers. It therefore
+    avoids a second, stricter content heuristic rejecting the very same source.
+    """
+    if not settings.collector_browser_enabled:
+        raise CollectionError("Browser-Collector ist deaktiviert")
+    if not source_url.startswith("https://"):
+        raise CollectionError("Audit-Snapshot benötigt eine HTTPS-Händlerquelle")
+    if store.external_id and store.external_id not in source_url:
+        raise CollectionError("Händlerquelle enthält nicht die erwartete Markt-ID")
     try:
-        from .prospects import ensure_store_prospects
-        ensure_store_prospects(db, store)
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        raise CollectionError("Playwright ist für Audit-Snapshot nicht verfügbar") from exc
+
+    target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / "current"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"structured-web-{store.id}-{app_today().isoformat()}.pdf"
+    timeout = max(10, settings.collector_timeout_seconds) * 1000
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1100})
+        try:
+            page.goto(source_url, wait_until="domcontentloaded", timeout=timeout)
+            for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen"):
+                try:
+                    button = page.get_by_role("button", name=label, exact=False)
+                    if button.count():
+                        button.first.click(timeout=1500)
+                        break
+                except Exception:
+                    pass
+            last_height = 0
+            for _ in range(18):
+                height = int(page.evaluate("document.body.scrollHeight"))
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(450)
+                if height == last_height:
+                    break
+                last_height = height
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(300)
+            body = page.locator("body").inner_text(timeout=3000).lower()
+            blocked_markers = ("access denied", "waf challenge", "zeig uns, dass du ein mensch bist", "bot protection")
+            if any(marker in body for marker in blocked_markers):
+                raise CollectionError("Offizielle Händlerseite wurde durch Bot-/WAF-Schutz blockiert")
+            payload = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
+            )
+            if not payload.startswith(b"%PDF"):
+                raise CollectionError("Browser konnte kein Audit-PDF erzeugen")
+            target.write_bytes(payload)
+        finally:
+            browser.close()
+
+    from .prospects import save_prospect
+    row = save_prospect(
+        db,
+        store,
+        period_key="current",
+        source_url=source_url,
+        pdf_url=f"web-snapshot://{source_url}",
+        pdf_path=target,
+    )
+    return f"audit=web-snapshot:{row.page_count} Seiten"
+
+
+def _ensure_audit_artifact(db: Session, store: Store, source_url: str) -> str:
+    """Create an audit artifact and always return a visible diagnostic."""
+    primary_error: Exception | None = None
+    try:
+        from .prospects import discover_and_store_prospect
+        row = discover_and_store_prospect(db, store, "current")
+        if row:
+            kind = "web-snapshot" if row.pdf_url.startswith("web-snapshot://") else "original-pdf"
+            return f"audit={kind}:{row.page_count} Seiten"
+        primary_error = CollectionError("keine automatische Prospektquelle gefunden")
+    except Exception as exc:
+        primary_error = exc
+        db.rollback()
+
+    if store.retailer == "REWE":
+        try:
+            return _trusted_structured_web_snapshot(db, store, source_url)
+        except Exception as fallback_error:
+            db.rollback()
+            return f"audit_fehler={type(fallback_error).__name__}: {fallback_error}; vorher={type(primary_error).__name__}: {primary_error}"
+
+    return f"audit_fehler={type(primary_error).__name__}: {primary_error}"
+
+
+def _append_run_diagnostic(db: Session, run, text: str) -> None:
+    if not text:
+        return
+    try:
+        run.message = f"{run.message} | {text}" if run.message else text
+        db.add(run)
+        db.commit()
     except Exception:
-        # Collection success must not be downgraded solely because a retailer's
-        # prospect viewer is temporarily unavailable. Admin UI exposes the gap.
         db.rollback()
 
 
@@ -182,7 +279,8 @@ def collect_store_from_web(db: Session, store_name: str):
     try:
         result, summary, run = collect_structured_for_store(db, store.name)
         if summary.imported:
-            _ensure_audit_artifact(db, store)
+            audit_status = _ensure_audit_artifact(db, store, source.url)
+            _append_run_diagnostic(db, run, audit_status)
             return result, summary, run
     except Exception as exc:
         structured_error = exc
