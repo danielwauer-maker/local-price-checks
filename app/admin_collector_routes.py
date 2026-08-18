@@ -6,6 +6,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from pathlib import Path
 
+from .admin_learning import audit
+from .admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from .admin_routes import _admin
 from .config import settings
 from .db import get_db
@@ -77,6 +79,65 @@ def collector_release_store(
     db.commit()
     state = "released" if store.benchmark_verified else "qa"
     return RedirectResponse(f"/admin/collector?collected={store.id}:{state}", status_code=303)
+
+
+@router.post("/admin/collector/stores/{store_id}/reset-offers")
+def collector_reset_store_offers(
+    store_id: int,
+    confirm: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if not store:
+        raise HTTPException(404, "Markt nicht gefunden")
+    if confirm != "RESET":
+        raise HTTPException(400, "Bestätigung für Angebotsreset fehlt")
+    result = reset_store_offers(db, store)
+    audit(db, "store_offer_reset", "store", store.id, str(result), actor)
+    db.commit()
+    return RedirectResponse(
+        f"/admin/collector?collected=reset-angebote:{store.id}:{result['offers']}angebote:{result['orphan_products']}artikel",
+        status_code=303,
+    )
+
+
+@router.post("/admin/collector/stores/{store_id}/reset-qa")
+def collector_reset_store_qa(
+    store_id: int,
+    confirm: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if not store:
+        raise HTTPException(404, "Markt nicht gefunden")
+    if confirm != "RESET QA":
+        raise HTTPException(400, "Bestätigung für QA-Reset fehlt")
+    result = reset_store_qa(db, store)
+    audit(db, "store_qa_reset", "store", store.id, str(result), actor)
+    db.commit()
+    return RedirectResponse(
+        f"/admin/collector?collected=reset-qa:{store.id}:{result['offers']}angebote:{result['prospects']}prospekte",
+        status_code=303,
+    )
+
+
+@router.post("/admin/collector/reset-all-test-data")
+def collector_reset_all_test_data(
+    confirm: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    if confirm.strip() != "ALLES ZURUECKSETZEN":
+        raise HTTPException(400, "Bitte exakt ALLES ZURUECKSETZEN eingeben")
+    result = reset_all_test_data(db)
+    audit(db, "all_test_data_reset", "system", "catalog", str(result), actor)
+    db.commit()
+    return RedirectResponse(
+        f"/admin/collector?collected=gesamtreset:{result['offers']}angebote:{result['products']}artikel:{result['archives']}prospekte",
+        status_code=303,
+    )
 
 
 @router.post("/admin/collector/stores/{store_id}/prospect-upload")
