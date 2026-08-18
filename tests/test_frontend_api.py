@@ -71,10 +71,12 @@ def test_verified_store_toggle_api(monkeypatch):
     payload = response.json()
     assert payload["selected"] is True
     assert str(store_id) in payload["selectedIds"]
+    assert str(store_id) in payload["activeSelectedIds"]
+    assert payload["released"] is True
     assert payload["refreshStarted"] is True
 
 
-def test_unverified_active_store_can_be_favorited_and_refreshed(monkeypatch):
+def test_unverified_active_store_is_persistent_favorite_but_not_released_for_offers(monkeypatch):
     user_id, _ = _seed()
     db = SessionLocal()
     user = db.get(UserProfile, user_id)
@@ -107,12 +109,18 @@ def test_unverified_active_store_can_be_favorited_and_refreshed(monkeypatch):
     payload = response.json()
     assert payload["selected"] is True
     assert str(store_id) in payload["selectedIds"]
-    assert str(store_id) in payload["activeSelectedIds"]
+    assert str(store_id) not in payload["activeSelectedIds"]
+    assert payload["released"] is False
+    assert payload["prices"] == []
     assert payload["refreshStarted"] is True
 
     bootstrap = client.get("/api/bootstrap").json()
     assert str(store_id) in bootstrap["selected"]
-    assert str(store_id) in bootstrap["activeSelected"]
+    assert str(store_id) not in bootstrap["activeSelected"]
+
+    store_offers = client.get(f"/api/stores/{store_id}/offers").json()
+    assert store_offers["status"] == "qa_pending"
+    assert store_offers["prices"] == []
 
     db = SessionLocal()
     db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).delete()
