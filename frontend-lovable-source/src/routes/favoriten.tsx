@@ -12,7 +12,7 @@ function FavoritesPage() {
   const activeIds = useActiveMarketIds();
   const { productFavorites, toggleProductFavorite, basket, toggleBasket } = useStore();
   const favorites = PRODUCTS.filter((p) => productFavorites.includes(p.id));
-  const offers = currentOffers(activeIds);
+  const offers = activeIds.length > 0 ? currentOffers(activeIds) : [];
 
   return (
     <div>
