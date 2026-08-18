@@ -7,7 +7,7 @@ import unicodedata
 
 from sqlalchemy.orm import Session
 
-from .models import MasterProduct, Offer, Store
+from .models import MasterProduct, Offer, OfferPriceReference, Store
 from .prospect_models import OfferProvenance, ProspectArchive
 from .admin_learning import resolve_product_alias
 from .category_classifier import ensure_auto_category
@@ -85,13 +85,7 @@ def _prospect_page(source_text: str | None) -> int | None:
     return page if page > 0 else None
 
 
-def _matching_archive(
-    db: Session,
-    store: Store,
-    valid_from,
-    valid_to,
-    source_url: str | None,
-) -> ProspectArchive | None:
+def _matching_archive(db: Session, store: Store, valid_from, valid_to, source_url: str | None) -> ProspectArchive | None:
     query = db.query(ProspectArchive).filter(ProspectArchive.store_id == store.id)
     if valid_from:
         query = query.filter(ProspectArchive.valid_from == valid_from)
@@ -107,50 +101,62 @@ def _matching_archive(
     return candidates[0]
 
 
-def _save_offer_provenance(
-    db: Session,
-    *,
-    offer: Offer,
-    store: Store,
-    row: CollectedOffer,
-    valid_from,
-    valid_to,
-) -> None:
+def _save_offer_provenance(db: Session, *, offer: Offer, store: Store, row: CollectedOffer, valid_from, valid_to) -> None:
     page = _prospect_page(row.source_text)
     if page is None:
         return
     archive = _matching_archive(db, store, valid_from, valid_to, row.source_url or None)
     if archive is None or page > archive.page_count:
         return
-    existing = (
-        db.query(OfferProvenance)
-        .filter(
-            OfferProvenance.offer_id == offer.id,
-            OfferProvenance.prospect_archive_id == archive.id,
-            OfferProvenance.prospect_page == page,
-        )
-        .first()
-    )
+    existing = db.query(OfferProvenance).filter(
+        OfferProvenance.offer_id == offer.id,
+        OfferProvenance.prospect_archive_id == archive.id,
+        OfferProvenance.prospect_page == page,
+    ).first()
     if existing:
         existing.source_text = row.source_text or existing.source_text
         existing.source_url = row.source_url or existing.source_url
         existing.collected_at = datetime.utcnow()
         return
-    db.add(
-        OfferProvenance(
+    db.add(OfferProvenance(
+        offer_id=offer.id,
+        prospect_archive_id=archive.id,
+        prospect_page=page,
+        source_text=row.source_text or None,
+        source_url=row.source_url or None,
+        collected_at=datetime.utcnow(),
+    ))
+
+
+def _save_price_reference(db: Session, offer: Offer, row: CollectedOffer) -> None:
+    try:
+        reference = float(row.regular_price) if row.regular_price is not None else None
+    except (TypeError, ValueError):
+        reference = None
+    if reference is None or reference <= float(offer.price):
+        existing = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
+        if existing:
+            db.delete(existing)
+        return
+    raw = (row.source_text or "").lower()
+    reference_type = "uvp" if any(token in raw for token in ('"uvp"', 'recommendedretailprice', '"rrp"')) else "regular"
+    discount = round((1.0 - float(offer.price) / reference) * 100.0, 1)
+    existing = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
+    if existing:
+        existing.reference_price = reference
+        existing.reference_type = reference_type
+        existing.discount_percent = discount
+    else:
+        db.add(OfferPriceReference(
             offer_id=offer.id,
-            prospect_archive_id=archive.id,
-            prospect_page=page,
-            source_text=row.source_text or None,
-            source_url=row.source_url or None,
-            collected_at=datetime.utcnow(),
-        )
-    )
+            reference_price=reference,
+            reference_type=reference_type,
+            discount_percent=discount,
+        ))
 
 
 def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
-
     for row in rows:
         local, _reason = classify_offer(row.source_text, row.source_url)
         if not row.local_store_offer or not local:
@@ -172,10 +178,6 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
 
         name = clean_product_name(row.product_name)
         key = normalize_master_key(name, row.quantity, row.unit)
-
-        # Admin corrections are learned as aliases. This check intentionally
-        # happens before normal master-product lookup so a corrected product is
-        # reused on future scraper/import runs instead of creating a duplicate.
         product = resolve_product_alias(db, key)
         if not product:
             product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
@@ -184,14 +186,26 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
             db.add(product)
             db.flush()
             counts["created_products"] += 1
-
-        # Automatically categorize unclassified products. Manual admin
-        # categories are protected by category_locked and are never overwritten.
         ensure_auto_category(db, product)
 
-        offer = db.query(Offer).filter(Offer.store_id == store.id, Offer.master_product_id == product.id, Offer.valid_from == valid_from, Offer.price == float(row.price)).first()
+        offer = db.query(Offer).filter(
+            Offer.store_id == store.id,
+            Offer.master_product_id == product.id,
+            Offer.valid_from == valid_from,
+            Offer.price == float(row.price),
+        ).first()
         if not offer:
-            offer = Offer(store_id=store.id, master_product_id=product.id, price=float(row.price), unit_price=row.unit_price, unit_price_unit=row.unit_price_unit, valid_from=valid_from, valid_to=valid_to, local_store_offer=True, source_url=row.source_url or None)
+            offer = Offer(
+                store_id=store.id,
+                master_product_id=product.id,
+                price=float(row.price),
+                unit_price=row.unit_price,
+                unit_price_unit=row.unit_price_unit,
+                valid_from=valid_from,
+                valid_to=valid_to,
+                local_store_offer=True,
+                source_url=row.source_url or None,
+            )
             db.add(offer)
             db.flush()
             counts["created_offers"] += 1
@@ -204,14 +218,8 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
                 offer.source_url = row.source_url
             counts["updated_offers"] += 1
 
-        _save_offer_provenance(
-            db,
-            offer=offer,
-            store=store,
-            row=row,
-            valid_from=valid_from,
-            valid_to=valid_to,
-        )
+        _save_price_reference(db, offer, row)
+        _save_offer_provenance(db, offer=offer, store=store, row=row, valid_from=valid_from, valid_to=valid_to)
         counts["imported"] += 1
 
     db.commit()
