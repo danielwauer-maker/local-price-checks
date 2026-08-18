@@ -23,13 +23,17 @@ def test_gtin_check_digit():
     assert not valid_gtin("4006381333932")
 
 
-def test_unverified_store_cannot_enter_mvp_selection():
+def test_unverified_active_store_can_enter_user_selection():
     db = SessionLocal()
     user = db.query(UserProfile).first()
     edeka = db.query(Store).filter(Store.retailer == "EDEKA").first()
-    db.add(FavoriteStore(user_id=user.id, store_id=edeka.id))
-    db.commit()
-    assert edeka.id not in selected_store_ids(db, user)
+    existing = db.query(FavoriteStore).filter_by(user_id=user.id, store_id=edeka.id).first()
+    if not existing:
+        db.add(FavoriteStore(user_id=user.id, store_id=edeka.id))
+        db.commit()
+    assert edeka.active is True
+    assert edeka.benchmark_verified is False
+    assert edeka.id in selected_store_ids(db, user)
     db.close()
 
 
