@@ -67,12 +67,15 @@ def collect_structured_for_store(
     store_name: str,
     source_override: RetailSource | None = None,
     collector_fn: Callable | None = None,
+    before_import_fn: Callable | None = None,
 ):
     """Fetch one official source with the structured collector and import it.
 
     ``source_override`` and ``collector_fn`` support retailers such as Lidl
     where the public landing page first has to be resolved to the concrete
-    current leaflet and rendered with Chromium.
+    current leaflet and rendered with Chromium. ``before_import_fn`` may archive
+    an immutable audit artifact before rows are imported, so exact page
+    provenance can be persisted during ``import_collected_offers``.
     """
     store, registered_source = _store_and_source(db, store_name)
     source = source_override or registered_source
@@ -82,6 +85,8 @@ def collect_structured_for_store(
     run = _start_run(db, store, source.key + ":web")
     try:
         result = (collector_fn or collect_one)(source)
+        if before_import_fn:
+            before_import_fn(result)
         rows = result.get("offers") or []
         summary = import_collected_offers(db, rows)
         status = "success" if summary.imported else "no_offers"
