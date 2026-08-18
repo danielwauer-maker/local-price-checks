@@ -206,18 +206,31 @@ def manifest_reference_pages(payloads: list[dict]) -> dict[str, int]:
     return {ident: next(iter(pages)) for ident, pages in found.items() if len(pages) == 1}
 
 
+def _path_parts(path: str) -> list[str]:
+    return [part for part in re.sub(r"\[\d+\]", "", path.lower()).split(".") if part]
+
+
+def _is_page_scoped_path(path: str) -> bool:
+    return any(part in _PAGE_COLLECTION_KEYS for part in _path_parts(path))
+
+
 def _is_global_catalog_path(path: str) -> bool:
-    parts = re.sub(r"\[\d+\]", "", path.lower()).split(".")
-    return any(part in _GLOBAL_PRODUCT_COLLECTIONS for part in parts)
+    parts = _path_parts(path)
+    if not any(part in _GLOBAL_PRODUCT_COLLECTIONS for part in parts):
+        return False
+    # Lidl uses products[] both for the global lidl.de catalogue and inside
+    # concrete leaflet pages. A products[] node below pages[] is page-scoped
+    # leaflet data and must remain eligible for local offer extraction.
+    return not any(part in _PAGE_COLLECTION_KEYS for part in parts)
 
 
 def _is_local_container_path(path: str) -> bool:
-    parts = re.sub(r"\[\d+\]", "", path.lower()).split(".")
+    parts = _path_parts(path)
     return any(part in _LOCAL_CONTAINER_WORDS for part in parts[-3:])
 
 
 def _is_local_container_root_path(path: str) -> bool:
-    parts = re.sub(r"\[\d+\]", "", path.lower()).split(".")
+    parts = _path_parts(path)
     return bool(parts) and parts[-1] in _LOCAL_CONTAINER_WORDS
 
 
