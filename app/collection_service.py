@@ -9,7 +9,7 @@ from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
 from .engine_v140.collectors import collect_one
 from .engine_v140.prospect_pdf_engine import PdfParseResult, parse_pdf_file
-from .engine_v140.source_registry import source_for_store_record
+from .engine_v140.source_registry import RetailSource, source_for_store_record
 
 
 class CollectionError(RuntimeError):
@@ -61,9 +61,22 @@ def _summary_message(summary: ImportSummary) -> str:
     )
 
 
-def collect_structured_for_store(db: Session, store_name: str):
-    """Fetch the official source using the full 1.4 web collector and import it."""
-    store, source = _store_and_source(db, store_name)
+def collect_structured_for_store(
+    db: Session,
+    store_name: str,
+    source_override: RetailSource | None = None,
+):
+    """Fetch one official source with the structured collector and import it.
+
+    ``source_override`` is used for retailers such as Lidl where the public
+    landing page first has to be resolved to the concrete current leaflet URL.
+    The override must still belong to the same retailer and market.
+    """
+    store, registered_source = _store_and_source(db, store_name)
+    source = source_override or registered_source
+    if source.retailer != store.retailer or source.store_name != store.name:
+        raise CollectionError(f"Aufgelöste Quelle passt nicht zum Markt: {store.name}")
+
     run = _start_run(db, store, source.key + ":web")
     try:
         result = collect_one(source)
