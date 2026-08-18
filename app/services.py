@@ -19,7 +19,7 @@ def current_user(db: Session) -> UserProfile:
 
 
 def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return persistent market favorites independent of search area or benchmark state."""
+    """Return persistent market favorites independent of search area or QA release."""
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
     ids: list[int] = []
     for row in rows:
@@ -31,7 +31,12 @@ def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
 
 
 def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return active favorite markets inside the current search radius."""
+    """Return favorite markets that are released for offers and inside the search radius.
+
+    benchmark_verified is the user-facing release gate only. Unverified markets
+    may still be collected and audited in the admin workflow, but their data is
+    never used for offers or shopping-plan calculations.
+    """
     favorite_ids = set(favorite_store_ids(db, user))
     if not favorite_ids:
         return []
@@ -40,7 +45,7 @@ def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
     ids: list[int] = []
     for row in rows:
         store = row.store
-        if store.id not in favorite_ids:
+        if store.id not in favorite_ids or not store.benchmark_verified:
             continue
         if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
             if haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) > user.radius_km:
