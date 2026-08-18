@@ -27,31 +27,17 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
     prospects = {}
     next_prospects = {}
     for store in stores:
-        run = (
-            db.query(CollectionRun)
-            .filter(CollectionRun.store_id == store.id)
-            .order_by(CollectionRun.started_at.desc())
-            .first()
-        )
+        run = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).order_by(CollectionRun.started_at.desc()).first()
         latest[store.id] = run
         prospects[store.id] = current_prospect(db, store, "current")
         next_prospects[store.id] = current_prospect(db, store, "next")
     recent = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).limit(30).all()
-    return templates.TemplateResponse(
-        "admin_collector.html",
-        {
-            "request": request,
-            "actor": actor,
-            "stores": stores,
-            "latest": latest,
-            "prospects": prospects,
-            "next_prospects": next_prospects,
-            "recent": recent,
-            "collected": collected,
-            "scheduler_enabled": settings.scheduler_enabled,
-            "manual_collection_enabled": settings.manual_collection_enabled,
-        },
-    )
+    return templates.TemplateResponse("admin_collector.html", {
+        "request": request, "actor": actor, "stores": stores, "latest": latest,
+        "prospects": prospects, "next_prospects": next_prospects, "recent": recent,
+        "collected": collected, "scheduler_enabled": settings.scheduler_enabled,
+        "manual_collection_enabled": settings.manual_collection_enabled,
+    })
 
 
 @router.post("/admin/collector/run-all")
@@ -66,14 +52,31 @@ def collector_run_store(store_id: int, db: Session = Depends(get_db), actor: str
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
-    if not store.active or not store.benchmark_verified:
-        raise HTTPException(400, "Nur aktive, verifizierte Märkte können automatisch gesammelt werden")
+    if not store.active:
+        raise HTTPException(400, "Inaktive Märkte können nicht gesammelt werden")
     try:
         _rows, summary, run = collect_store_from_web(db, store.name)
-        result = f"{run.status}:{summary.imported}"
+        mode = "live" if store.benchmark_verified else "qa"
+        result = f"{mode}:{run.status}:{summary.imported}"
     except Exception as exc:
         result = f"failed:{type(exc).__name__}"
     return RedirectResponse(f"/admin/collector?collected={store.id}:{result}", status_code=303)
+
+
+@router.post("/admin/collector/stores/{store_id}/release")
+def collector_release_store(
+    store_id: int,
+    released: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if not store:
+        raise HTTPException(404, "Markt nicht gefunden")
+    store.benchmark_verified = released == "1"
+    db.commit()
+    state = "released" if store.benchmark_verified else "qa"
+    return RedirectResponse(f"/admin/collector?collected={store.id}:{state}", status_code=303)
 
 
 @router.post("/admin/collector/stores/{store_id}/prospect-upload")
@@ -91,26 +94,13 @@ async def upload_store_prospect(
         raise HTTPException(400, "Ungültiger Zeitraum")
     payload = await file.read()
     try:
-        row = save_manual_prospect(
-            db,
-            store,
-            period_key=period,
-            filename=file.filename or "prospekt.pdf",
-            payload=payload,
-        )
+        row = save_manual_prospect(db, store, period_key=period, filename=file.filename or "prospekt.pdf", payload=payload)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return RedirectResponse(
-        f"/admin/collector?collected=prospekt:{store.id}:{period}:{row.page_count}seiten",
-        status_code=303,
-    )
+    return RedirectResponse(f"/admin/collector?collected=prospekt:{store.id}:{period}:{row.page_count}seiten", status_code=303)
 
 
 @router.get("/admin/support-export.zip")
 def support_export(db: Session = Depends(get_db), actor: str = Depends(_admin)):
     filename, payload = build_support_export(db)
-    return Response(
-        content=payload,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return Response(content=payload, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{filename}"'})

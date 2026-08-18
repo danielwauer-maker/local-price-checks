@@ -280,10 +280,11 @@ def store_offers(store_id: int, db: Session = Depends(get_db)):
     if not store or not store.active:
         raise HTTPException(status_code=404, detail="Market not available")
     latest = _latest_collection(db, store_id)
+    released = bool(store.benchmark_verified)
     return {
         "marketId": str(store_id),
-        "status": latest.status if latest else "never_collected",
-        "prices": [_price_payload(o) for o in _current_offer_rows(db, [store_id])],
+        "status": (latest.status if latest else "never_collected") if released else "qa_pending",
+        "prices": [_price_payload(o) for o in _current_offer_rows(db, [store_id])] if released else [],
     }
 
 
@@ -303,7 +304,8 @@ def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session =
         selected = True
     db.commit()
 
-    prices = [_price_payload(o) for o in _current_offer_rows(db, [store_id])] if selected else []
+    released = bool(store.benchmark_verified)
+    prices = [_price_payload(o) for o in _current_offer_rows(db, [store_id])] if selected and released else []
     if selected and not _market_data_fresh(db, store_id):
         background_tasks.add_task(_collect_store_background, store_id)
         refresh_started = True
@@ -314,6 +316,7 @@ def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session =
         "activeSelectedIds": [str(x) for x in selected_store_ids(db, user)],
         "prices": prices,
         "refreshStarted": refresh_started,
+        "released": released,
     }
 
 
