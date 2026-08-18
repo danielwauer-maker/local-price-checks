@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import hashlib
 import re
 
 from pypdf import PdfReader
@@ -11,7 +12,7 @@ from .clock import app_today
 from .config import settings
 from .engine_v140.source_registry import source_for_store
 from .models import Store
-from .prospect_models import Prospect
+from .prospect_models import Prospect, ProspectArchive
 from .web_collector import discover_official_pdf, download_pdf, netto_weekly_prospect_url
 
 
@@ -86,6 +87,48 @@ def _is_invalid_rewe_pdf(path: str | Path) -> bool:
     return any(marker in text for marker in _REWE_INVALID_MARKERS)
 
 
+def archive_prospect_pdf(
+    db: Session,
+    store: Store,
+    *,
+    period_key: str,
+    source_url: str,
+    pdf_url: str,
+    pdf_path: Path,
+    page_count: int,
+    valid_from: date | None,
+    valid_to: date | None,
+) -> ProspectArchive:
+    payload = pdf_path.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    archive = (
+        db.query(ProspectArchive)
+        .filter(ProspectArchive.store_id == store.id, ProspectArchive.pdf_sha256 == digest)
+        .first()
+    )
+    if archive:
+        return archive
+
+    archive = ProspectArchive(
+        store_id=store.id,
+        retailer=store.retailer,
+        period_key=period_key,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        source_url=source_url,
+        pdf_url=pdf_url,
+        original_filename=pdf_path.name,
+        local_path=str(pdf_path),
+        page_count=page_count,
+        pdf_sha256=digest,
+        pdf_bytes=payload,
+        fetched_at=datetime.utcnow(),
+    )
+    db.add(archive)
+    db.flush()
+    return archive
+
+
 def save_prospect(
     db: Session,
     store: Store,
@@ -108,6 +151,20 @@ def save_prospect(
     inferred_from, inferred_to = _infer_validity(pdf_path, period_key)
     valid_from = valid_from or inferred_from
     valid_to = valid_to or inferred_to
+
+    # Preserve every distinct original PDF in the database before rotating the
+    # current/next UI pointer. This makes historical price checks reproducible.
+    archive_prospect_pdf(
+        db,
+        store,
+        period_key=period_key,
+        source_url=source_url,
+        pdf_url=pdf_url,
+        pdf_path=pdf_path,
+        page_count=page_count,
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
 
     row = db.query(Prospect).filter(Prospect.store_id == store.id, Prospect.period_key == period_key).first()
     if not row:
