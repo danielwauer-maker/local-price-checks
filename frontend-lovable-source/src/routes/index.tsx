@@ -32,6 +32,7 @@ function Index() {
   }, []);
 
   const favoriteOffers = useMemo(() => {
+    if (activeIds.length === 0) return [];
     const raw = currentOffers(activeIds).filter((o) => productFavorites.includes(o.product.id));
     return groupIdenticalOffers(raw);
   }, [activeIds, productFavorites]);
