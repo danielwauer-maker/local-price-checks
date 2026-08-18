@@ -1,14 +1,60 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
+from .client_context import get_client_key
+from .client_models import UserClient
 from .clock import app_today
 from .geo import haversine_km
 from .models import FavoriteStore, Offer, UserProfile
 
 
+def _unclaimed_profile(db: Session) -> UserProfile | None:
+    """Return an existing profile that is not yet attached to any browser client.
+
+    This keeps backwards compatibility with the pre-multi-user LocalPrices data
+    model and with server-side/tests that seed a UserProfile before issuing the
+    first HTTP request. A newly seen browser claims that existing profile before
+    a fresh anonymous profile is created.
+    """
+    claimed_ids = db.query(UserClient.user_id)
+    return (
+        db.query(UserProfile)
+        .filter(~UserProfile.id.in_(claimed_ids))
+        .order_by(UserProfile.id)
+        .first()
+    )
+
+
 def current_user(db: Session) -> UserProfile:
+    """Return the persistent profile for the current browser/PWA client.
+
+    Before multi-client tracking existed, LocalPrices used the first UserProfile
+    for every request. A newly seen browser first claims an existing unclaimed
+    profile so legacy location/favorites and seeded test data remain intact.
+    Later browsers receive isolated profiles.
+    """
+    client_key = get_client_key()
+    if client_key:
+        client = db.query(UserClient).filter(UserClient.client_key == client_key).first()
+        if client:
+            client.last_seen_at = datetime.utcnow()
+            db.flush()
+            return client.user
+
+        user = _unclaimed_profile(db)
+        if user is None:
+            user = UserProfile(display_name=f"Nutzer {db.query(UserProfile).count() + 1}", radius_km=15)
+            db.add(user)
+            db.flush()
+        client = UserClient(client_key=client_key, user_id=user.id, first_seen_at=datetime.utcnow(), last_seen_at=datetime.utcnow())
+        db.add(client)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    # Startup/background jobs do not have an HTTP client identity.
     user = db.query(UserProfile).first()
     if not user:
         user = UserProfile(display_name="Local User", radius_km=15)

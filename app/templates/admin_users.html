@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nutzer · LocalPrices Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1600px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:800}.small,.sub{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.stat{padding:16px}.stat b{display:block;font-size:25px}.card{padding:16px;margin-top:16px}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.installed{background:#def5e6;color:#086b43}.browser{background:#ecefec;color:#66756d}.fav{display:inline-block;margin:2px 4px 2px 0;padding:3px 7px;border-radius:999px;background:#eef3ef}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:550px){.grid{grid-template-columns:1fr}.wrap{padding:12px}.top{flex-direction:column}}
+  </style>
+</head>
+<body>
+{% include 'admin_sidebar.html' %}
+<div class="wrap">
+  <div class="top"><div><div class="brand">Nutzer</div><div class="sub">Anonyme App-/Browser-Clients mit eigenem Profil, Standort und Markt-Favoriten.</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+
+  <div class="grid">
+    <div class="stat"><span class="small">Erfasste Nutzer</span><b>{{ stats.users }}</b></div>
+    <div class="stat"><span class="small">PWA installiert</span><b>{{ stats.installed }}</b></div>
+    <div class="stat"><span class="small">Aktiv letzte 7 Tage</span><b>{{ stats.active7 }}</b></div>
+    <div class="stat"><span class="small">Mit Standort</span><b>{{ stats.with_location }}</b></div>
+  </div>
+
+  <div class="card"><div class="scroll"><table>
+    <tr><th>Name</th><th>PLZ / Ort</th><th>Standort</th><th>Radius</th><th>Favorisierte Märkte</th><th>App</th><th>Plattform</th><th>Erstmals gesehen</th><th>Zuletzt aktiv</th></tr>
+    {% for row in rows %}{% set u=row.user %}{% set c=row.client %}<tr>
+      <td><b>{{ u.display_name or ('Nutzer #' ~ u.id) }}</b><br><span class="small">Profil #{{ u.id }}</span></td>
+      <td>{{ u.postal_code or '–' }}{% if u.city %} {{ u.city }}{% endif %}</td>
+      <td>{% if u.latitude is not none and u.longitude is not none %}{{ '%.5f'|format(u.latitude) }}, {{ '%.5f'|format(u.longitude) }}{% else %}–{% endif %}</td>
+      <td>{{ u.radius_km }} km</td>
+      <td>{% for s in row.favorites %}<span class="fav">{{ s.retailer }} · {{ s.name }}</span>{% else %}<span class="small">keine</span>{% endfor %}</td>
+      <td><span class="pill {{ 'installed' if c.pwa_installed else 'browser' }}">{{ 'PWA installiert' if c.pwa_installed else 'Browser/Web' }}</span>{% if c.pwa_last_seen_at %}<br><span class="small">PWA zuletzt: {{ c.pwa_last_seen_at }}</span>{% endif %}</td>
+      <td>{{ c.platform or '–' }}</td>
+      <td>{{ c.first_seen_at }}</td>
+      <td>{{ c.last_seen_at }}</td>
+    </tr>{% else %}<tr><td colspan="9">Noch keine getrennten App-/Browser-Clients erfasst. Nach dem nächsten App-Aufruf erscheinen sie hier automatisch.</td></tr>{% endfor %}
+  </table></div></div>
+  <p class="small">Hinweis: „PWA installiert“ wird gesetzt, sobald die App im Standalone-Modus gestartet wird oder der Browser ein Installationsereignis meldet. Dadurch werden auch iPhone-Home-Screen-Installationen erfasst.</p>
+</div></body></html>
