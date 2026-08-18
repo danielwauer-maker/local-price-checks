@@ -139,6 +139,17 @@ def _archive_downloaded_prospect(db: Session, store: Store, *, source_url: str, 
     save_prospect(db, store, period_key="current", source_url=source_url, pdf_url=pdf_url, pdf_path=pdf_path)
 
 
+def _ensure_audit_artifact(db: Session, store: Store) -> None:
+    """Best-effort automatic prospect/archive creation after any successful scrape."""
+    try:
+        from .prospects import ensure_store_prospects
+        ensure_store_prospects(db, store)
+    except Exception:
+        # Collection success must not be downgraded solely because a retailer's
+        # prospect viewer is temporarily unavailable. Admin UI exposes the gap.
+        db.rollback()
+
+
 def _collect_netto_from_official_prospect(db: Session, store: Store, source):
     prospect_url = netto_weekly_prospect_url(store)
     pdf_url = discover_official_pdf(prospect_url)
@@ -152,7 +163,8 @@ def collect_store_from_web(db: Session, store_name: str):
 
     Collection and release are deliberately separate. benchmark_verified is
     only the user-facing release gate. Active unverified markets may be scraped
-    so admins can audit them before release.
+    so admins can audit them before release. Every successful collection also
+    attempts to archive the matching prospect automatically.
     """
     store = db.query(Store).filter(Store.name == store_name).first()
     if not store:
@@ -170,6 +182,7 @@ def collect_store_from_web(db: Session, store_name: str):
     try:
         result, summary, run = collect_structured_for_store(db, store.name)
         if summary.imported:
+            _ensure_audit_artifact(db, store)
             return result, summary, run
     except Exception as exc:
         structured_error = exc
