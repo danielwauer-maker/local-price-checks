@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 from app.admin_collector_routes import _write_lidl_debug_failure
@@ -7,7 +8,7 @@ from app.admin_collector_routes import _write_lidl_debug_failure
 def test_lidl_debug_failure_always_writes_json(monkeypatch, tmp_path):
     import app.admin_collector_routes as routes
 
-    monkeypatch.setattr(routes.settings, "data_dir", tmp_path, raising=False)
+    monkeypatch.setattr(routes, "settings", replace(routes.settings, data_dir=tmp_path))
     store = SimpleNamespace(id=8, name="Lidl Puderbach", retailer="Lidl", external_id=None)
 
     _write_lidl_debug_failure(store, RuntimeError("diagnostic boom"))
