@@ -36,6 +36,22 @@ ISSUE_TYPES = [
 ]
 
 
+def _optional_positive_int(value: str | int | None) -> int | None:
+    """Treat empty form/query values as unset instead of raising FastAPI 422."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = int(cleaned)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _redirect(store_id: int | None, archive_id: int | None, page: int | None = None) -> RedirectResponse:
     params = []
     if store_id:
@@ -51,14 +67,18 @@ def _redirect(store_id: int | None, archive_id: int | None, page: int | None = N
 @router.get("/admin/articles/prospect-audit")
 def prospect_article_audit(
     request: Request,
-    store_id: int | None = None,
-    archive_id: int | None = None,
-    page: int | None = None,
+    store_id: str | None = None,
+    archive_id: str | None = None,
+    page: str | None = None,
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
+    store_id_value = _optional_positive_int(store_id)
+    archive_id_value = _optional_positive_int(archive_id)
+    page_value = _optional_positive_int(page)
+
     stores = db.query(Store).filter(Store.active.is_(True)).order_by(Store.retailer, Store.city, Store.name).all()
-    selected_store = db.get(Store, store_id) if store_id else (stores[0] if stores else None)
+    selected_store = db.get(Store, store_id_value) if store_id_value else (stores[0] if stores else None)
 
     archives = []
     current = None
@@ -79,8 +99,8 @@ def prospect_article_audit(
         current = db.query(Prospect).filter_by(store_id=selected_store.id, period_key="current", active=True).first()
         nxt = db.query(Prospect).filter_by(store_id=selected_store.id, period_key="next", active=True).first()
 
-        if archive_id:
-            selected_archive = db.get(ProspectArchive, archive_id)
+        if archive_id_value:
+            selected_archive = db.get(ProspectArchive, archive_id_value)
             if selected_archive and selected_archive.store_id != selected_store.id:
                 selected_archive = None
         if not selected_archive and archives:
@@ -92,8 +112,8 @@ def prospect_article_audit(
             .filter(OfferProvenance.prospect_archive_id == selected_archive.id)
             .order_by(OfferProvenance.prospect_page.asc(), OfferProvenance.id.asc())
         )
-        if page:
-            query = query.filter(OfferProvenance.prospect_page == page)
+        if page_value:
+            query = query.filter(OfferProvenance.prospect_page == page_value)
         rows = query.all()
         provenance_ids = [row.id for row in rows]
         if provenance_ids:
@@ -104,8 +124,8 @@ def prospect_article_audit(
                 .all()
             }
         missing_q = db.query(ProspectMissingItem).filter(ProspectMissingItem.prospect_archive_id == selected_archive.id)
-        if page:
-            missing_q = missing_q.filter(ProspectMissingItem.prospect_page == page)
+        if page_value:
+            missing_q = missing_q.filter(ProspectMissingItem.prospect_page == page_value)
         missing_items = missing_q.order_by(ProspectMissingItem.prospect_page, ProspectMissingItem.id).all()
         page_numbers = sorted({row.prospect_page for row in rows} | {row.prospect_page for row in missing_items})
         if selected_archive.page_count:
@@ -131,7 +151,7 @@ def prospect_article_audit(
             "missing_items": missing_items,
             "issue_types": ISSUE_TYPES,
             "page_numbers": page_numbers,
-            "page": page,
+            "page": page_value,
             "stats": {
                 "total": len(rows),
                 "reviewed": reviewed,
