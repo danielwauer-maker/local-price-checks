@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Prospekt-Herkunft · LocalPrices Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--danger:#a23a2d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1500px;margin:auto;padding:20px}a{color:inherit;text-decoration:none}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px}.brand{font-size:24px;font-weight:800}.small{font-size:12px;color:var(--muted)}.btn{display:inline-block;border-radius:10px;padding:9px 12px;font-weight:700;background:var(--green);color:#fff}.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.stat{padding:16px}.stat b{display:block;font-size:25px}.card{padding:16px;margin-top:16px}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px}.released{background:#def5e6;color:#086b43}.review{background:#fff0cf;color:var(--warn)}.blocked{background:#f7e6e3;color:var(--danger)}.no_offers{background:#ecefec;color:var(--muted)}code{font-size:11px}.notice{padding:12px 14px;border-radius:12px;background:#fff4d8;border:1px solid #f0d28a;margin-bottom:16px}@media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.wrap{padding:12px}}@media(max-width:550px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="top"><div><div class="brand">Prospekt-Herkunft & Seitenabdeckung</div><div class="small">Ziel: mindestens {{ report.target_pct }} % der PDF-Angebote mit belegter Original-PDF und exakter Prospektseite.</div></div><div><a class="btn" href="/admin?tab=quality">Zur Datenqualität</a></div></div>
+  <div class="notice"><b>Prüflogik:</b> Pro archiviertem Prospekt werden alle Angebote desselben Markts mit exakt gleichem Gültigkeitszeitraum betrachtet. Gezählt wird, wie viele davon mit der archivierten Original-PDF und einer gültigen Seite 1…Seitenzahl verknüpft sind.</div>
+  <div class="grid">
+    <div class="stat"><span class="small">Archivierte Prospekte</span><b>{{ report.counts.prospects }}</b></div>
+    <div class="stat"><span class="small">Angebote gesamt</span><b>{{ report.counts.offers_total }}</b></div>
+    <div class="stat"><span class="small">Mit Original-PDF</span><b>{{ report.pdf_coverage_pct }} %</b></div>
+    <div class="stat"><span class="small">Mit exakter Seite</span><b>{{ report.page_coverage_pct }} %</b></div>
+    <div class="stat"><span class="small">Ohne Seite</span><b>{{ report.counts.offers_without_page }}</b></div>
+  </div>
+  <div class="card"><div class="scroll"><table>
+    <tr><th>Markt</th><th>Prospekt</th><th>Seiten</th><th>Angebote</th><th>PDF belegt</th><th>Seite belegt</th><th>Fehlend</th><th>Ungültige Seite</th><th>Status</th><th>Hash</th></tr>
+    {% for row in report.rows %}
+    <tr>
+      <td><b>{{ row.retailer }}</b><br>{{ row.store_name }}</td>
+      <td>{{ row.valid_from or '–' }} – {{ row.valid_to or '–' }}<br><span class="small">{{ row.period_key }}</span></td>
+      <td>{{ row.page_count }}</td>
+      <td>{{ row.offers_total }}</td>
+      <td>{{ row.offers_with_pdf }} / {{ row.offers_total }}<br><b>{{ row.pdf_coverage_pct }} %</b></td>
+      <td>{{ row.offers_with_page }} / {{ row.offers_total }}<br><b>{{ row.page_coverage_pct }} %</b></td>
+      <td>{{ row.offers_without_page }}</td>
+      <td>{{ row.invalid_page_links }}</td>
+      <td><span class="pill {{ row.status }}">{% if row.status=='released' %}≥99 %{% elif row.status=='review' %}95–98,99 %{% elif row.status=='blocked' %}&lt;95 % / Fehler{% else %}keine Angebote{% endif %}</span></td>
+      <td><code>{{ row.pdf_sha256[:12] }}…</code></td>
+    </tr>
+    {% else %}<tr><td colspan="10">Noch keine archivierten Originalprospekte vorhanden.</td></tr>{% endfor %}
+  </table></div></div>
+  <p class="small">Maschinenlesbar: <a href="/admin/quality/provenance.json">/admin/quality/provenance.json</a> · Angemeldet: {{ actor }}</p>
+</div></body></html>
