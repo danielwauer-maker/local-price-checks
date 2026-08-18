@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from pypdf import PdfWriter
@@ -46,7 +47,7 @@ def test_rewe_uses_automatic_official_web_snapshot_when_no_pdf(monkeypatch, tmp_
 
     monkeypatch.setattr(prospects, "_render_official_web_snapshot", fake_snapshot)
     monkeypatch.setattr(prospects, "_link_web_snapshot_provenance", lambda *_args, **_kwargs: 0)
-    monkeypatch.setattr(prospects.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(prospects, "settings", replace(prospects.settings, data_dir=tmp_path))
 
     row = prospects.discover_and_store_prospect(db, store, "current")
     assert row is not None
