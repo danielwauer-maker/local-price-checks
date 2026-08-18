@@ -26,8 +26,17 @@ _PAGE_KEYS = ("pageNumber", "pageNo", "page_no", "page", "pageIndex", "page_inde
 _TOTAL_KEYS = ("totalPages", "pageCount", "pagesCount", "numberOfPages", "totalPageCount")
 _PAGE_COLLECTION_KEYS = {
     "pages", "leafletpages", "publicationpages", "catalogpages", "brochurepages",
-    "flyerpages", "documentpages",
+    "flyerpages", "documentpages", "pageitems", "pagecontents", "sheets", "spreads",
 }
+_PRODUCT_ID_KEYS = (
+    "productId", "product_id", "articleId", "article_id", "sku", "skuId", "sku_id",
+    "gtin", "ean", "productCode", "articleNumber", "itemId", "item_id",
+)
+_PRODUCT_REF_KEYS = (
+    "productId", "product_id", "articleId", "article_id", "sku", "skuId", "sku_id",
+    "gtin", "ean", "productCode", "articleNumber", "itemId", "item_id",
+    "productRef", "product_ref", "articleRef", "article_ref", "targetId", "target_id",
+)
 _CONTEXT_WORDS = ("product", "produkt", "article", "artikel", "offer", "angebot", "hotspot", "promotion", "annotation")
 
 
@@ -89,6 +98,29 @@ def _number_from(obj: dict, keys: tuple[str, ...]) -> int | None:
     return None
 
 
+def _identifier(value: Any) -> str | None:
+    value = _scalar(value)
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value).strip()
+    if not text or len(text) > 160:
+        return None
+    return text.lower()
+
+
+def _identifiers_from(obj: dict, keys: tuple[str, ...]) -> set[str]:
+    result: set[str] = set()
+    for key in keys:
+        if key not in obj:
+            continue
+        ident = _identifier(obj.get(key))
+        if ident:
+            result.add(ident)
+    return result
+
+
 def _path_collection_name(path: str) -> str:
     tail = path.rsplit(".", 1)[-1] if path else ""
     tail = re.sub(r"\[\d+\]$", "", tail)
@@ -96,12 +128,7 @@ def _path_collection_name(path: str) -> str:
 
 
 def _walk(value: Any, *, path: str = "", inherited_page: int | None = None):
-    """Walk manifest data while preserving the real logical page context.
-
-    Global Lidl manifests frequently expose ``pages: [...]`` where product/hotspot
-    objects do not carry their own pageNumber. The page-list index is therefore
-    authoritative and must override a request-time page hint such as page 1.
-    """
+    """Walk manifest data while preserving the real logical page context."""
     if isinstance(value, dict):
         page = _number_from(value, _PAGE_KEYS) or inherited_page
         yield value, path, page
@@ -131,7 +158,7 @@ def manifest_page_count(payloads: list[dict]) -> int | None:
     candidates: list[int] = []
     for payload in payloads:
         data = payload.get("data")
-        for obj, path, _page in _walk(data):
+        for obj, _path, _page in _walk(data):
             total = _number_from(obj, _TOTAL_KEYS)
             if total:
                 candidates.append(total)
@@ -140,6 +167,31 @@ def manifest_page_count(payloads: list[dict]) -> int | None:
                     if 4 <= len(value) <= 500:
                         candidates.append(len(value))
     return max(candidates) if candidates else None
+
+
+def manifest_reference_pages(payloads: list[dict]) -> dict[str, int]:
+    """Map Lidl product/article identifiers found inside page-scoped hotspot trees.
+
+    Lidl currently ships a global product catalogue (name/price/productId) separately
+    from page/hotspot metadata. Product catalogue rows have no pageNumber themselves.
+    The hotspot tree, however, repeats the product/article identifier below the real
+    logical page. This two-pass map lets us join both payload families without falling
+    back to the request-time page hint.
+    """
+    found: dict[str, set[int]] = {}
+    for payload in payloads:
+        data = payload.get("data")
+        for obj, path, page_no in _walk(data, inherited_page=None):
+            if page_no is None:
+                continue
+            context = path.lower() + " " + " ".join(str(k).lower() for k in obj.keys())
+            if not any(word in context for word in _CONTEXT_WORDS):
+                continue
+            for ident in _identifiers_from(obj, _PRODUCT_REF_KEYS):
+                found.setdefault(ident, set()).add(page_no)
+    # A product normally appears on one leaflet page. Keep only unambiguous mappings;
+    # ambiguous references are safer left unresolved than assigned to the wrong page.
+    return {ident: next(iter(pages)) for ident, pages in found.items() if len(pages) == 1}
 
 
 def _candidate_offer(obj: dict, path: str, page_hint: int | None):
@@ -180,18 +232,21 @@ def _candidate_offer(obj: dict, path: str, page_hint: int | None):
 def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: str) -> list[CollectedOffer]:
     out: list[CollectedOffer] = []
     seen: set[tuple] = set()
+    reference_pages = manifest_reference_pages(payloads)
     for payload in payloads:
         data = payload.get("data")
         payload_page = payload.get("page_hint")
-        # A global page collection contains its own authoritative page context.
-        # Never seed that tree with the request-time page hint (usually page 1),
-        # otherwise every child lacking pageNumber gets falsely assigned to page 1.
         seed_page = None if _has_page_collection(data) else payload_page
         for obj, path, inherited_page in _walk(data, inherited_page=seed_page):
             candidate = _candidate_offer(obj, path, inherited_page)
             if not candidate:
                 continue
             name, price, regular, page_no, _price_key = candidate
+            if page_no is None:
+                ids = _identifiers_from(obj, _PRODUCT_ID_KEYS)
+                pages = {reference_pages[i] for i in ids if i in reference_pages}
+                if len(pages) == 1:
+                    page_no = next(iter(pages))
             if page_no is None:
                 continue
             q, unit = size(name)
