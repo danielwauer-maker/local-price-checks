@@ -45,8 +45,6 @@ SOURCES = [
         "https://www.aldi-sued.de/angebote", "prospect_discovery", "regional_chain",
         "Offizielle ALDI-SÜD-Angebotsseite; Filialregion wird als Zielkontext gespeichert.", True, False,
     ),
-    # Paused for MVP: retained so work is not lost, but benchmark_verified on Store
-    # keeps them out of user comparisons until their own >=99% gate is reached.
     RetailSource(
         "edeka_puderbach", "EDEKA", "EDEKA Fellenzer",
         "https://edeka-fellenzer.de/angebote/", "store_page", "store_specific",
@@ -65,11 +63,39 @@ SOURCE_BY_STORE = {source.store_name: source for source in SOURCES}
 RETAILER_FALLBACK_URLS = {
     "Lidl": "https://www.lidl.de/c/online-prospekte/s10005610",
     "ALDI SÜD": "https://www.aldi-sued.de/angebote",
-    "EDEKA": "https://edeka-fellenzer.de/angebote/",
+    "EDEKA": "https://www.edeka.de/",
     "Netto Marken-Discount": "https://wochenprospekt.netto-online.de/",
     "REWE": "https://www.rewe.de/angebote/",
+    "PENNY": "https://www.penny.de/angebote",
 }
 
 
 def source_for_store(store_name: str) -> RetailSource | None:
     return SOURCE_BY_STORE.get(store_name)
+
+
+def source_for_store_record(store) -> RetailSource | None:
+    """Return a source for a concrete Store, including newly discovered markets.
+
+    Hand-tuned registry entries still win. New markets can use a store-specific
+    URL discovered from OSM/admin data or a retailer-level fallback. They start
+    unverified and therefore remain QA-only until explicitly released.
+    """
+    known = SOURCE_BY_STORE.get(store.name)
+    if known:
+        return known
+    url = (store.source_url or "").strip() or RETAILER_FALLBACK_URLS.get(store.retailer)
+    if not url:
+        return None
+    store_specific = bool((store.source_url or "").strip())
+    return RetailSource(
+        key=f"auto_{store.retailer.lower().replace(' ', '_').replace('-', '_')}_{store.id}",
+        retailer=store.retailer,
+        store_name=store.name,
+        url=url,
+        mode="store_page" if store_specific else "prospect_discovery",
+        locality="store_specific" if store_specific else "regional_chain",
+        notes="Automatisch aus Markt-Onboarding erzeugte Quelle.",
+        supports_products=True,
+        store_specific=store_specific,
+    )
