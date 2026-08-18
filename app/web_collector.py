@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import date
 import hashlib
 import html as html_lib
 import re
@@ -14,6 +16,7 @@ from .clock import app_today
 from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
+from .engine_v140.lidl_live import collect_lidl_leaflet, lidl_store_page_for, resolve_lidl_leaflet
 from .engine_v140.source_registry import source_for_store_record
 
 PDF_RE = re.compile(r"\.pdf(?:$|[?#])", re.I)
@@ -134,20 +137,44 @@ def netto_weekly_prospect_url(store: Store) -> str:
     return f"https://wochenprospekt.netto-online.de/hz{week:02d}_kess/?storeid={store.external_id}"
 
 
-def _archive_downloaded_prospect(db: Session, store: Store, *, source_url: str, pdf_url: str, pdf_path: Path) -> None:
+def _archive_downloaded_prospect(
+    db: Session,
+    store: Store,
+    *,
+    source_url: str,
+    pdf_url: str,
+    pdf_path: Path,
+    valid_from: date | None = None,
+    valid_to: date | None = None,
+) -> None:
     from .prospects import save_prospect
-    save_prospect(db, store, period_key="current", source_url=source_url, pdf_url=pdf_url, pdf_path=pdf_path)
+    save_prospect(
+        db,
+        store,
+        period_key="current",
+        source_url=source_url,
+        pdf_url=pdf_url,
+        pdf_path=pdf_path,
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
 
 
-def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str) -> str:
-    """Archive the official market page after a successful structured scrape.
+def _trusted_structured_web_snapshot(
+    db: Session,
+    store: Store,
+    source_url: str,
+    *,
+    valid_from: date | None = None,
+    valid_to: date | None = None,
+) -> str:
+    """Archive an official retailer page after it has been selected for QA.
 
-    This fallback is only used when the structured collector has already proven
-    that the market-specific official page contains usable offers. It therefore
-    avoids a second, stricter content heuristic rejecting the very same source.
+    Chromium is installed in the production image, therefore this trusted
+    fallback is allowed even when the optional generic browser-discovery flag is
+    disabled. The resulting file is always labelled ``web-snapshot`` and never
+    presented as an original retailer PDF.
     """
-    if not settings.collector_browser_enabled:
-        raise CollectionError("Browser-Collector ist deaktiviert")
     if not source_url.startswith("https://"):
         raise CollectionError("Audit-Snapshot benötigt eine HTTPS-Händlerquelle")
     if store.external_id and store.external_id not in source_url:
@@ -167,7 +194,7 @@ def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str)
         page = browser.new_page(viewport={"width": 1440, "height": 1100})
         try:
             page.goto(source_url, wait_until="domcontentloaded", timeout=timeout)
-            for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen"):
+            for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen", "Alle Cookies akzeptieren"):
                 try:
                     button = page.get_by_role("button", name=label, exact=False)
                     if button.count():
@@ -176,7 +203,7 @@ def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str)
                 except Exception:
                     pass
             last_height = 0
-            for _ in range(18):
+            for _ in range(24):
                 height = int(page.evaluate("document.body.scrollHeight"))
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(450)
@@ -184,7 +211,7 @@ def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str)
                     break
                 last_height = height
             page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(500)
             body = page.locator("body").inner_text(timeout=3000).lower()
             blocked_markers = ("access denied", "waf challenge", "zeig uns, dass du ein mensch bist", "bot protection")
             if any(marker in body for marker in blocked_markers):
@@ -208,6 +235,8 @@ def _trusted_structured_web_snapshot(db: Session, store: Store, source_url: str)
         source_url=source_url,
         pdf_url=f"web-snapshot://{source_url}",
         pdf_path=target,
+        valid_from=valid_from,
+        valid_to=valid_to,
     )
     return f"audit=web-snapshot:{row.page_count} Seiten"
 
@@ -255,6 +284,77 @@ def _collect_netto_from_official_prospect(db: Session, store: Store, source):
     return collect_pdf_for_store(db, store.name, pdf_path)
 
 
+def _archive_lidl_leaflet(db: Session, store: Store, leaflet) -> str:
+    """Prefer a retailer PDF; otherwise keep the exact official Lidl viewer."""
+    try:
+        pdf_url = discover_official_pdf(leaflet.url)
+        pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / "lidl_puderbach")
+        _archive_downloaded_prospect(
+            db,
+            store,
+            source_url=leaflet.url,
+            pdf_url=pdf_url,
+            pdf_path=pdf_path,
+            valid_from=leaflet.valid_from,
+            valid_to=leaflet.valid_to,
+        )
+        from .prospects import current_prospect
+        row = current_prospect(db, store, "current")
+        return f"audit=original-pdf:{row.page_count if row else '?'} Seiten"
+    except Exception as pdf_error:
+        db.rollback()
+        try:
+            return _trusted_structured_web_snapshot(
+                db,
+                store,
+                leaflet.url,
+                valid_from=leaflet.valid_from,
+                valid_to=leaflet.valid_to,
+            )
+        except Exception as snapshot_error:
+            db.rollback()
+            return (
+                f"audit_fehler={type(snapshot_error).__name__}: {snapshot_error}; "
+                f"pdf={type(pdf_error).__name__}: {pdf_error}"
+            )
+
+
+def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
+    """Resolve and scrape the exact current Lidl action leaflet for the market."""
+    store_page = lidl_store_page_for(store.name)
+    leaflet = resolve_lidl_leaflet(source.url, app_today(), store_page_url=store_page)
+    resolved_source = replace(
+        source,
+        url=leaflet.url,
+        mode="leaflet_viewer",
+        locality="store_specific" if leaflet.store_context_confirmed else "regional_chain",
+        notes=(
+            f"Automatisch aufgelöst: {leaflet.title}; "
+            f"Filialkontext={'bestätigt' if leaflet.store_context_confirmed else 'nicht bestätigt'}"
+        ),
+        store_specific=leaflet.store_context_confirmed,
+    )
+
+    result, summary, run = collect_structured_for_store(
+        db,
+        store.name,
+        source_override=resolved_source,
+        collector_fn=lambda src: collect_lidl_leaflet(
+            src,
+            valid_from=leaflet.valid_from,
+            valid_to=leaflet.valid_to,
+        ),
+    )
+    audit_status = _archive_lidl_leaflet(db, store, leaflet)
+    context_status = "lidl_filiale=bestätigt" if leaflet.store_context_confirmed else "lidl_filiale=nicht_bestaetigt"
+    _append_run_diagnostic(
+        db,
+        run,
+        f"lidl_prospekt={leaflet.valid_from.isoformat()}..{leaflet.valid_to.isoformat()} | {context_status} | {audit_status}",
+    )
+    return result, summary, run
+
+
 def collect_store_from_web(db: Session, store_name: str):
     """Collect an active market for QA or production.
 
@@ -274,6 +374,8 @@ def collect_store_from_web(db: Session, store_name: str):
 
     if store.retailer == "Netto Marken-Discount":
         return _collect_netto_from_official_prospect(db, store, source)
+    if store.retailer == "Lidl":
+        return _collect_lidl_from_official_leaflet(db, store, source)
 
     structured_error = None
     try:
