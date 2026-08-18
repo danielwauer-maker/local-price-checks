@@ -5,50 +5,35 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Collector & Support · LocalPrices Admin</title>
   <style>
-    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#a33b2c}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1600px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:800}.sub,.small{color:var(--muted)}.nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.nav a,.btn{border:1px solid var(--line);border-radius:11px;padding:9px 13px;background:#fff;color:var(--text);text-decoration:none;font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.actions{display:flex;gap:10px;flex-wrap:wrap}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8;margin-top:16px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.bad{background:#fae9e6;color:var(--danger)}.scroll{overflow:auto}.upload{display:grid;grid-template-columns:100px minmax(180px,1fr) auto;gap:6px;min-width:390px}.upload select,.upload input{border:1px solid var(--line);border-radius:9px;padding:7px;background:#fff}.prospect{margin-bottom:6px;white-space:nowrap}@media(max-width:700px){.wrap{padding:12px}.top{flex-direction:column}.upload{grid-template-columns:1fr;min-width:250px}}
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#a33b2c;--warn:#9a5a00}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1600px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:800}.sub,.small{color:var(--muted)}.nav{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}.nav a,.btn{border:1px solid var(--line);border-radius:11px;padding:9px 13px;background:#fff;color:var(--text);text-decoration:none;font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.actions{display:flex;gap:10px;flex-wrap:wrap}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8;margin-top:16px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.bad{background:#fae9e6;color:var(--danger)}.qa{background:#fff0cf;color:var(--warn)}.scroll{overflow:auto}.upload{display:grid;grid-template-columns:100px minmax(180px,1fr) auto;gap:6px;min-width:390px}.upload select,.upload input{border:1px solid var(--line);border-radius:9px;padding:7px;background:#fff}.prospect{margin-bottom:6px;white-space:nowrap}@media(max-width:700px){.wrap{padding:12px}.top{flex-direction:column}.upload{grid-template-columns:1fr;min-width:250px}}
   </style>
 </head>
 <body><div class="wrap">
   <div class="top"><div><div class="brand">Collector & Support</div><div class="sub">Prospekte sammeln, Original-PDFs verwalten, Imports prüfen und Supportdaten exportieren</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
-  <div class="nav"><a href="/admin">← Admin-Dashboard</a><a href="/datenstatus">Datenstatus</a></div>
+  <div class="nav"><a href="/admin">← Admin-Dashboard</a><a href="/admin/coverage">Regionen & Onboarding</a><a href="/admin/articles/prospect-audit">Prospekt-Audit</a><a href="/datenstatus">Datenstatus</a></div>
 
   {% if collected %}<div class="notice">Aktion abgeschlossen: <b>{{ collected }}</b></div>{% endif %}
 
   <div class="card">
     <h2>Betrieb</h2>
-    <div class="actions">
-      <form method="post" action="/admin/collector/run-all"><button class="btn primary">Alle verifizierten Märkte jetzt sammeln</button></form>
-      <a class="btn" href="/admin/support-export.zip">Support-Export ZIP herunterladen</a>
-    </div>
-    <p class="small">Scheduler: {{ 'aktiv' if scheduler_enabled else 'inaktiv' }} · Manuelle Sammlung ENV: {{ 'aktiv' if manual_collection_enabled else 'inaktiv' }}. Admin-Sammlungen sind unabhängig davon geschützt über den Admin-Login verfügbar.</p>
-    <p class="small"><b>Prospekt-PDF:</b> Automatisch erkannte echte Händler-PDFs werden verwendet. Wenn ein Händler – z. B. durch Webschutz – kein direktes PDF liefert, kannst du hier das originale Marktprospekt hinterlegen. Ein gültiger manueller Upload hat Vorrang und wird durch „Aktualisieren“ nicht überschrieben.</p>
+    <div class="actions"><form method="post" action="/admin/collector/run-all"><button class="btn primary">Alle freigegebenen Märkte jetzt sammeln</button></form><a class="btn" href="/admin/support-export.zip">Support-Export ZIP herunterladen</a></div>
+    <p class="small"><b>Neue Logik:</b> Jeder aktive Markt darf im Adminbereich gesammelt werden. Nicht verifizierte Märkte laufen im QA-Modus und bleiben für Nutzerangebote/Sparplan gesperrt. Der Scheduler sammelt weiterhin nur freigegebene Märkte.</p>
+    <p class="small">Scheduler: {{ 'aktiv' if scheduler_enabled else 'inaktiv' }} · Manuelle Sammlung ENV: {{ 'aktiv' if manual_collection_enabled else 'inaktiv' }}.</p>
   </div>
 
   <div class="card"><h2>Märkte & Prospekte</h2><div class="scroll"><table>
     <tr><th>Markt</th><th>Status</th><th>Letzter Lauf</th><th>Empfangen / importiert</th><th>Aktuelles Prospekt</th><th>Original-PDF hinterlegen</th><th>Sammlung</th></tr>
     {% for s in stores %}{% set r=latest.get(s.id) %}{% set p=prospects.get(s.id) %}{% set pn=next_prospects.get(s.id) %}<tr>
       <td><b>{{ s.name }}</b><br><span class="small">{{ s.retailer }} · {{ s.city }} · ID {{ s.external_id or '–' }}</span></td>
-      <td><span class="pill {% if not s.active %}bad{% endif %}">{{ 'aktiv' if s.active else 'inaktiv' }}</span><br><span class="small">verifiziert: {{ 'ja' if s.benchmark_verified else 'nein' }}</span></td>
+      <td><span class="pill {% if not s.active %}bad{% endif %}">{{ 'aktiv' if s.active else 'inaktiv' }}</span><br><span class="pill {% if not s.benchmark_verified %}qa{% endif %}">{{ 'Nutzer freigegeben' if s.benchmark_verified else 'QA / noch nicht freigegeben' }}</span></td>
       <td>{{ r.started_at if r else '–' }}<br>{% if r %}<span class="pill {% if r.status not in ['success'] %}bad{% endif %}">{{ r.status }}</span>{% endif %}</td>
       <td>{{ r.offers_received if r else 0 }} / {{ r.offers_imported if r else 0 }}<br><span class="small">{{ r.message if r and r.message else '' }}</span></td>
-      <td>
-        {% if p %}<div class="prospect"><b>Aktuell:</b> {{ p.page_count }} Seiten · {{ p.valid_from or '?' }}–{{ p.valid_to or '?' }}<br><span class="small">{{ 'manuell' if p.source_url.startswith('admin-upload://') else 'automatisch' }} · {{ p.source_url }}</span></div>{% else %}<div class="prospect small">Aktuell: kein echtes PDF</div>{% endif %}
-        {% if pn %}<div class="prospect"><b>Nächste Woche:</b> {{ pn.page_count }} Seiten · {{ pn.valid_from or '?' }}–{{ pn.valid_to or '?' }}<br><span class="small">{{ 'manuell' if pn.source_url.startswith('admin-upload://') else 'automatisch' }}</span></div>{% endif %}
-      </td>
-      <td>
-        <form class="upload" method="post" action="/admin/collector/stores/{{ s.id }}/prospect-upload" enctype="multipart/form-data">
-          <select name="period"><option value="current">aktuell</option><option value="next">nächste Woche</option></select>
-          <input type="file" name="file" accept="application/pdf,.pdf" required>
-          <button class="btn" type="submit">PDF hinterlegen</button>
-        </form>
-      </td>
-      <td>{% if s.active and s.benchmark_verified %}<form method="post" action="/admin/collector/stores/{{ s.id }}/run"><button class="btn">Jetzt sammeln</button></form>{% else %}<span class="small">nicht freigegeben</span>{% endif %}</td>
+      <td>{% if p %}<div class="prospect"><b>Aktuell:</b> {{ p.page_count }} Seiten · {{ p.valid_from or '?' }}–{{ p.valid_to or '?' }}<br><span class="small">{{ 'manuell' if p.source_url.startswith('admin-upload://') else 'automatisch' }} · {{ p.source_url }}</span></div>{% else %}<div class="prospect small">Aktuell: kein echtes PDF</div>{% endif %}{% if pn %}<div class="prospect"><b>Nächste Woche:</b> {{ pn.page_count }} Seiten · {{ pn.valid_from or '?' }}–{{ pn.valid_to or '?' }}<br><span class="small">{{ 'manuell' if pn.source_url.startswith('admin-upload://') else 'automatisch' }}</span></div>{% endif %}</td>
+      <td><form class="upload" method="post" action="/admin/collector/stores/{{ s.id }}/prospect-upload" enctype="multipart/form-data"><select name="period"><option value="current">aktuell</option><option value="next">nächste Woche</option></select><input type="file" name="file" accept="application/pdf,.pdf" required><button class="btn" type="submit">PDF hinterlegen</button></form></td>
+      <td>{% if s.active %}<form method="post" action="/admin/collector/stores/{{ s.id }}/run"><button class="btn {% if s.benchmark_verified %}primary{% endif %}">{{ 'Jetzt sammeln' if s.benchmark_verified else 'Test-Scrape starten' }}</button></form>{% else %}<span class="small">inaktiv</span>{% endif %}</td>
     </tr>{% endfor %}
   </table></div></div>
 
-  <div class="card"><h2>Letzte 30 Collector-Läufe</h2><div class="scroll"><table>
-    <tr><th>Zeit</th><th>Markt</th><th>Status</th><th>Empfangen</th><th>Importiert</th><th>Diagnose</th></tr>
-    {% for r in recent %}<tr><td>{{ r.started_at }}</td><td>{{ r.store.name if r.store else r.store_id }}</td><td>{{ r.status }}</td><td>{{ r.offers_received }}</td><td>{{ r.offers_imported }}</td><td class="small">{{ r.message or '' }}</td></tr>{% endfor %}
-  </table></div></div>
+  <div class="card"><h2>Letzte 30 Collector-Läufe</h2><div class="scroll"><table><tr><th>Zeit</th><th>Markt</th><th>Status</th><th>Empfangen</th><th>Importiert</th><th>Diagnose</th></tr>{% for r in recent %}<tr><td>{{ r.started_at }}</td><td>{{ r.store.name if r.store else r.store_id }}</td><td>{{ r.status }}</td><td>{{ r.offers_received }}</td><td>{{ r.offers_imported }}</td><td class="small">{{ r.message or '' }}</td></tr>{% endfor %}</table></div></div>
 </div></body></html>
