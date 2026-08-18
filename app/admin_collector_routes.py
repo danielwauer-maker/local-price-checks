@@ -63,6 +63,22 @@ def collector_run_store(store_id: int, db: Session = Depends(get_db), actor: str
     return RedirectResponse(f"/admin/collector?collected={store.id}:{result}", status_code=303)
 
 
+@router.post("/admin/collector/stores/{store_id}/release")
+def collector_release_store(
+    store_id: int,
+    released: str = Form(...),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if not store:
+        raise HTTPException(404, "Markt nicht gefunden")
+    store.benchmark_verified = released == "1"
+    db.commit()
+    state = "released" if store.benchmark_verified else "qa"
+    return RedirectResponse(f"/admin/collector?collected={store.id}:{state}", status_code=303)
+
+
 @router.post("/admin/collector/stores/{store_id}/prospect-upload")
 async def upload_store_prospect(
     store_id: int,
