@@ -132,22 +132,26 @@ def test_lidl_recovers_page_reference_from_hotspot_product_url():
     assert rows[0].source_text.startswith("PDF Seite 1:")
 
 
-def test_lidl_global_shop_catalogue_is_not_a_standalone_offer_source():
+def test_lidl_page_scoped_products_are_leaflet_offer_source():
     payloads = [{"url": "https://viewer.example/page8", "data": {"pages": [{"pageNumber": 8, "products": [{
         "productId": "100409109", "title": "SILVERCREST Küchenmaschine", "price": "49.99",
         "canonicalUrl": "https://www.lidl.de/p/silvercrest-kuechenmaschine/p100409109",
     }]}]}}]
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].product_name == "SILVERCREST Küchenmaschine"
+    assert rows[0].source_text.startswith("PDF Seite 8:")
+    assert rows[0].local_store_offer is True
 
 
-def test_lidl_global_catalogue_variants_do_not_become_standalone_offers():
+def test_lidl_page_scoped_product_variants_are_deduplicated():
     payloads = [{"url": "https://viewer.example/page8", "data": {"pages": [{"pageNumber": 8, "products": [
         {"productId": "1", "title": "SILVERCREST Küchenmaschine", "price": "49.99"},
         {"productId": "2", "title": "SILVERCREST Küchenmaschine digital Pastell", "price": "49.99"},
     ]}]}}]
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].product_name == "SILVERCREST Küchenmaschine"
 
 
 def test_lidl_uvp_is_kept_on_page_scoped_hotspot_offer():
