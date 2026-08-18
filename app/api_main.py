@@ -2,6 +2,7 @@ from .main import app
 from .api_routes import router
 from .admin_routes import router as admin_router
 from .admin_collector_routes import router as admin_collector_router
+from .admin_provenance_routes import router as admin_provenance_router
 from .media_routes import router as media_router
 from .ux_routes import router as ux_router
 from .prospect_routes import router as prospect_router
@@ -12,6 +13,7 @@ from .db import SessionLocal
 app.include_router(router)
 app.include_router(admin_router)
 app.include_router(admin_collector_router)
+app.include_router(admin_provenance_router)
 app.include_router(media_router)
 app.include_router(ux_router)
 app.include_router(prospect_router)

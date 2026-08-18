@@ -8,6 +8,7 @@ import unicodedata
 from sqlalchemy.orm import Session
 
 from .models import MasterProduct, Offer, Store
+from .prospect_models import OfferProvenance, ProspectArchive
 from .admin_learning import resolve_product_alias
 from .category_classifier import ensure_auto_category
 from .engine_v140.collectors import CollectedOffer
@@ -76,6 +77,77 @@ def _find_store(db: Session, row: CollectedOffer) -> Store | None:
     return db.query(Store).filter(Store.retailer == row.retailer, Store.name.ilike(f"%{row.store_name}%")).first()
 
 
+def _prospect_page(source_text: str | None) -> int | None:
+    match = re.search(r"\bPDF\s+Seite\s+(\d+)\b", source_text or "", re.I)
+    if not match:
+        return None
+    page = int(match.group(1))
+    return page if page > 0 else None
+
+
+def _matching_archive(
+    db: Session,
+    store: Store,
+    valid_from,
+    valid_to,
+    source_url: str | None,
+) -> ProspectArchive | None:
+    query = db.query(ProspectArchive).filter(ProspectArchive.store_id == store.id)
+    if valid_from:
+        query = query.filter(ProspectArchive.valid_from == valid_from)
+    if valid_to:
+        query = query.filter(ProspectArchive.valid_to == valid_to)
+    candidates = query.order_by(ProspectArchive.fetched_at.desc()).all()
+    if not candidates:
+        return None
+    if source_url:
+        exact = [x for x in candidates if x.source_url == source_url or x.pdf_url == source_url]
+        if exact:
+            return exact[0]
+    return candidates[0]
+
+
+def _save_offer_provenance(
+    db: Session,
+    *,
+    offer: Offer,
+    store: Store,
+    row: CollectedOffer,
+    valid_from,
+    valid_to,
+) -> None:
+    page = _prospect_page(row.source_text)
+    if page is None:
+        return
+    archive = _matching_archive(db, store, valid_from, valid_to, row.source_url or None)
+    if archive is None or page > archive.page_count:
+        return
+    existing = (
+        db.query(OfferProvenance)
+        .filter(
+            OfferProvenance.offer_id == offer.id,
+            OfferProvenance.prospect_archive_id == archive.id,
+            OfferProvenance.prospect_page == page,
+        )
+        .first()
+    )
+    if existing:
+        existing.source_text = row.source_text or existing.source_text
+        existing.source_url = row.source_url or existing.source_url
+        existing.collected_at = datetime.utcnow()
+        return
+    db.add(
+        OfferProvenance(
+            offer_id=offer.id,
+            prospect_archive_id=archive.id,
+            prospect_page=page,
+            source_text=row.source_text or None,
+            source_url=row.source_url or None,
+            collected_at=datetime.utcnow(),
+        )
+    )
+
+
 def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
 
@@ -121,6 +193,7 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
         if not offer:
             offer = Offer(store_id=store.id, master_product_id=product.id, price=float(row.price), unit_price=row.unit_price, unit_price_unit=row.unit_price_unit, valid_from=valid_from, valid_to=valid_to, local_store_offer=True, source_url=row.source_url or None)
             db.add(offer)
+            db.flush()
             counts["created_offers"] += 1
         else:
             offer.valid_to = valid_to
@@ -130,6 +203,15 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
             if row.source_url:
                 offer.source_url = row.source_url
             counts["updated_offers"] += 1
+
+        _save_offer_provenance(
+            db,
+            offer=offer,
+            store=store,
+            row=row,
+            valid_from=valid_from,
+            valid_to=valid_to,
+        )
         counts["imported"] += 1
 
     db.commit()

@@ -1,9 +1,12 @@
+from datetime import date
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
 from app.extractor_adapter import import_collected_offers, normalize_master_key
 from app.models import MasterProduct, Offer, Store
+from app.prospect_models import OfferProvenance, ProspectArchive
 from app.engine_v140.collectors import CollectedOffer
 
 
@@ -63,6 +66,36 @@ def test_duplicate_offer_is_updated_not_duplicated():
     assert summary.updated_offers == 1
     assert db.query(Offer).count() == 1
     assert db.query(Offer).one().unit_price == 12.97
+
+
+def test_pdf_offer_is_linked_to_archived_prospect_page():
+    db = _db()
+    store = Store(retailer="REWE", name="REWE Test", postal_code="12345", city="Test", address="Test 1", benchmark_verified=True)
+    db.add(store)
+    db.flush()
+    archive = ProspectArchive(
+        store_id=store.id,
+        retailer="REWE",
+        period_key="current",
+        valid_from=date(2026, 8, 17),
+        valid_to=date(2026, 8, 22),
+        source_url="https://www.rewe.de/angebote/test/",
+        pdf_url="https://cdn.example/rewe.pdf",
+        original_filename="rewe.pdf",
+        local_path="/tmp/rewe.pdf",
+        page_count=26,
+        pdf_sha256="a" * 64,
+        pdf_bytes=b"%PDF-test",
+    )
+    db.add(archive)
+    db.commit()
+
+    summary = import_collected_offers(db, [_row(source_text="PDF Seite 7: Prospekt Produktkarte")])
+    assert summary.imported == 1
+    provenance = db.query(OfferProvenance).one()
+    assert provenance.prospect_archive_id == archive.id
+    assert provenance.prospect_page == 7
+    assert provenance.offer_id == db.query(Offer).one().id
 
 
 def test_online_only_offer_is_rejected():

@@ -7,7 +7,7 @@ from pypdf import PdfWriter
 from app.clock import app_today
 from app.db import Base, SessionLocal, engine
 from app.models import Store
-from app.prospect_models import Prospect
+from app.prospect_models import Prospect, ProspectArchive
 from app.prospects import current_prospect, save_manual_prospect, save_prospect
 
 
@@ -28,12 +28,31 @@ def test_save_prospect_persists_local_pdf_and_page_count(tmp_path: Path):
         store = Store(retailer="TEST", name="Prospect Test Store", postal_code="00000", city="Test", address="Test 1", active=True, benchmark_verified=True)
         db.add(store); db.commit(); db.refresh(store)
     pdf = tmp_path / "prospect.pdf"
-    _blank_pdf(pdf, 2)
+    payload = _blank_pdf(pdf, 2)
     row = save_prospect(db, store, period_key="current", source_url="https://example.test/prospect", pdf_url="https://example.test/prospect.pdf", pdf_path=pdf)
     assert row.page_count == 2
     assert row.period_key == "current"
     assert Path(row.local_path) == pdf
     assert db.query(Prospect).filter_by(store_id=store.id, period_key="current").count() == 1
+    archive = db.query(ProspectArchive).filter_by(store_id=store.id).one()
+    assert archive.page_count == 2
+    assert archive.pdf_bytes == payload
+    assert len(archive.pdf_sha256) == 64
+    db.close()
+
+
+def test_same_pdf_is_archived_only_once(tmp_path: Path):
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    store = db.query(Store).filter(Store.name == "Prospect Archive Dedupe Store").first()
+    if not store:
+        store = Store(retailer="TEST", name="Prospect Archive Dedupe Store", postal_code="00000", city="Test", address="Test 5", active=True, benchmark_verified=True)
+        db.add(store); db.commit(); db.refresh(store)
+    pdf = tmp_path / "same-prospect.pdf"
+    _blank_pdf(pdf, 3)
+    save_prospect(db, store, period_key="current", source_url="https://example.test/prospect", pdf_url="https://example.test/prospect.pdf", pdf_path=pdf)
+    save_prospect(db, store, period_key="current", source_url="https://example.test/prospect", pdf_url="https://example.test/prospect.pdf", pdf_path=pdf)
+    assert db.query(ProspectArchive).filter_by(store_id=store.id).count() == 1
     db.close()
 
 
@@ -68,6 +87,9 @@ def test_manual_rewe_original_pdf_is_saved_and_kept(tmp_path: Path, monkeypatch)
     assert row.page_count == 26
     assert row.source_url == f"admin-upload://{source.name}"
     assert current_prospect(db, store, "current").id == row.id
+    archive = db.query(ProspectArchive).filter_by(store_id=store.id).order_by(ProspectArchive.id.desc()).first()
+    assert archive is not None
+    assert archive.pdf_bytes == payload
     db.close()
 
 
