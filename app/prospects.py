@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 import hashlib
 import re
+import unicodedata
 
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
@@ -11,8 +13,8 @@ from sqlalchemy.orm import Session
 from .clock import app_today
 from .config import settings
 from .engine_v140.source_registry import source_for_store
-from .models import Store
-from .prospect_models import Prospect, ProspectArchive
+from .models import Offer, Store
+from .prospect_models import OfferProvenance, Prospect, ProspectArchive
 from .web_collector import discover_official_pdf, download_pdf, netto_weekly_prospect_url
 
 
@@ -76,6 +78,10 @@ def is_manual_prospect(row: Prospect | None) -> bool:
     return bool(row and row.source_url.startswith("admin-upload://"))
 
 
+def is_web_snapshot(row: Prospect | ProspectArchive | None) -> bool:
+    return bool(row and row.pdf_url.startswith("web-snapshot://"))
+
+
 def _is_invalid_rewe_pdf(path: str | Path) -> bool:
     target = Path(path)
     if target.name.lower() == "rewe-angebotskatalog.pdf":
@@ -85,6 +91,71 @@ def _is_invalid_rewe_pdf(path: str | Path) -> bool:
     except Exception:
         return True
     return any(marker in text for marker in _REWE_INVALID_MARKERS)
+
+
+def _fold(text: str) -> str:
+    text = "".join(c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _render_official_web_snapshot(store: Store, source_url: str, target_dir: Path) -> Path:
+    """Render the official market offer page into an immutable PDF audit artifact.
+
+    REWE no longer guarantees a downloadable PDF. This fallback captures the
+    official market-specific digital offer page itself; it is explicitly marked
+    as a web snapshot and must never be presented as an original retailer PDF.
+    """
+    if not settings.collector_browser_enabled:
+        raise ValueError("Browser-Collector ist deaktiviert; Web-Prospekt kann nicht archiviert werden")
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        raise ValueError("Playwright ist für Web-Prospekt-Archivierung nicht verfügbar") from exc
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"official-web-{store.retailer.lower().replace(' ', '-')}-{store.id}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+    timeout = max(10, settings.collector_timeout_seconds) * 1000
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 1100})
+        try:
+            page.goto(source_url, wait_until="domcontentloaded", timeout=timeout)
+            # Best-effort cookie dismissal; absence is harmless.
+            for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen"):
+                try:
+                    button = page.get_by_role("button", name=label, exact=False)
+                    if button.count():
+                        button.first.click(timeout=1500)
+                        break
+                except Exception:
+                    pass
+            # Trigger lazy loading of the full offer list before printing.
+            last_height = 0
+            for _ in range(14):
+                height = int(page.evaluate("document.body.scrollHeight"))
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(450)
+                if height == last_height:
+                    break
+                last_height = height
+            page.evaluate("window.scrollTo(0, 0)")
+            page.wait_for_timeout(300)
+            body = page.locator("body").inner_text(timeout=3000)
+            folded = _fold(body)
+            city_ok = not store.city or _fold(store.city) in folded
+            offer_signal = "angebote" in folded and len(re.findall(r"\b\d{1,3}[,.]\d{2}\s*€", body)) >= 5
+            blocked = any(marker in folded for marker in (_fold(x) for x in _REWE_INVALID_MARKERS[:4]))
+            if blocked or not city_ok or not offer_signal:
+                raise ValueError("Offizielle Marktseite konnte nicht als valider Angebots-Snapshot bestätigt werden")
+            payload = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
+            )
+            target.write_bytes(payload)
+        finally:
+            browser.close()
+    return target
 
 
 def archive_prospect_pdf(
@@ -129,6 +200,49 @@ def archive_prospect_pdf(
     return archive
 
 
+def _link_web_snapshot_provenance(db: Session, store: Store, archive: ProspectArchive) -> int:
+    """Map structured offers to the printed page where their product name occurs."""
+    if not archive.pdf_bytes or not is_web_snapshot(archive):
+        return 0
+    try:
+        reader = PdfReader(BytesIO(archive.pdf_bytes))
+        page_texts = [_fold(page.extract_text() or "") for page in reader.pages]
+    except Exception:
+        return 0
+    query = db.query(Offer).filter(Offer.store_id == store.id, Offer.local_store_offer.is_(True))
+    if archive.valid_from:
+        query = query.filter(Offer.valid_from >= archive.valid_from)
+    if archive.valid_to:
+        query = query.filter(Offer.valid_from <= archive.valid_to)
+    linked = 0
+    for offer in query.all():
+        needle = _fold(offer.product.name)
+        if len(needle) < 5:
+            continue
+        page_no = next((idx + 1 for idx, text in enumerate(page_texts) if needle in text), None)
+        if page_no is None:
+            continue
+        exists = db.query(OfferProvenance).filter_by(
+            offer_id=offer.id,
+            prospect_archive_id=archive.id,
+            prospect_page=page_no,
+        ).first()
+        if exists:
+            continue
+        db.add(OfferProvenance(
+            offer_id=offer.id,
+            prospect_archive_id=archive.id,
+            prospect_page=page_no,
+            source_text=f"Offizielle digitale Angebotsseite · archivierte Web-PDF-Seite {page_no}",
+            source_url=archive.source_url,
+            collected_at=datetime.utcnow(),
+        ))
+        linked += 1
+    if linked:
+        db.commit()
+    return linked
+
+
 def save_prospect(
     db: Session,
     store: Store,
@@ -152,9 +266,7 @@ def save_prospect(
     valid_from = valid_from or inferred_from
     valid_to = valid_to or inferred_to
 
-    # Preserve every distinct original PDF in the database before rotating the
-    # current/next UI pointer. This makes historical price checks reproducible.
-    archive_prospect_pdf(
+    archive = archive_prospect_pdf(
         db,
         store,
         period_key=period_key,
@@ -187,6 +299,9 @@ def save_prospect(
     row.fetched_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
+
+    if is_web_snapshot(archive):
+        _link_web_snapshot_provenance(db, store, archive)
     return row
 
 
@@ -244,21 +359,35 @@ def discover_and_store_prospect(db: Session, store: Store, period_key: str = "cu
         return None
     target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / period_key
 
-    # Only real PDF prospects are accepted. In particular REWE must never fall
-    # back to a generated LocalPrices catalog or to a rendered WAF page.
-    pdf_url = discover_official_pdf(source_url)
-    pdf_path = download_pdf(pdf_url, target_dir)
-    if store.retailer == "REWE" and _is_invalid_rewe_pdf(pdf_path):
-        pdf_path.unlink(missing_ok=True)
-        raise ValueError("REWE-Quelle liefert kein echtes Prospekt-PDF")
-    return save_prospect(
-        db,
-        store,
-        period_key=period_key,
-        source_url=source_url,
-        pdf_url=pdf_url,
-        pdf_path=pdf_path,
-    )
+    try:
+        pdf_url = discover_official_pdf(source_url)
+        pdf_path = download_pdf(pdf_url, target_dir)
+        if store.retailer == "REWE" and _is_invalid_rewe_pdf(pdf_path):
+            pdf_path.unlink(missing_ok=True)
+            raise ValueError("REWE-Quelle liefert kein echtes Prospekt-PDF")
+        return save_prospect(
+            db,
+            store,
+            period_key=period_key,
+            source_url=source_url,
+            pdf_url=pdf_url,
+            pdf_path=pdf_path,
+        )
+    except Exception:
+        # REWE has moved to a paperless digital prospect and does not guarantee
+        # a downloadable PDF. Archive the official market page automatically so
+        # manual QA never depends on a user-uploaded file.
+        if store.retailer != "REWE" or period_key != "current":
+            raise
+        pdf_path = _render_official_web_snapshot(store, source_url, target_dir)
+        return save_prospect(
+            db,
+            store,
+            period_key=period_key,
+            source_url=source_url,
+            pdf_url=f"web-snapshot://{source_url}",
+            pdf_path=pdf_path,
+        )
 
 
 def current_prospect(db: Session, store: Store, period_key: str) -> Prospect | None:
@@ -279,7 +408,7 @@ def current_prospect(db: Session, store: Store, period_key: str) -> Prospect | N
         db.commit()
         return None
 
-    if store.retailer == "REWE" and row.local_path and _is_invalid_rewe_pdf(row.local_path):
+    if store.retailer == "REWE" and row.local_path and not is_web_snapshot(row) and _is_invalid_rewe_pdf(row.local_path):
         row.active = False
         db.commit()
         return None
