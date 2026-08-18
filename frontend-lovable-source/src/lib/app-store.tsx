@@ -330,7 +330,9 @@ export function useStore() {
 export function useActiveMarketIds() {
   const { selected, marketsInRadius } = useStore();
   return useMemo(() => {
-    const inRadius = marketsInRadius.map((m) => m.id);
-    return selected.filter((id) => inRadius.includes(id));
+    const releasedInRadius = marketsInRadius
+      .filter((market) => (market as Market & { verified?: boolean }).verified !== false)
+      .map((market) => market.id);
+    return selected.filter((id) => releasedInRadius.includes(id));
   }, [selected, marketsInRadius]);
 }
