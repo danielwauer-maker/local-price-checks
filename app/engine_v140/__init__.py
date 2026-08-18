@@ -13,6 +13,12 @@ from .lidl_schwarz_runtime import install as _install_lidl_schwarz_runtime
 
 _install_lidl_schwarz_runtime()
 
+# Deeply nested page OCR/accessibility metadata contains the page-level context
+# needed to distinguish local leaflet content from shop-only product links.
+from .lidl_schwarz_hardening import install as _install_lidl_schwarz_hardening
+
+_install_lidl_schwarz_hardening()
+
 # Many grocery cards are raster-only in the official viewer and have no
 # productDetails object. Reuse the already archived logical page images as a
 # page-aware OCR fallback. This is installed after the structured bridge so
