@@ -52,7 +52,7 @@ def test_schwarz_flyer_joins_page_product_details_to_global_catalog():
     assert "Milbona" in joined[0].product_name
 
 
-def test_schwarz_flyer_marks_page_level_online_only_products_non_local():
+def test_schwarz_flyer_drops_page_level_online_only_products():
     payloads = [{
         "url": "https://endpoints.leaflets.schwarz/v4/flyer",
         "page_hint": 8,
@@ -87,9 +87,7 @@ def test_schwarz_flyer_marks_page_level_online_only_products_non_local():
     }]
 
     rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    product = next(row for row in rows if row.price == 49.99)
-    assert product.local_store_offer is False
-    assert "PDF Seite 8" in product.source_text
+    assert all(row.price != 49.99 for row in rows)
 
 
 def test_schwarz_flyer_does_not_emit_unreferenced_global_catalog_product():
