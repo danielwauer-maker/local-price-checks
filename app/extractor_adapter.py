@@ -30,6 +30,33 @@ class ImportSummary:
     rejected_date: int = 0
 
 
+_LIDL_EXPLICIT_ONLINE_ONLY_PATTERNS = (
+    r'"(?:onlineOnly|online_only|isOnlineOnly|webOnly|shopOnly)"\s*:\s*true',
+    r'"(?:channel|salesChannel|availability|offerType|badge|label)"\s*:\s*"[^"]*(?:online only|nur online|online-only|onlineshop)[^"]*"',
+    r'\bnur\s+online\b',
+    r'\bonline\s*only\b',
+    r'\bnur\s+im\s+online-?shop\b',
+    r'\bshoppe\s+auf\s+lidl\.de\b',
+)
+
+
+def _row_has_explicit_online_only_marker(row: CollectedOffer) -> bool:
+    """Return True only for explicit retailer-provided online-only signals.
+
+    Lidl uses canonical ``/p/.../p123`` product URLs for both normal leaflet
+    offers and web-shop-only items. Therefore a Lidl product URL by itself must
+    never be treated as evidence that an offer is online-only.
+    """
+    text = row.source_text or ""
+    return any(re.search(pattern, text, flags=re.I) for pattern in _LIDL_EXPLICIT_ONLINE_ONLY_PATTERNS)
+
+
+def _row_is_local_offer(row: CollectedOffer) -> bool:
+    if (row.retailer or "").strip().lower() == "lidl":
+        return not _row_has_explicit_online_only_marker(row)
+    return bool(row.local_store_offer)
+
+
 def _ascii_fold(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
@@ -159,7 +186,7 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
     for row in rows:
         local, _reason = classify_offer(row.source_text, row.source_url)
-        if not row.local_store_offer or not local:
+        if not _row_is_local_offer(row) or not local:
             counts["rejected_online"] += 1
             continue
         quality = evaluate_offer(row)
