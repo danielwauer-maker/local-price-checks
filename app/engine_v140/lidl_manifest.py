@@ -128,7 +128,6 @@ def _path_collection_name(path: str) -> str:
 
 
 def _walk(value: Any, *, path: str = "", inherited_page: int | None = None):
-    """Walk manifest data while preserving the real logical page context."""
     if isinstance(value, dict):
         page = _number_from(value, _PAGE_KEYS) or inherited_page
         yield value, path, page
@@ -170,14 +169,6 @@ def manifest_page_count(payloads: list[dict]) -> int | None:
 
 
 def manifest_reference_pages(payloads: list[dict]) -> dict[str, int]:
-    """Map Lidl product/article identifiers found inside page-scoped hotspot trees.
-
-    Lidl currently ships a global product catalogue (name/price/productId) separately
-    from page/hotspot metadata. Product catalogue rows have no pageNumber themselves.
-    The hotspot tree, however, repeats the product/article identifier below the real
-    logical page. This two-pass map lets us join both payload families without falling
-    back to the request-time page hint.
-    """
     found: dict[str, set[int]] = {}
     for payload in payloads:
         data = payload.get("data")
@@ -189,8 +180,6 @@ def manifest_reference_pages(payloads: list[dict]) -> dict[str, int]:
                 continue
             for ident in _identifiers_from(obj, _PRODUCT_REF_KEYS):
                 found.setdefault(ident, set()).add(page_no)
-    # A product normally appears on one leaflet page. Keep only unambiguous mappings;
-    # ambiguous references are safer left unresolved than assigned to the wrong page.
     return {ident: next(iter(pages)) for ident, pages in found.items() if len(pages) == 1}
 
 
@@ -225,8 +214,8 @@ def _candidate_offer(obj: dict, path: str, page_hint: int | None):
             regular = _money(obj.get(key))
             if regular is not None:
                 break
-    page_no = _number_from(obj, _PAGE_KEYS) or page_hint
-    return cleaned, price, regular, page_no, price_key
+    explicit_page = _number_from(obj, _PAGE_KEYS)
+    return cleaned, price, regular, explicit_page, page_hint, price_key
 
 
 def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: str) -> list[CollectedOffer]:
@@ -241,14 +230,20 @@ def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: 
             candidate = _candidate_offer(obj, path, inherited_page)
             if not candidate:
                 continue
-            name, price, regular, page_no, _price_key = candidate
-            if page_no is None:
-                ids = _identifiers_from(obj, _PRODUCT_ID_KEYS)
-                pages = {reference_pages[i] for i in ids if i in reference_pages}
-                if len(pages) == 1:
-                    page_no = next(iter(pages))
+            name, price, regular, explicit_page, fallback_page, _price_key = candidate
+
+            ids = _identifiers_from(obj, _PRODUCT_ID_KEYS)
+            ref_pages = {reference_pages[i] for i in ids if i in reference_pages}
+            reference_page = next(iter(ref_pages)) if len(ref_pages) == 1 else None
+
+            # Provenance precedence is deliberate:
+            # 1) an explicit pageNumber/pageIndex on the product itself is strongest;
+            # 2) an unambiguous productId/articleId hotspot mapping is next;
+            # 3) request/viewer page_hint is only a fallback for page-scoped payloads.
+            page_no = explicit_page or reference_page or fallback_page
             if page_no is None:
                 continue
+
             q, unit = size(name)
             key = (name.lower(), price, page_no, q, unit)
             if key in seen:
@@ -275,7 +270,6 @@ def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: 
 
 
 def embedded_json_states(page) -> list[dict]:
-    """Read JSON application state already present in the live viewer DOM."""
     states: list[dict] = []
     try:
         scripts = page.locator('script[type="application/json"], script#__NEXT_DATA__')
@@ -294,7 +288,6 @@ def embedded_json_states(page) -> list[dict]:
 
 
 def _surface_screenshots(page, expected: int) -> list[bytes]:
-    """Prefer actual large canvas/image leaflet surfaces over whole-page screenshots."""
     candidates: list[tuple[float, float, float, bytes]] = []
     try:
         locator = page.locator("canvas, img")
@@ -324,7 +317,6 @@ def _surface_screenshots(page, expected: int) -> list[bytes]:
 
 
 def logical_page_images(page, current_page: int | None, total_pages: int | None) -> list[tuple[int, bytes]]:
-    """Return one image per logical leaflet page, splitting two-page spreads when necessary."""
     current = current_page or 1
     expected = 1
     if total_pages and current > 1 and current < total_pages:
