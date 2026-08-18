@@ -28,12 +28,27 @@ type BootstrapPayload = Omit<StoreState, "productFavorites" | "checked" | "profi
   markets: Market[];
   products: Product[];
   prices: Price[];
+  activeSelected?: string[];
 };
 
 type UxBootstrapPayload = {
   profile: Profile;
   productFavorites: string[];
   checked: string[];
+};
+
+type StoreTogglePayload = {
+  selected: boolean;
+  selectedIds: string[];
+  activeSelectedIds: string[];
+  prices: Price[];
+  refreshStarted: boolean;
+};
+
+type StoreOffersPayload = {
+  marketId: string;
+  status: string;
+  prices: Price[];
 };
 
 const initialState: StoreState = {
@@ -51,6 +66,8 @@ const initialState: StoreState = {
 type StoreContext = StoreState & {
   hydrated: boolean;
   marketsInRadius: Array<(typeof MARKETS)[number] & { distance: number }>;
+  favoriteMarketsOutsideRadius: Array<(typeof MARKETS)[number] & { distance: number }>;
+  refreshingMarketIds: string[];
   basketEntries: Array<{ productId: string; qty: number }>;
   basketCount: number;
   setLocation: (loc: Location) => void;
@@ -76,9 +93,68 @@ function api(path: string, init?: RequestInit) {
   });
 }
 
+function replaceMarketPrices(marketId: string, prices: Price[]) {
+  const keep = PRICES.filter((price) => price.marketId !== marketId);
+  PRICES.splice(0, PRICES.length, ...keep, ...prices);
+}
+
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StoreState>(initialState);
   const [hydrated, setHydrated] = useState(false);
+  const [refreshingMarketIds, setRefreshingMarketIds] = useState<string[]>([]);
+
+  const patch = useCallback(
+    (p: Partial<StoreState> | ((s: StoreState) => Partial<StoreState>)) =>
+      setState((s) => ({ ...s, ...(typeof p === "function" ? p(s) : p) })),
+    [],
+  );
+
+  const applyBootstrap = useCallback((payload: BootstrapPayload) => {
+    MARKETS.splice(0, MARKETS.length, ...payload.markets);
+    PRODUCTS.splice(0, PRODUCTS.length, ...payload.products);
+    PRICES.splice(0, PRICES.length, ...payload.prices);
+    patch((s) => ({
+      location: payload.location,
+      radius: payload.radius,
+      selected: payload.selected,
+      favorites: payload.favorites,
+      basket: payload.basket,
+      maxStops: s.maxStops,
+    }));
+  }, [patch]);
+
+  const reloadBootstrap = useCallback(async () => {
+    const response = await api("/api/bootstrap");
+    if (!response.ok) throw new Error(`bootstrap ${response.status}`);
+    const payload = await response.json() as BootstrapPayload;
+    applyBootstrap(payload);
+    return payload;
+  }, [applyBootstrap]);
+
+  const pollStoreOffers = useCallback((id: string, attempt = 0) => {
+    const delay = attempt === 0 ? 2500 : Math.min(4000 + attempt * 1500, 9000);
+    window.setTimeout(async () => {
+      try {
+        const response = await api(`/api/stores/${id}/offers`);
+        if (!response.ok) throw new Error(`store offers ${response.status}`);
+        const payload = await response.json() as StoreOffersPayload;
+        replaceMarketPrices(id, payload.prices);
+        patch((s) => ({ ...s }));
+        const done = ["success", "no_offers", "failed"].includes(payload.status) && attempt >= 1;
+        if (done || attempt >= 4) {
+          setRefreshingMarketIds((ids) => ids.filter((x) => x !== id));
+          return;
+        }
+        pollStoreOffers(id, attempt + 1);
+      } catch {
+        if (attempt >= 4) {
+          setRefreshingMarketIds((ids) => ids.filter((x) => x !== id));
+          return;
+        }
+        pollStoreOffers(id, attempt + 1);
+      }
+    }, delay);
+  }, [patch]);
 
   useEffect(() => {
     let live = true;
@@ -116,15 +192,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const patch = useCallback(
-    (p: Partial<StoreState> | ((s: StoreState) => Partial<StoreState>)) =>
-      setState((s) => ({ ...s, ...(typeof p === "function" ? p(s) : p) })),
-    [],
-  );
-
   const value = useMemo<StoreContext>(() => {
-    const marketsInRadius = MARKETS.map((m) => ({ ...m, distance: distanceKm(state.location, m) }))
+    const withDistance = MARKETS.map((m) => ({ ...m, distance: distanceKm(state.location, m) }));
+    const marketsInRadius = withDistance
       .filter((m) => m.distance <= state.radius)
+      .sort((a, b) => a.distance - b.distance);
+    const favoriteMarketsOutsideRadius = withDistance
+      .filter((m) => state.selected.includes(m.id) && m.distance > state.radius)
       .sort((a, b) => a.distance - b.distance);
 
     const basketEntries = Object.entries(state.basket)
@@ -137,20 +211,54 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       ...state,
       hydrated,
       marketsInRadius,
+      favoriteMarketsOutsideRadius,
+      refreshingMarketIds,
       basketEntries,
       basketCount: activeBasketCount,
       setLocation: (location) => {
         patch({ location });
-        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...location, radius: state.radius }) });
+        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...location, radius: state.radius }) })
+          .then((r) => r.ok ? reloadBootstrap() : Promise.reject(new Error(`location ${r.status}`)))
+          .catch((error) => console.error("Location refresh failed", error));
       },
       setRadius: (radius) => {
         patch({ radius });
-        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...state.location, radius }) });
+        void api("/api/location", { method: "PUT", body: JSON.stringify({ ...state.location, radius }) })
+          .then((r) => r.ok ? reloadBootstrap() : Promise.reject(new Error(`radius ${r.status}`)))
+          .catch((error) => console.error("Radius refresh failed", error));
       },
       setMaxStops: (maxStops) => patch({ maxStops }),
       toggleSelected: (id) => {
-        patch((s) => ({ selected: s.selected.includes(id) ? s.selected.filter((x) => x !== id) : [...s.selected, id] }));
-        void api(`/api/stores/${id}/toggle`, { method: "POST" });
+        const adding = !state.selected.includes(id);
+        patch((s) => ({
+          selected: adding ? [...s.selected, id] : s.selected.filter((x) => x !== id),
+          favorites: adding ? [...s.favorites, id] : s.favorites.filter((x) => x !== id),
+        }));
+        void api(`/api/stores/${id}/toggle`, { method: "POST" })
+          .then(async (response) => {
+            if (!response.ok) throw new Error(`store toggle ${response.status}`);
+            const result = await response.json() as StoreTogglePayload;
+            patch({ selected: result.selectedIds, favorites: result.selectedIds });
+            if (result.selected) {
+              replaceMarketPrices(id, result.prices);
+              patch((s) => ({ ...s }));
+              if (result.refreshStarted) {
+                setRefreshingMarketIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+                pollStoreOffers(id);
+              }
+            } else {
+              replaceMarketPrices(id, []);
+              setRefreshingMarketIds((ids) => ids.filter((x) => x !== id));
+              patch((s) => ({ ...s }));
+            }
+          })
+          .catch((error) => {
+            console.error("Store toggle failed", error);
+            patch((s) => ({
+              selected: adding ? s.selected.filter((x) => x !== id) : [...s.selected, id],
+              favorites: adding ? s.favorites.filter((x) => x !== id) : [...s.favorites, id],
+            }));
+          });
       },
       toggleFavorite: (id) => patch((s) => ({ favorites: s.favorites.includes(id) ? s.favorites.filter((x) => x !== id) : [...s.favorites, id] })),
       toggleProductFavorite: (id) => {
@@ -172,6 +280,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             ? { lat: result.lat, lng: result.lng, label: result.label || `${profile.postalCode} ${profile.city}`.trim() }
             : s.location,
         }));
+        await reloadBootstrap();
       },
       addToBasket: (productId, qty = 1) => {
         const nextQty = (state.basket[productId] ?? 0) + qty;
@@ -207,7 +316,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         void api("/api/ux/checked", { method: "DELETE" });
       },
     };
-  }, [state, hydrated, patch]);
+  }, [state, hydrated, patch, reloadBootstrap, pollStoreOffers, refreshingMarketIds]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

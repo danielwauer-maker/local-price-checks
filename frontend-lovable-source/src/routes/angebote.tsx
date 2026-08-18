@@ -20,6 +20,7 @@ function OffersPage() {
 
   const offers = useMemo(() => {
     const q = query.trim().toLowerCase();
+    if (activeIds.length === 0) return [];
     return currentOffers(activeIds).filter(
       (o) => q === "" || o.product.name.toLowerCase().includes(q) || o.product.brand.toLowerCase().includes(q),
     );

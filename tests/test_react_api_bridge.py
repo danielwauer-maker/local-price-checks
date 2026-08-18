@@ -42,12 +42,10 @@ def _setup():
     return db, user, product, stores
 
 
-def test_bootstrap_hydrates_real_prices_for_in_radius_stores_even_before_selection():
+def test_bootstrap_returns_no_prices_without_active_favorite_market():
     db, user, product, stores = _setup()
     db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).delete()
     db.commit()
-    product_id = str(product.id)
-    store_ids = {str(s.id) for s in stores}
     db.close()
 
     client = TestClient(app)
@@ -55,9 +53,26 @@ def test_bootstrap_hydrates_real_prices_for_in_radius_stores_even_before_selecti
     assert response.status_code == 200
     payload = response.json()
     assert payload["selected"] == []
+    assert payload["prices"] == []
+
+
+def test_bootstrap_hydrates_prices_for_favorite_market_in_radius():
+    db, user, product, stores = _setup()
+    db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).delete()
+    db.add(FavoriteStore(user_id=user.id, store_id=stores[0].id))
+    db.commit()
+    product_id = str(product.id)
+    store_id = str(stores[0].id)
+    db.close()
+
+    client = TestClient(app)
+    response = client.get("/api/bootstrap")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["selected"] == [store_id]
     matching = [p for p in payload["prices"] if p["productId"] == product_id]
     assert matching
-    assert {p["marketId"] for p in matching}.issubset(store_ids)
+    assert {p["marketId"] for p in matching} == {store_id}
 
 
 def test_backend_plan_uses_selected_markets_and_returns_travel_fields():

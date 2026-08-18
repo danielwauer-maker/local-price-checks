@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import app.api_routes as api_routes
 from app.api_main import app
 from app.db import Base, SessionLocal, engine
 from app.models import FavoriteStore, MasterProduct, ShoppingItem, Store, UserProfile
@@ -37,6 +38,7 @@ def test_bootstrap_exposes_real_app_state():
     assert "products" in payload
     assert "prices" in payload
     assert "basket" in payload
+    assert "activeSelected" in payload
 
 
 def test_basket_api_persists_quantity():
@@ -50,16 +52,65 @@ def test_basket_api_persists_quantity():
     db.close()
 
 
-def test_verified_store_toggle_api():
+def test_verified_store_toggle_api(monkeypatch):
     user_id, _ = _seed()
     db = SessionLocal()
     store = db.query(Store).filter(Store.active.is_(True), Store.benchmark_verified.is_(True)).first()
     assert store is not None
     store_id = store.id
-    before = db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).first() is not None
+    existing = db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
     db.close()
 
+    monkeypatch.setattr(api_routes, "_collect_store_background", lambda _store_id: None)
     client = TestClient(app)
     response = client.post(f"/api/stores/{store_id}/toggle")
     assert response.status_code == 200
-    assert response.json()["selected"] is (not before)
+    payload = response.json()
+    assert payload["selected"] is True
+    assert str(store_id) in payload["selectedIds"]
+    assert payload["refreshStarted"] is True
+
+
+def test_favorite_market_survives_outside_search_radius():
+    user_id, _ = _seed()
+    db = SessionLocal()
+    user = db.get(UserProfile, user_id)
+    assert user is not None
+    user.latitude = 50.6199
+    user.longitude = 7.6264
+    user.radius_km = 5
+
+    store = Store(
+        retailer="Testmarkt",
+        name="Testmarkt außerhalb Suchgebiet",
+        postal_code="10115",
+        city="Berlin",
+        address="Teststraße 1",
+        latitude=52.52,
+        longitude=13.405,
+        active=True,
+        benchmark_verified=True,
+        external_id="outside-test",
+    )
+    db.add(store)
+    db.flush()
+    db.add(FavoriteStore(user_id=user_id, store_id=store.id))
+    db.commit()
+    store_id = store.id
+    db.close()
+
+    client = TestClient(app)
+    payload = client.get("/api/bootstrap").json()
+    market_ids = {row["id"] for row in payload["markets"]}
+    assert str(store_id) in payload["selected"]
+    assert str(store_id) in market_ids
+    assert str(store_id) not in payload["activeSelected"]
+
+    db = SessionLocal()
+    db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).delete()
+    db.query(Store).filter_by(id=store_id).delete()
+    db.commit()
+    db.close()
