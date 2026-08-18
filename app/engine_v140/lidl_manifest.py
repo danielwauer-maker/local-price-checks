@@ -4,7 +4,6 @@ from io import BytesIO
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
 
 from PIL import Image
 from pypdf import PdfReader
@@ -42,6 +41,7 @@ _PRODUCT_REF_KEYS = (
 )
 _CONTEXT_WORDS = ("product", "produkt", "article", "artikel", "offer", "angebot", "hotspot", "promotion", "annotation")
 _URL_KEYS = ("url", "href", "canonicalUrl", "canonicalURL", "productUrl", "productURL", "deeplink", "deepLink")
+_LOCAL_CONTAINER_WORDS = {"hotspot", "hotspots", "annotation", "annotations", "promotion", "promotions", "offer", "offers", "angebot", "angebote"}
 
 
 def _scalar(value: Any) -> Any:
@@ -155,6 +155,16 @@ def _walk(value: Any, *, path: str = "", inherited_page: int | None = None):
             yield from _walk(child, path=f"{path}[{idx}]", inherited_page=child_page)
 
 
+def _iter_dicts(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _iter_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _iter_dicts(child)
+
+
 def _has_page_collection(value: Any) -> bool:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -201,6 +211,11 @@ def _is_global_catalog_path(path: str) -> bool:
     return any(part in _GLOBAL_PRODUCT_COLLECTIONS for part in parts)
 
 
+def _is_local_container_path(path: str) -> bool:
+    parts = re.sub(r"\[\d+\]", "", path.lower()).split(".")
+    return any(part in _LOCAL_CONTAINER_WORDS for part in parts[-3:])
+
+
 def _online_only(obj: dict) -> bool:
     for key in ("onlineOnly", "online_only", "isOnlineOnly", "webOnly", "shopOnly"):
         if obj.get(key) is True:
@@ -209,17 +224,15 @@ def _online_only(obj: dict) -> bool:
         value = _scalar(obj.get(key))
         if isinstance(value, str) and any(token in value.lower() for token in ("online only", "nur online", "online-only", "onlineshop")):
             return True
-    for key in _URL_KEYS:
-        value = _scalar(obj.get(key))
-        if not isinstance(value, str):
-            continue
-        try:
-            parsed = urlparse(value)
-        except Exception:
-            continue
-        if parsed.netloc.lower().endswith("lidl.de") and re.search(r"/p/[^/]+/p\d+", parsed.path, re.I):
-            return True
     return False
+
+
+def _tree_online_only(value: Any) -> bool:
+    for obj in _iter_dicts(value):
+        if _online_only(obj):
+            return True
+    raw = json.dumps(value, ensure_ascii=False, default=str).lower()
+    return any(token in raw for token in ("nur online", "online only", "nur im onlineshop", "shoppe auf lidl.de"))
 
 
 def _candidate_offer(obj: dict, path: str, page_hint: int | None):
@@ -255,6 +268,71 @@ def _candidate_offer(obj: dict, path: str, page_hint: int | None):
     return cleaned, price, regular, explicit_page, page_hint, brand, _online_only(obj)
 
 
+def _aggregate_local_container(obj: dict, path: str, page_no: int | None):
+    """Join split Lidl hotspot fields that live in sibling/nested objects.
+
+    The local grocery pages often expose page/hotspot metadata separately from
+    the global lidl.de product catalogue. A hotspot remains the source of truth
+    for locality and page number; catalog data is only used to fill missing
+    product fields for a referenced id.
+    """
+    if page_no is None or _is_global_catalog_path(path) or not _is_local_container_path(path):
+        return None
+    nodes = list(_iter_dicts(obj))
+    if len(nodes) > 80:
+        return None
+
+    name = brand = package = None
+    price = regular = None
+    identifiers: set[str] = set()
+    for node in nodes:
+        identifiers |= _identifiers_from(node, _PRODUCT_ID_KEYS) | _url_identifiers(node)
+        if name is None:
+            name = _text_from(node, _NAME_KEYS)
+        if brand is None:
+            brand = _text_from(node, ("brand", "brandName", "manufacturer", "vendor"))
+        if package is None:
+            package = _text_from(node, _PACKAGE_KEYS)
+        if price is None:
+            for key in _PRICE_KEYS:
+                if key in node:
+                    price = _money(node.get(key))
+                    if price is not None:
+                        break
+        if regular is None:
+            for key in _REGULAR_PRICE_KEYS:
+                if key in node:
+                    regular = _money(node.get(key))
+                    if regular is not None:
+                        break
+
+    if not name or price is None:
+        return None
+    combined = " ".join(part for part in (brand, name, package) if part)
+    cleaned = clean_product_name(combined)
+    if not cleaned or product_name_issue(cleaned) or len(cleaned) < 3:
+        return None
+    return cleaned, price, regular, identifiers, _tree_online_only(obj)
+
+
+def _catalog_index(payloads: list[dict]) -> dict[str, tuple[str, float, float | None, bool, dict]]:
+    """Index global Lidl product objects for enrichment only, never direct import."""
+    index: dict[str, tuple[str, float, float | None, bool, dict]] = {}
+    for payload in payloads:
+        data = payload.get("data")
+        for obj, path, inherited_page in _walk(data, inherited_page=None):
+            if not _is_global_catalog_path(path):
+                continue
+            candidate = _candidate_offer(obj, path, inherited_page)
+            if not candidate:
+                continue
+            name, price, regular, _explicit, _fallback, _brand, online = candidate
+            ids = _identifiers_from(obj, _PRODUCT_ID_KEYS) | _url_identifiers(obj)
+            for ident in ids:
+                index.setdefault(ident, (name, price, regular, online, obj))
+    return index
+
+
 def _near_duplicate_name(a: str, b: str) -> bool:
     def norm(value: str) -> str:
         value = re.sub(r"[^a-z0-9äöüß]+", " ", value.lower()).strip()
@@ -267,56 +345,84 @@ def _near_duplicate_name(a: str, b: str) -> bool:
 
 
 def manifest_offers(payloads: list[dict], source, *, valid_from: str, valid_to: str) -> list[CollectedOffer]:
+    """Extract Lidl offers with page-scoped leaflet data as the authority.
+
+    Important: global lidl.de catalogue rows are never emitted on their own.
+    They may only enrich a page-scoped hotspot/annotation that references the
+    same product id. This prevents the online shop catalogue from replacing the
+    actual local store leaflet.
+    """
     out: list[CollectedOffer] = []
     seen: set[tuple] = set()
     accepted: list[tuple[int, float, str]] = []
-    reference_pages = manifest_reference_pages(payloads)
+    catalog = _catalog_index(payloads)
+
+    def add_offer(name: str, price: float, regular: float | None, page_no: int, raw_obj: Any, online_only: bool, source_kind: str) -> None:
+        q, unit = size(name)
+        key = (name.lower(), price, page_no, q, unit)
+        if key in seen:
+            return
+        if any(p == page_no and abs(pr - price) < 0.001 and _near_duplicate_name(existing_name, name) for p, pr, existing_name in accepted):
+            return
+        seen.add(key)
+        accepted.append((page_no, price, name))
+        raw = json.dumps(raw_obj, ensure_ascii=False, default=str, separators=(",", ":"))[:2600]
+        out.append(CollectedOffer(
+            source.key,
+            source.store_name,
+            source.retailer,
+            name[:180],
+            cat(name),
+            price,
+            regular_price=regular,
+            quantity=q,
+            unit=unit,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            source_text=f"PDF Seite {page_no}: {source_kind} {raw}",
+            source_url=source.url,
+            local_store_offer=not online_only,
+            confidence=.98,
+        ))
+
     for payload in payloads:
         data = payload.get("data")
         payload_page = payload.get("page_hint")
         seed_page = None if _has_page_collection(data) else payload_page
         for obj, path, inherited_page in _walk(data, inherited_page=seed_page):
-            candidate = _candidate_offer(obj, path, inherited_page)
-            if not candidate:
-                continue
-            name, price, regular, explicit_page, fallback_page, _brand, online_only = candidate
-            ids = _identifiers_from(obj, _PRODUCT_ID_KEYS) | _url_identifiers(obj)
-            ref_pages = {reference_pages[i] for i in ids if i in reference_pages}
-            reference_page = next(iter(ref_pages)) if len(ref_pages) == 1 else None
-            # A request-time page hint must never make a global product catalogue
-            # look page-scoped. Global products need an explicit page or a real
-            # hotspot/reference join.
-            safe_fallback = None if _is_global_catalog_path(path) else fallback_page
-            page_no = explicit_page or reference_page or safe_fallback
-            if page_no is None:
+            if _is_global_catalog_path(path):
                 continue
 
-            q, unit = size(name)
-            key = (name.lower(), price, page_no, q, unit)
-            if key in seen:
+            # First accept complete page-scoped product objects.
+            direct = _candidate_offer(obj, path, inherited_page)
+            if direct:
+                name, price, regular, explicit_page, fallback_page, _brand, online = direct
+                page_no = explicit_page or fallback_page
+                if page_no is not None:
+                    add_offer(name, price, regular, page_no, obj, online or _tree_online_only(obj), "ManifestHotspot")
+                    continue
+
+            # Then join split name/price fields inside one hotspot/annotation.
+            aggregate = _aggregate_local_container(obj, path, inherited_page)
+            if aggregate:
+                name, price, regular, _ids, online = aggregate
+                add_offer(name, price, regular, inherited_page, obj, online, "ManifestHotspot")
                 continue
-            if any(p == page_no and abs(pr - price) < 0.001 and _near_duplicate_name(existing_name, name) for p, pr, existing_name in accepted):
+
+            # Finally, a page-scoped hotspot may only contain a product id/link.
+            # In that case enrich it from the global catalogue, but locality and
+            # page still come from the hotspot, never from the catalogue row.
+            if inherited_page is None or not _is_local_container_path(path):
                 continue
-            seen.add(key)
-            accepted.append((page_no, price, name))
-            raw = json.dumps(obj, ensure_ascii=False, default=str, separators=(",", ":"))[:2600]
-            out.append(CollectedOffer(
-                source.key,
-                source.store_name,
-                source.retailer,
-                name[:180],
-                cat(name),
-                price,
-                regular_price=regular,
-                quantity=q,
-                unit=unit,
-                valid_from=valid_from,
-                valid_to=valid_to,
-                source_text=f"PDF Seite {page_no}: Manifest {raw}",
-                source_url=source.url,
-                local_store_offer=not online_only,
-                confidence=.98,
-            ))
+            ids = _identifiers_from(obj, _PRODUCT_REF_KEYS) | _url_identifiers(obj)
+            matches = [catalog[i] for i in ids if i in catalog]
+            unique = {(m[0], m[1], m[2], m[3]) for m in matches}
+            if len(unique) != 1:
+                continue
+            name, price, regular, catalog_online = next(iter(unique))
+            online = catalog_online or _tree_online_only(obj)
+            add_offer(name, price, regular, inherited_page, obj, online, "ManifestHotspot+Catalog")
+
     return out
 
 
