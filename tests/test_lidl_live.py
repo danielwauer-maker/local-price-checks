@@ -153,3 +153,34 @@ def test_lidl_global_manifest_page_list_overrides_request_page_hint():
     assert pages["Artikel Seite Eins"] == "PDF Seite 1"
     assert pages["Artikel Seite Zwei"] == "PDF Seite 2"
     assert pages["Artikel Seite Drei"] == "PDF Seite 3"
+
+
+def test_lidl_global_product_catalogue_joins_hotspot_product_id_to_page():
+    payloads = [
+        {
+            "url": "https://viewer.example/products",
+            "page_hint": 1,
+            "data": {
+                "products": [{
+                    "productId": "100409050",
+                    "title": "LIVARNO Musselin-Bettwäsche, 155 x 220 cm",
+                    "brand": "LIVARNO",
+                    "price": "19.99",
+                }]
+            },
+        },
+        {
+            "url": "https://viewer.example/hotspots",
+            "page_hint": 1,
+            "data": {
+                "pages": [
+                    {"hotspots": []},
+                    {"hotspots": [{"type": "product", "productId": "100409050"}]},
+                ]
+            },
+        },
+    ]
+    rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
+    assert len(rows) == 1
+    assert rows[0].price == 19.99
+    assert rows[0].source_text.startswith("PDF Seite 2:")
