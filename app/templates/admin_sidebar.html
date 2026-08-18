@@ -10,7 +10,8 @@
   <div class="admin-sidebar-group">Übersicht</div>
   <nav class="admin-sidebar-nav">
     <a href="/admin?tab=dashboard" class="{% if admin_section=='dashboard' %}active{% endif %}"><span class="admin-sidebar-icon">⌂</span>Dashboard</a>
-    <a href="/datenstatus" class="{% if admin_section=='data_status' %}active{% endif %}"><span class="admin-sidebar-icon">◉</span>Datenstatus</a>
+    <a href="/admin/datenstatus" class="{% if admin_section=='data_status' %}active{% endif %}"><span class="admin-sidebar-icon">◉</span>Datenstatus</a>
+    <a href="/admin/users" class="{% if admin_section=='users' %}active{% endif %}"><span class="admin-sidebar-icon">♙</span>Nutzer</a>
   </nav>
 
   <div class="admin-sidebar-group">Katalog</div>
