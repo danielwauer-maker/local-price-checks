@@ -184,7 +184,7 @@ def _collect_store_background(store_id: int) -> None:
     db = SessionLocal()
     try:
         store = db.get(Store, store_id)
-        if not store or not store.active or not store.benchmark_verified:
+        if not store or not store.active:
             return
         from .web_collector import collect_store_from_web
 
@@ -291,7 +291,7 @@ def store_offers(store_id: int, db: Session = Depends(get_db)):
 def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = current_user(db)
     store = db.get(Store, store_id)
-    if not store or not store.active or not store.benchmark_verified:
+    if not store or not store.active:
         raise HTTPException(status_code=404, detail="Market not available")
     row = db.query(FavoriteStore).filter_by(user_id=user.id, store_id=store_id).first()
     refresh_started = False
