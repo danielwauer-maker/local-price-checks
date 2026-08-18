@@ -7,6 +7,7 @@ from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .coverage_routes import router as coverage_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
+from .coverage_service import seed_initial_coverage
 from .media_routes import router as media_router
 from .ux_routes import router as ux_router
 from .prospect_routes import router as prospect_router
@@ -32,5 +33,6 @@ def startup_admin_catalog():
     try:
         seed_admin_catalog(db)
         backfill_auto_categories(db)
+        seed_initial_coverage(db)
     finally:
         db.close()
