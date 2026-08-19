@@ -96,6 +96,31 @@ class Offer(Base):
     product: Mapped[MasterProduct] = relationship()
 
 
+class OfferOccurrence(Base):
+    """One concrete appearance of an offer in a retailer prospect.
+
+    ``Offer`` intentionally stays deduplicated for public comparison. This table
+    keeps every distinct source occurrence (especially repeated appearances on
+    different pages) together with the retailer's original compact detail line.
+    Re-running the same scrape does not create duplicates because the
+    occurrence fingerprint is stable for offer/page/source text.
+    """
+    __tablename__ = "offer_occurrences"
+    __table_args__ = (UniqueConstraint("offer_id", "occurrence_fingerprint", name="uq_offer_occurrence"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id"), index=True)
+    prospect_page: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    occurrence_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    detail_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    package_size: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit_price_unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    offer: Mapped[Offer] = relationship()
+
+
 class OfferPriceReference(Base):
     """Optional UVP/regular-price comparison for a concrete offer.
 
