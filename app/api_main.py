@@ -9,6 +9,7 @@ from .admin_routes import router as admin_router
 from .admin_users_routes import router as admin_users_router
 from .admin_data_status_routes import router as admin_data_status_router
 from .admin_media_routes import router as admin_media_router
+from .admin_product_media_routes import router as admin_product_media_router
 from .admin_collector_routes import router as admin_collector_router
 from .admin_provenance_routes import router as admin_provenance_router
 from .admin_prospect_audit_routes import router as admin_prospect_audit_router
@@ -58,6 +59,7 @@ app.include_router(admin_router)
 app.include_router(admin_users_router)
 app.include_router(admin_data_status_router)
 app.include_router(admin_media_router)
+app.include_router(admin_product_media_router)
 app.include_router(admin_collector_router)
 app.include_router(admin_provenance_router)
 app.include_router(admin_prospect_audit_router)
