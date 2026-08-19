@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .clock import app_today
 from .config import settings
 from .models import CollectionRun, MasterProduct, Offer, Store
-from .prospect_models import Prospect
+from .prospect_models import OfferProvenance, Prospect, ProspectArchive
 
 
 def _json_default(value):
@@ -87,6 +87,8 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
         .all()
     )
     prospects = db.query(Prospect).order_by(Prospect.store_id, Prospect.period_key).all()
+    archives = db.query(ProspectArchive).order_by(ProspectArchive.store_id, ProspectArchive.fetched_at).all()
+    provenance = db.query(OfferProvenance).order_by(OfferProvenance.prospect_archive_id, OfferProvenance.offer_id).all()
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -104,6 +106,8 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "current_offers": len(offers),
                     "collection_runs_exported": len(runs),
                     "prospects": len(prospects),
+                    "prospect_archives": len(archives),
+                    "offer_provenance": len(provenance),
                 },
                 "runtime": {
                     "scheduler_enabled": settings.scheduler_enabled,
@@ -174,6 +178,43 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "local_file": _file_info(p.local_path),
                 }
                 for p in prospects
+            ],
+        )
+        _write_json(
+            zf,
+            "prospect_archives.json",
+            [
+                {
+                    "id": archive.id,
+                    "store_id": archive.store_id,
+                    "retailer": archive.retailer,
+                    "period": archive.period_key,
+                    "valid_from": archive.valid_from,
+                    "valid_to": archive.valid_to,
+                    "source_url": archive.source_url,
+                    "pdf_url": archive.pdf_url,
+                    "page_count": archive.page_count,
+                    "pdf_sha256": archive.pdf_sha256,
+                    "pdf_size_bytes": len(archive.pdf_bytes or b""),
+                    "fetched_at": archive.fetched_at,
+                    "local_file": _file_info(archive.local_path),
+                }
+                for archive in archives
+            ],
+        )
+        _write_json(
+            zf,
+            "offer_provenance.json",
+            [
+                {
+                    "id": row.id,
+                    "offer_id": row.offer_id,
+                    "prospect_archive_id": row.prospect_archive_id,
+                    "prospect_page": row.prospect_page,
+                    "source_url": row.source_url,
+                    "collected_at": row.collected_at,
+                }
+                for row in provenance
             ],
         )
         _write_csv(

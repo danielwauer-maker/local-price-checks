@@ -321,23 +321,8 @@ def _mark_print_cards(page) -> None:
     )
 
 
-def archive_rewe_from_collector_result(db, store: Store, result) -> str:
-    raw = result.get("raw")
-    if not raw:
-        raise RuntimeError("Erfolgreicher REWE-Lauf enthält kein archivierungsfähiges HTML")
-    html = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
-    if "<html" not in html.lower() and "<body" not in html.lower():
-        raise RuntimeError("REWE-Lauf enthält kein HTML-Dokument")
-
-    source_url = result.get("final_url") or getattr(result.get("source"), "url", None) or store.source_url
-    if not source_url:
-        raise RuntimeError("REWE-Quelle fehlt im erfolgreichen Lauf")
-    html = _inject_base_href(html, source_url)
-
-    target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / "current"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"rewe-session-web-v{SNAPSHOT_VERSION}-{store.id}-{app_today().isoformat()}.pdf"
-
+def _render_rewe_snapshot(html: str, source_url: str) -> bytes:
+    """Render captured HTML without navigating to the retailer a second time."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -363,7 +348,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             page.emulate_media(media="print")
             page.evaluate("window.scrollTo(0,0)")
             page.wait_for_timeout(250)
-            payload = page.pdf(
+            return page.pdf(
                 format="A4",
                 print_background=True,
                 margin={"top": "6mm", "right": "6mm", "bottom": "6mm", "left": "6mm"},
@@ -372,12 +357,32 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             context.close()
             browser.close()
 
+
+def archive_rewe_from_collector_result(db, store: Store, result) -> str:
+    raw = result.get("raw")
+    if not raw:
+        raise RuntimeError("Erfolgreicher REWE-Lauf enthält kein archivierungsfähiges HTML")
+    html = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    if "<html" not in html.lower() and "<body" not in html.lower():
+        raise RuntimeError("REWE-Lauf enthält kein HTML-Dokument")
+
+    source_url = result.get("final_url") or getattr(result.get("source"), "url", None) or store.source_url
+    if not source_url:
+        raise RuntimeError("REWE-Quelle fehlt im erfolgreichen Lauf")
+    html = _inject_base_href(html, source_url)
+
+    target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / "current"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"rewe-session-web-v{SNAPSHOT_VERSION}-{store.id}-{app_today().isoformat()}.pdf"
+
+    payload = _render_rewe_snapshot(html, source_url)
+
     if not payload.startswith(b"%PDF"):
         raise RuntimeError("REWE Session-Abbild konnte nicht als PDF erzeugt werden")
     target.write_bytes(payload)
 
     valid_from, valid_to = _validity_from_result(result)
-    from .prospects import save_prospect, _link_web_snapshot_provenance
+    from .prospects import save_prospect
 
     row = save_prospect(
         db,
@@ -389,59 +394,4 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
         valid_from=valid_from,
         valid_to=valid_to,
     )
-    archive = _latest_archive(db, store)
-    linked = 0
-    if archive:
-        try:
-            linked = int(_link_web_snapshot_provenance(db, store, archive) or 0)
-        except Exception:
-            db.rollback()
-    return f"audit=session-web-snapshot-v{SNAPSHOT_VERSION}:{row.page_count} Seiten; provenance={linked}"
-
-
-def install() -> None:
-    """Install the REWE session-archive wrapper on every collector entrypoint.
-
-    Several modules import ``collect_store_from_web`` directly. Replacing only
-    ``web_collector.collect_store_from_web`` is therefore insufficient because
-    those modules keep their original bound function reference. Patch every
-    known entrypoint so manual admin runs and scheduler runs both use the same
-    REWE session snapshot logic.
-    """
-    from . import web_collector
-
-    original = web_collector.collect_store_from_web
-    if getattr(original, "_lpc_rewe_session_patch", False):
-        wrapped = original
-    else:
-        def wrapped(db, store_name: str):
-            result, summary, run = original(db, store_name)
-            store = db.query(Store).filter(Store.name == store_name).first()
-            if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
-                try:
-                    if _needs_session_archive(db, store):
-                        status = archive_rewe_from_collector_result(db, store, result)
-                        web_collector._append_run_diagnostic(db, run, status)
-                except Exception as exc:
-                    db.rollback()
-                    web_collector._append_run_diagnostic(
-                        db,
-                        run,
-                        f"audit_session_fehler={type(exc).__name__}: {exc}",
-                    )
-            return result, summary, run
-
-        wrapped._lpc_rewe_session_patch = True
-        web_collector.collect_store_from_web = wrapped
-
-    # These modules import the function directly, so update their bound refs too.
-    try:
-        from . import admin_collector_routes
-        admin_collector_routes.collect_store_from_web = wrapped
-    except Exception:
-        pass
-    try:
-        from . import scheduler
-        scheduler.collect_store_from_web = wrapped
-    except Exception:
-        pass
+    return f"audit=session-web-snapshot-v{SNAPSHOT_VERSION}:{row.page_count} Seiten"

@@ -161,87 +161,6 @@ def _archive_downloaded_prospect(
     )
 
 
-def _trusted_structured_web_snapshot(
-    db: Session,
-    store: Store,
-    source_url: str,
-    *,
-    valid_from: date | None = None,
-    valid_to: date | None = None,
-) -> str:
-    """Archive an official retailer page after it has been selected for QA.
-
-    Chromium is installed in the production image, therefore this trusted
-    fallback is allowed even when the optional generic browser-discovery flag is
-    disabled. The resulting file is always labelled ``web-snapshot`` and never
-    presented as an original retailer PDF.
-    """
-    if not source_url.startswith("https://"):
-        raise CollectionError("Audit-Snapshot benötigt eine HTTPS-Händlerquelle")
-    if store.external_id and store.external_id not in source_url:
-        raise CollectionError("Händlerquelle enthält nicht die erwartete Markt-ID")
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception as exc:
-        raise CollectionError("Playwright ist für Audit-Snapshot nicht verfügbar") from exc
-
-    target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / "current"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"structured-web-{store.id}-{app_today().isoformat()}.pdf"
-    timeout = max(10, settings.collector_timeout_seconds) * 1000
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1440, "height": 1100})
-        try:
-            page.goto(source_url, wait_until="domcontentloaded", timeout=timeout)
-            for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen", "Alle Cookies akzeptieren"):
-                try:
-                    button = page.get_by_role("button", name=label, exact=False)
-                    if button.count():
-                        button.first.click(timeout=1500)
-                        break
-                except Exception:
-                    pass
-            last_height = 0
-            for _ in range(24):
-                height = int(page.evaluate("document.body.scrollHeight"))
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                page.wait_for_timeout(450)
-                if height == last_height:
-                    break
-                last_height = height
-            page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(500)
-            body = page.locator("body").inner_text(timeout=3000).lower()
-            blocked_markers = ("access denied", "waf challenge", "zeig uns, dass du ein mensch bist", "bot protection")
-            if any(marker in body for marker in blocked_markers):
-                raise CollectionError("Offizielle Händlerseite wurde durch Bot-/WAF-Schutz blockiert")
-            payload = page.pdf(
-                format="A4",
-                print_background=True,
-                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
-            )
-            if not payload.startswith(b"%PDF"):
-                raise CollectionError("Browser konnte kein Audit-PDF erzeugen")
-            target.write_bytes(payload)
-        finally:
-            browser.close()
-
-    from .prospects import save_prospect
-    row = save_prospect(
-        db,
-        store,
-        period_key="current",
-        source_url=source_url,
-        pdf_url=f"web-snapshot://{source_url}",
-        pdf_path=target,
-        valid_from=valid_from,
-        valid_to=valid_to,
-    )
-    return f"audit=web-snapshot:{row.page_count} Seiten"
-
-
 def _ensure_audit_artifact(db: Session, store: Store, source_url: str) -> str:
     """Create an audit artifact and always return a visible diagnostic."""
     primary_error: Exception | None = None
@@ -255,13 +174,6 @@ def _ensure_audit_artifact(db: Session, store: Store, source_url: str) -> str:
     except Exception as exc:
         primary_error = exc
         db.rollback()
-
-    if store.retailer == "REWE":
-        try:
-            return _trusted_structured_web_snapshot(db, store, source_url)
-        except Exception as fallback_error:
-            db.rollback()
-            return f"audit_fehler={type(fallback_error).__name__}: {fallback_error}; vorher={type(primary_error).__name__}: {primary_error}"
 
     return f"audit_fehler={type(primary_error).__name__}: {primary_error}"
 
@@ -408,8 +320,12 @@ def collect_store_from_web(db: Session, store_name: str):
     try:
         result, summary, run = collect_structured_for_store(db, store.name)
         if summary.imported:
-            audit_status = _ensure_audit_artifact(db, store, source.url)
-            _append_run_diagnostic(db, run, audit_status)
+            # Retailers with an explicit artifact adapter already archived the
+            # exact successful collector response. Other retailers retain the
+            # discovery fallback until their adapters migrate to this lifecycle.
+            if not result.get("_artifact_managed"):
+                audit_status = _ensure_audit_artifact(db, store, source.url)
+                _append_run_diagnostic(db, run, audit_status)
             return result, summary, run
     except Exception as exc:
         structured_error = exc
