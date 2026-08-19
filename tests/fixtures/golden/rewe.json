@@ -1,0 +1,19 @@
+{
+  "retailer": "REWE",
+  "source_type": "web_snapshot",
+  "cases": [
+    {
+      "id": "freixenet",
+      "collected": {"source_key":"rewe_golden","store_name":"REWE Golden","retailer":"REWE","product_name":"Freixenet Sekt","category":"Wein & Sekt","price":3.79,"regular_price":4.99,"unit_price":5.05,"unit_price_unit":"l","quantity":0.75,"unit":"l","source_text":"Freixenet Sekt je 750-ml-Fl., (1 l = 5,05 €) PDF Seite 4","source_url":"https://www.rewe.de/angebote/golden/","image_url":"https://img.invalid/freixenet.jpg","confidence":0.99},
+      "expected": {"accepted":true,"name":"Freixenet Sekt","price":3.79,"package_size":"750 ml","unit_price":5.05,"unit_price_unit":"l","page":4,"local":true,"image":true,"regular_price":4.99}
+    },
+    {
+      "id": "milka-variant-a",
+      "collected": {"source_key":"rewe_golden","store_name":"REWE Golden","retailer":"REWE","product_name":"Milka Schokolade","category":"Süßwaren","price":0.95,"unit_price":10.56,"unit_price_unit":"kg","quantity":90,"unit":"g","source_text":"Milka Schokolade je 90-g-Tafel, (1 kg = 10,56 €) PDF Seite 12","source_url":"https://www.rewe.de/angebote/golden/","image_url":"https://img.invalid/milka.jpg","confidence":0.99},
+      "expected": {"accepted":true,"name":"Milka Schokolade","price":0.95,"package_size":"90 g","unit_price":10.56,"unit_price_unit":"kg","page":12,"local":true,"image":true,"regular_price":null}
+    },
+    {"id":"bad-peanut","collected":{"source_key":"rewe_golden","store_name":"REWE Golden","retailer":"REWE","product_name":"Peanut","category":"Sonstiges","price":1.99,"source_text":"Peanut PDF Seite 19","source_url":"https://www.rewe.de/angebote/golden/","confidence":0.99},"expected":{"accepted":false}},
+    {"id":"bad-gegart","collected":{"source_key":"rewe_golden","store_name":"REWE Golden","retailer":"REWE","product_name":"gegart","category":"Sonstiges","price":2.49,"source_text":"gegart PDF Seite 20","source_url":"https://www.rewe.de/angebote/golden/","confidence":0.99},"expected":{"accepted":false}},
+    {"id":"bad-unit-label","collected":{"source_key":"rewe_golden","store_name":"REWE Golden","retailer":"REWE","product_name":"je St.","category":"Sonstiges","price":0.99,"source_text":"je St. PDF Seite 21","source_url":"https://www.rewe.de/angebote/golden/","confidence":0.99},"expected":{"accepted":false}}
+  ]
+}

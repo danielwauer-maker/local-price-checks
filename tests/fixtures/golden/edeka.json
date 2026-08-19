@@ -1,0 +1,8 @@
+{
+  "retailer": "EDEKA",
+  "source_type": "html_excerpt",
+  "cases": [
+    {"id":"gut-guenstig-milch","collected":{"source_key":"edeka_golden","store_name":"EDEKA Golden","retailer":"EDEKA","product_name":"GUT & GÜNSTIG H-Milch","category":"Molkerei","price":0.95,"unit_price":0.95,"unit_price_unit":"l","quantity":1,"unit":"l","source_text":"GUT & GÜNSTIG H-Milch je 1-l-Packung PDF Seite 1","source_url":"https://edeka.example/angebote","image_url":"https://img.invalid/milch.jpg","confidence":0.99},"expected":{"accepted":true,"name":"GUT & GÜNSTIG H-Milch","price":0.95,"package_size":"1 l","unit_price":0.95,"unit_price_unit":"l","page":1,"local":true,"image":true,"regular_price":null}},
+    {"id":"bananen","collected":{"source_key":"edeka_golden","store_name":"EDEKA Golden","retailer":"EDEKA","product_name":"Chiquita Bananen","category":"Obst & Gemüse","price":1.79,"unit_price":1.79,"unit_price_unit":"kg","quantity":1,"unit":"kg","source_text":"Chiquita Bananen je 1-kg-Bund PDF Seite 2","source_url":"https://edeka.example/angebote","confidence":0.99},"expected":{"accepted":true,"name":"Chiquita Bananen","price":1.79,"package_size":"1 kg","unit_price":1.79,"unit_price_unit":"kg","page":2,"local":true,"image":false,"regular_price":null}}
+  ]
+}

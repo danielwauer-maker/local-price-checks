@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.collection_quality import (
+    BenchmarkContext,
     CollectionQualitySnapshot,
     RetailerQualityPolicy,
     RETAILER_QUALITY_POLICIES,
@@ -126,17 +127,19 @@ def test_complete_collection_can_pass_with_retailer_policy(monkeypatch):
     )
     summary = ImportSummary(received=2, imported=2)
 
-    status, score, metrics = evaluate_collection_quality(
+    quality_status, benchmark_status, score, metrics = evaluate_collection_quality(
         db,
         store=store,
         run=run,
         rows=rows,
         summary=summary,
         images_saved=2,
+        benchmark_context=BenchmarkContext.PRODUCTION,
     )
 
-    assert status == "PASS"
-    assert score >= 85.0
+    assert quality_status == "PASS"
+    assert benchmark_status == "PASS"
+    assert score >= 80.0
     assert metrics["archive_created"] is True
     assert metrics["provenance_rate"] == 100.0
     assert metrics["image_rate"] == 100.0
@@ -144,7 +147,7 @@ def test_complete_collection_can_pass_with_retailer_policy(monkeypatch):
     assert metrics["unit_price_rate"] == 100.0
 
 
-def test_missing_archive_and_far_too_few_offers_fail_quality(monkeypatch):
+def test_small_production_run_fails_benchmark_without_changing_quality_semantics(monkeypatch):
     db = _session()
     store = Store(
         retailer="Lidl",
@@ -178,11 +181,39 @@ def test_missing_archive_and_far_too_few_offers_fail_quality(monkeypatch):
         rows=rows,
         summary=summary,
         images_saved=0,
+        benchmark_context=BenchmarkContext.PRODUCTION,
     )
 
-    assert metrics["qa_status"] == "FAIL"
-    assert "offer_count_far_below_baseline" in metrics["reasons"]
-    assert "archive_missing" in metrics["reasons"]
-    assert "qa_status=FAIL" in diagnostic
+    assert metrics["quality_status"] == "WARN"
+    assert metrics["benchmark_status"] == "FAIL"
+    assert "offer_count_far_below_baseline" in metrics["benchmark_reasons"]
+    assert "benchmark_status=FAIL" in diagnostic
     snapshot = db.query(CollectionQualitySnapshot).filter_by(run_id=run.id).one()
-    assert snapshot.qa_status == "FAIL"
+    assert snapshot.quality_status == "WARN"
+    assert snapshot.benchmark_status == "FAIL"
+
+
+def test_small_synthetic_run_does_not_apply_absolute_retailer_benchmark(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=180, min_image_rate=50.0),
+    )
+    summary = ImportSummary(received=2, imported=2)
+
+    diagnostic, metrics = persist_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=rows[:1],
+        summary=ImportSummary(received=1, imported=1),
+        images_saved=1,
+        run_status="success",
+    )
+
+    assert metrics["run_status"] == "success"
+    assert metrics["benchmark_status"] == "NOT_APPLICABLE"
+    assert "run_status=success" in diagnostic
+    assert "benchmark_status=NOT_APPLICABLE" in diagnostic

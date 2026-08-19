@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .clock import app_today
 from .config import settings
 from .models import CollectionRun, MasterProduct, Offer, Store
+from .collection_quality import CollectionQualitySnapshot
 from .prospect_models import OfferProvenance, Prospect, ProspectArchive
 
 
@@ -89,6 +90,13 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
     prospects = db.query(Prospect).order_by(Prospect.store_id, Prospect.period_key).all()
     archives = db.query(ProspectArchive).order_by(ProspectArchive.store_id, ProspectArchive.fetched_at).all()
     provenance = db.query(OfferProvenance).order_by(OfferProvenance.prospect_archive_id, OfferProvenance.offer_id).all()
+    quality_snapshots = (
+        db.query(CollectionQualitySnapshot)
+        .order_by(CollectionQualitySnapshot.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    quality_by_run = {snapshot.run_id: snapshot for snapshot in quality_snapshots}
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -108,6 +116,7 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "prospects": len(prospects),
                     "prospect_archives": len(archives),
                     "offer_provenance": len(provenance),
+                    "collection_quality_snapshots": len(quality_snapshots),
                 },
                 "runtime": {
                     "scheduler_enabled": settings.scheduler_enabled,
@@ -152,6 +161,9 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "started_at": r.started_at,
                     "finished_at": r.finished_at,
                     "status": r.status,
+                    "quality_status": quality_by_run[r.id].quality_status if r.id in quality_by_run else None,
+                    "benchmark_status": quality_by_run[r.id].benchmark_status if r.id in quality_by_run else None,
+                    "benchmark_context": quality_by_run[r.id].benchmark_context if r.id in quality_by_run else None,
                     "offers_received": r.offers_received,
                     "offers_imported": r.offers_imported,
                     "message": r.message,
@@ -178,6 +190,26 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "local_file": _file_info(p.local_path),
                 }
                 for p in prospects
+            ],
+        )
+        _write_json(
+            zf,
+            "collection_quality_snapshots.json",
+            [
+                {
+                    "id": snapshot.id,
+                    "run_id": snapshot.run_id,
+                    "store_id": snapshot.store_id,
+                    "retailer": snapshot.retailer,
+                    "run_status": snapshot.run_status,
+                    "quality_status": snapshot.quality_status,
+                    "benchmark_status": snapshot.benchmark_status,
+                    "benchmark_context": snapshot.benchmark_context,
+                    "quality_score": snapshot.quality_score,
+                    "metrics": json.loads(snapshot.metrics_json),
+                    "created_at": snapshot.created_at,
+                }
+                for snapshot in quality_snapshots
             ],
         )
         _write_json(

@@ -1,16 +1,22 @@
 from datetime import date, timedelta
+from uuid import uuid4
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.coverage_models import CoverageRegion
 from app.coverage_service import coverage_payload
-from app.db import Base, SessionLocal, engine
+from app.db import Base
 from app.models import MasterProduct, Offer, Store
 
 
 def test_coverage_counts_identical_offer_once_across_two_markets():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    db = SessionLocal()
+    db = sessionmaker(bind=engine, future=True)()
+    suffix = uuid4().hex[:10]
     region = CoverageRegion(
-        name="Dedupe Testregion",
+        name=f"Dedupe Testregion {suffix}",
         postal_code="57614",
         city="Steimel",
         center_lat=50.6199,
@@ -20,14 +26,14 @@ def test_coverage_counts_identical_offer_once_across_two_markets():
         active=True,
     )
     db.add(region)
-    product = MasterProduct(name="Dedupe Testartikel", normalized_key="coverage-dedupe-test")
+    product = MasterProduct(name="Dedupe Testartikel", normalized_key=f"coverage-dedupe-test-{suffix}")
     db.add(product)
     db.flush()
     stores = []
     for idx in range(2):
         store = Store(
             retailer="Netto Marken-Discount",
-            name=f"Dedupe Netto {idx}",
+            name=f"Dedupe Netto {suffix} {idx}",
             postal_code="57614",
             city="Steimel",
             address=f"Testweg {idx}",

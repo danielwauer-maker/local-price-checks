@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import re
 from .product_cleaning import clean_product_name, product_name_issue
 
-DESCRIPTIVE_ONLY={'tiefgefroren','gekühlt','gekuhlt','frisch','original','classic','klassik','mild','natur','bio','vegan','vegetarisch','extra','aktion','knaller','versch. sorten','verschiedene sorten','sortiert','gemischt','trocken','gekuehlt','tiefgekühlt','tiefgekuehlt','neu','angebot','angebote'}
+DESCRIPTIVE_ONLY={'tiefgefroren','gekühlt','gekuhlt','frisch','original','classic','klassik','mild','natur','bio','vegan','vegetarisch','extra','aktion','knaller','versch. sorten','verschiedene sorten','sortiert','gemischt','trocken','gekuehlt','tiefgekühlt','tiefgekuehlt','neu','angebot','angebote','peanut','gegart','je st','je st.'}
 SAFE_SINGLE_WORDS={'eis','öl','milch','tee','käse','butter','kaffee','joghurt'}
 PERCENT_ONLY=re.compile(r'^\s*\d{1,3}(?:[.,]\d+)?\s*%\s*(?:vol\.?|fett\s*i\.?\s*tr\.?)?\s*$',re.I)
 ATTRIBUTE_ONLY=re.compile(r'^(?:ca\.?\s*)?(?:tiefgefroren|gekühlt|frisch|original|classic|mild|natur|bio|vegan|vegetarisch|sortiert|gemischt)(?:\s+(?:mild|natur|classic|original|sortiert|gemischt))?$',re.I)

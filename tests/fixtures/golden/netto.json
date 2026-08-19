@@ -1,0 +1,8 @@
+{
+  "retailer": "Netto Marken-Discount",
+  "source_type": "html_excerpt",
+  "cases": [
+    {"id":"dallmayr","collected":{"source_key":"netto_golden","store_name":"Netto Golden","retailer":"Netto Marken-Discount","product_name":"Dallmayr Prodomo","category":"Kaffee","price":6.49,"regular_price":8.99,"unit_price":12.98,"unit_price_unit":"kg","quantity":500,"unit":"g","source_text":"Dallmayr Prodomo je 500-g-Packung PDF Seite 2","source_url":"https://wochenprospekt.netto-online.de/golden","image_url":"https://img.invalid/dallmayr.jpg","confidence":0.99},"expected":{"accepted":true,"name":"Dallmayr Prodomo","price":6.49,"package_size":"500 g","unit_price":12.98,"unit_price_unit":"kg","page":2,"local":true,"image":true,"regular_price":8.99}},
+    {"id":"haribo","collected":{"source_key":"netto_golden","store_name":"Netto Golden","retailer":"Netto Marken-Discount","product_name":"Haribo Goldbären","category":"Süßwaren","price":0.79,"unit_price":4.39,"unit_price_unit":"kg","quantity":175,"unit":"g","source_text":"Haribo Goldbären je 175-g-Beutel PDF Seite 8","source_url":"https://wochenprospekt.netto-online.de/golden","image_url":"https://img.invalid/haribo.jpg","confidence":0.99},"expected":{"accepted":true,"name":"Haribo Goldbären","price":0.79,"package_size":"175 g","unit_price":4.39,"unit_price_unit":"kg","page":8,"local":true,"image":true,"regular_price":null}}
+  ]
+}

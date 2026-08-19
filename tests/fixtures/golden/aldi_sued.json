@@ -1,0 +1,8 @@
+{
+  "retailer": "ALDI SÜD",
+  "source_type": "json_excerpt",
+  "cases": [
+    {"id":"nivea","collected":{"source_key":"aldi_sued_golden","store_name":"ALDI SÜD Golden","retailer":"ALDI SÜD","product_name":"NIVEA Deoroller","category":"Drogerie","price":2.49,"quantity":50,"unit":"ml","source_text":"NIVEA Deoroller je 50-ml-Flasche PDF Seite 4","source_url":"https://www.aldi-sued.de/angebote/golden","image_url":"https://img.invalid/nivea.jpg","confidence":0.99},"expected":{"accepted":true,"name":"NIVEA Deoroller","price":2.49,"package_size":"50 ml","unit_price":null,"unit_price_unit":null,"page":4,"local":true,"image":true,"regular_price":null}},
+    {"id":"leibniz","collected":{"source_key":"aldi_sued_golden","store_name":"ALDI SÜD Golden","retailer":"ALDI SÜD","product_name":"LEIBNIZ Butterkeks","category":"Süßwaren","price":1.19,"unit_price":5.95,"unit_price_unit":"kg","quantity":200,"unit":"g","source_text":"LEIBNIZ Butterkeks je 200-g-Packung PDF Seite 6","source_url":"https://www.aldi-sued.de/angebote/golden","image_url":"https://img.invalid/leibniz.jpg","confidence":0.99},"expected":{"accepted":true,"name":"LEIBNIZ Butterkeks","price":1.19,"package_size":"200 g","unit_price":5.95,"unit_price_unit":"kg","page":6,"local":true,"image":true,"regular_price":null}}
+  ]
+}

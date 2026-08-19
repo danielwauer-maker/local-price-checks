@@ -17,6 +17,7 @@ from .models import CollectionRun, Store
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
+from .collection_quality import BenchmarkContext, CollectionQualitySnapshot
 from .web_collector import collect_store_from_web
 
 BASE = Path(__file__).resolve().parent
@@ -70,7 +71,8 @@ def _run_store_collection_background(store_id: int) -> None:
         store = db.get(Store, store_id)
         if not store or not store.active:
             return
-        collect_store_from_web(db, store.name)
+        context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
+        collect_store_from_web(db, store.name, benchmark_context=context)
         if store.retailer == "Lidl":
             try:
                 from .engine_v140.lidl_manifest_debug import capture_lidl_manifest_debug
@@ -100,11 +102,24 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
         prospects[store.id] = current_prospect(db, store, "current")
         next_prospects[store.id] = current_prospect(db, store, "next")
     recent = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).limit(30).all()
+    run_ids = {run.id for run in recent}
+    run_ids.update(run.id for run in latest.values() if run is not None)
+    quality_by_run = {
+        snapshot.run_id: snapshot
+        for snapshot in (
+            db.query(CollectionQualitySnapshot)
+            .filter(CollectionQualitySnapshot.run_id.in_(run_ids))
+            .all()
+            if run_ids
+            else []
+        )
+    }
     return templates.TemplateResponse("admin_collector.html", {
         "request": request, "actor": actor, "stores": stores, "latest": latest,
         "prospects": prospects, "next_prospects": next_prospects, "recent": recent,
         "collected": collected, "scheduler_enabled": settings.scheduler_enabled,
         "manual_collection_enabled": settings.manual_collection_enabled,
+        "quality_by_run": quality_by_run,
     })
 
 

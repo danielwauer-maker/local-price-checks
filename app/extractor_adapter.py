@@ -100,7 +100,7 @@ def _find_store(db: Session, row: CollectedOffer) -> Store | None:
     return db.query(Store).filter(Store.retailer == row.retailer, Store.name.ilike(f"%{row.store_name}%")).first()
 
 
-def _prospect_page(source_text: str | None) -> int | None:
+def prospect_page_from_text(source_text: str | None) -> int | None:
     match = re.search(r"\bPDF\s+Seite\s+(\d+)\b", source_text or "", re.I)
     if not match:
         return None
@@ -125,7 +125,7 @@ def _matching_archive(db: Session, store: Store, valid_from, valid_to, source_ur
 
 
 def _save_offer_provenance(db: Session, *, offer: Offer, store: Store, row: CollectedOffer, valid_from, valid_to) -> None:
-    page = _prospect_page(row.source_text)
+    page = prospect_page_from_text(row.source_text)
     if page is None:
         return
     archive = _matching_archive(db, store, valid_from, valid_to, row.source_url or None)
@@ -152,7 +152,7 @@ def _save_offer_provenance(db: Session, *, offer: Offer, store: Store, row: Coll
 
 
 def _save_offer_occurrence(db: Session, offer: Offer, row: CollectedOffer, details: OfferTextDetails) -> None:
-    page = _prospect_page(row.source_text)
+    page = prospect_page_from_text(row.source_text)
     fingerprint_source = "|".join([
         str(page or ""),
         (row.product_name or "").strip().lower(),
@@ -224,16 +224,34 @@ def _enrich_from_detail_text(row: CollectedOffer) -> OfferTextDetails:
     return details
 
 
+@dataclass(frozen=True)
+class CollectedOfferAssessment:
+    accepted: bool
+    rejection: str | None
+    details: OfferTextDetails
+
+
+def assess_collected_offer(row: CollectedOffer) -> CollectedOfferAssessment:
+    """Apply the canonical online/local and product-quality admission rules."""
+    details = _enrich_from_detail_text(row)
+    local, _reason = classify_offer(row.source_text, row.source_url)
+    if not _row_is_local_offer(row) or not local:
+        return CollectedOfferAssessment(False, "online", details)
+    quality = evaluate_offer(row)
+    if not quality.accepted:
+        return CollectedOfferAssessment(False, "quality", details)
+    return CollectedOfferAssessment(True, None, details)
+
+
 def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
     for row in rows:
-        details = _enrich_from_detail_text(row)
-        local, _reason = classify_offer(row.source_text, row.source_url)
-        if not _row_is_local_offer(row) or not local:
+        assessment = assess_collected_offer(row)
+        details = assessment.details
+        if assessment.rejection == "online":
             counts["rejected_online"] += 1
             continue
-        quality = evaluate_offer(row)
-        if not quality.accepted:
+        if assessment.rejection == "quality":
             counts["rejected_quality"] += 1
             continue
         store = _find_store(db, row)

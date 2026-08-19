@@ -9,6 +9,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import admin_collector_routes, collection_service, prospects, rewe_audit_runtime
+from app.collection_quality import (
+    BenchmarkContext,
+    CollectionQualitySnapshot,
+    RETAILER_QUALITY_POLICIES,
+    RetailerQualityPolicy,
+)
 from app.db import Base
 from app.engine_v140.collectors import CollectedOffer
 from app.models import CollectionRun, Offer, OfferOccurrence, Store
@@ -44,7 +50,7 @@ def test_admin_background_rewe_collection_archives_successful_session(
         external_id="321019",
         source_url="https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
         active=True,
-        benchmark_verified=False,
+        benchmark_verified=True,
     )
     db.add(store)
     db.commit()
@@ -96,6 +102,11 @@ def test_admin_background_rewe_collection_archives_successful_session(
         "settings",
         replace(rewe_audit_runtime.settings, data_dir=tmp_path),
     )
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=1, min_image_rate=0.0),
+    )
 
     admin_collector_routes._run_store_collection_background(store_id)
 
@@ -110,6 +121,14 @@ def test_admin_background_rewe_collection_archives_successful_session(
     assert "archive_count=1" in (run.message or "")
     assert "provenance_links=1" in (run.message or "")
     assert "audit_fehler" not in (run.message or "")
+    assert "run_status=success" in (run.message or "")
+    assert "quality_status=PASS" in (run.message or "")
+    assert "benchmark_status=PASS" in (run.message or "")
+    snapshot = db.query(CollectionQualitySnapshot).one()
+    assert snapshot.run_status == "success"
+    assert snapshot.quality_status == "PASS"
+    assert snapshot.benchmark_status == "PASS"
+    assert snapshot.benchmark_context == "PRODUCTION"
 
     assert db.query(Offer).count() == 1
     assert db.query(OfferOccurrence).count() == 1
@@ -125,8 +144,12 @@ def test_admin_background_rewe_collection_archives_successful_session(
         manifest = json.loads(support_zip.read("manifest.json"))
         exported_archives = json.loads(support_zip.read("prospect_archives.json"))
         exported_provenance = json.loads(support_zip.read("offer_provenance.json"))
+        exported_quality = json.loads(support_zip.read("collection_quality_snapshots.json"))
     assert manifest["counts"]["prospect_archives"] == 1
     assert manifest["counts"]["offer_provenance"] == 1
+    assert manifest["counts"]["collection_quality_snapshots"] == 1
+    assert exported_quality[0]["quality_status"] == "PASS"
+    assert exported_quality[0]["benchmark_status"] == "PASS"
     assert exported_archives[0]["pdf_sha256"] == archive.pdf_sha256
     assert exported_provenance[0]["prospect_page"] == 1
     db.close()
@@ -184,6 +207,7 @@ def test_rewe_artifact_failure_preserves_recall_and_downgrades_health(
             "offers": [offer],
         },
         artifact_handler=BrokenArtifactHandler(),
+        benchmark_context=BenchmarkContext.PRODUCTION,
     )
 
     assert summary.imported == 1
@@ -191,6 +215,9 @@ def test_rewe_artifact_failure_preserves_recall_and_downgrades_health(
     assert run.status == "warning"
     assert "artifact_status=FAIL" in (run.message or "")
     assert "archive_created=false" in (run.message or "")
+    snapshot = db.query(CollectionQualitySnapshot).one()
+    assert snapshot.run_status == "warning"
+    assert snapshot.benchmark_status == "FAIL"
     db.close()
 
 

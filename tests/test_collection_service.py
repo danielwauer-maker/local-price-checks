@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
+from app.collection_quality import CollectionQualitySnapshot
 from app.models import CollectionRun, Offer, Store
 from app.engine_v140.collectors import CollectedOffer
 from app.engine_v140.prospect_pdf_engine import PdfParseResult
@@ -45,6 +46,9 @@ def test_collection_pipeline_records_success(monkeypatch, tmp_path):
     assert run.offers_received == 1
     assert run.offers_imported == 1
     assert db.query(Offer).count() == 1
+    snapshot = db.query(CollectionQualitySnapshot).one()
+    assert snapshot.run_status == "success"
+    assert snapshot.benchmark_status == "NOT_APPLICABLE"
 
 
 def test_collection_pipeline_records_failure(monkeypatch, tmp_path):

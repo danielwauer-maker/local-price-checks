@@ -1,0 +1,8 @@
+{
+  "retailer": "ALDI NORD",
+  "source_type": "json_excerpt",
+  "cases": [
+    {"id":"milsani-joghurt","collected":{"source_key":"aldi_nord_golden","store_name":"ALDI NORD Golden","retailer":"ALDI NORD","product_name":"MILSANI Joghurt mild","category":"Molkerei","price":0.69,"unit_price":1.38,"unit_price_unit":"kg","quantity":500,"unit":"g","source_text":"MILSANI Joghurt mild je 500-g-Becher PDF Seite 2","source_url":"https://www.aldi-nord.de/angebote/golden","image_url":"https://img.invalid/joghurt.jpg","confidence":0.99},"expected":{"accepted":true,"name":"MILSANI Joghurt mild","price":0.69,"package_size":"500 g","unit_price":1.38,"unit_price_unit":"kg","page":2,"local":true,"image":true,"regular_price":null}},
+    {"id":"rio-doro-saft","collected":{"source_key":"aldi_nord_golden","store_name":"ALDI NORD Golden","retailer":"ALDI NORD","product_name":"RIO D'ORO Orangensaft","category":"Getränke","price":1.49,"unit_price":1.49,"unit_price_unit":"l","quantity":1,"unit":"l","source_text":"RIO D'ORO Orangensaft je 1-l-Packung PDF Seite 5","source_url":"https://www.aldi-nord.de/angebote/golden","confidence":0.99},"expected":{"accepted":true,"name":"RIO D'ORO Orangensaft","price":1.49,"package_size":"1 l","unit_price":1.49,"unit_price_unit":"l","page":5,"local":true,"image":false,"regular_price":null}}
+  ]
+}

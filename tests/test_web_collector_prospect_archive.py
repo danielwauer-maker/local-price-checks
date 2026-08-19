@@ -29,8 +29,8 @@ def test_netto_archives_downloaded_pdf_before_offer_import(monkeypatch, tmp_path
     def archive(db, target_store, *, source_url, pdf_url, pdf_path):
         calls.append(("archive", target_store.name, source_url, pdf_url, str(pdf_path)))
 
-    def collect(db, store_name, target_pdf):
-        calls.append(("collect", store_name, str(target_pdf)))
+    def collect(db, store_name, target_pdf, *, benchmark_context):
+        calls.append(("collect", store_name, str(target_pdf), benchmark_context.value))
         return "parsed", "summary", "run"
 
     monkeypatch.setattr(web_collector, "_archive_downloaded_prospect", archive)
@@ -41,5 +41,6 @@ def test_netto_archives_downloaded_pdf_before_offer_import(monkeypatch, tmp_path
     assert result == ("parsed", "summary", "run")
     assert calls[0][0] == "archive"
     assert calls[1][0] == "collect"
+    assert calls[1][3] == "NOT_APPLICABLE"
     assert calls[0][2] == "https://example.test/prospect"
     assert calls[0][3] == "https://example.test/prospect.pdf"
