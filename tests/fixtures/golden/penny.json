@@ -1,0 +1,8 @@
+{
+  "retailer": "PENNY",
+  "source_type": "pdf_excerpt",
+  "cases": [
+    {"id":"best-moments-pizza","collected":{"source_key":"penny_golden","store_name":"PENNY Golden","retailer":"PENNY","product_name":"BEST MOMENTS Steinofenpizza","category":"Tiefkühl","price":2.49,"unit_price":6.23,"unit_price_unit":"kg","quantity":400,"unit":"g","source_text":"BEST MOMENTS Steinofenpizza je 400-g-Packung PDF Seite 3","source_url":"https://www.penny.de/angebote/golden","image_url":"https://img.invalid/pizza.jpg","confidence":0.99},"expected":{"accepted":true,"name":"BEST MOMENTS Steinofenpizza","price":2.49,"package_size":"400 g","unit_price":6.23,"unit_price_unit":"kg","page":3,"local":true,"image":true,"regular_price":null}},
+    {"id":"cola-variant","collected":{"source_key":"penny_golden","store_name":"PENNY Golden","retailer":"PENNY","product_name":"Coca-Cola Zero","category":"Getränke","price":1.19,"regular_price":1.49,"unit_price":0.95,"unit_price_unit":"l","quantity":1.25,"unit":"l","source_text":"Coca-Cola Zero je 1,25-l-Flasche PDF Seite 7","source_url":"https://www.penny.de/angebote/golden","image_url":"https://img.invalid/cola.jpg","confidence":0.99},"expected":{"accepted":true,"name":"Coca-Cola Zero","price":1.19,"package_size":"1,25 l","unit_price":0.95,"unit_price_unit":"l","page":7,"local":true,"image":true,"regular_price":1.49}}
+  ]
+}

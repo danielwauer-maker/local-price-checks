@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from .clock import app_today
+from .collection_quality import BenchmarkContext
 from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
@@ -189,15 +190,25 @@ def _append_run_diagnostic(db: Session, run, text: str) -> None:
         db.rollback()
 
 
-def _collect_netto_from_official_prospect(db: Session, store: Store, source):
+def _collect_netto_from_official_prospect(
+    db: Session,
+    store: Store,
+    source,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+):
     prospect_url = netto_weekly_prospect_url(store)
     pdf_url = discover_official_pdf(prospect_url)
     pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
     _archive_downloaded_prospect(db, store, source_url=prospect_url, pdf_url=pdf_url, pdf_path=pdf_path)
-    return collect_pdf_for_store(db, store.name, pdf_path)
+    return collect_pdf_for_store(db, store.name, pdf_path, benchmark_context=benchmark_context)
 
 
-def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
+def _collect_lidl_from_official_leaflet(
+    db: Session,
+    store: Store,
+    source,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+):
     """Resolve, capture and import the complete current Lidl action leaflet."""
     store_page = lidl_store_page_for(store.name)
     leaflet = resolve_lidl_leaflet(source.url, app_today(), store_page_url=store_page)
@@ -281,6 +292,7 @@ def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
         source_override=resolved_source,
         collector_fn=collector,
         before_import_fn=archive_before_import,
+        benchmark_context=benchmark_context,
     )
     context_status = "lidl_filiale=bestätigt" if leaflet.store_context_confirmed else "lidl_filiale=nicht_bestaetigt"
     _append_run_diagnostic(
@@ -294,7 +306,12 @@ def _collect_lidl_from_official_leaflet(db: Session, store: Store, source):
     return result, summary, run
 
 
-def collect_store_from_web(db: Session, store_name: str):
+def collect_store_from_web(
+    db: Session,
+    store_name: str,
+    *,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+):
     """Collect an active market for QA or production.
 
     Collection and release are deliberately separate. benchmark_verified is
@@ -312,13 +329,17 @@ def collect_store_from_web(db: Session, store_name: str):
         raise CollectionError(f"Keine Quelle registriert oder automatisch ableitbar für: {store.name}")
 
     if store.retailer == "Netto Marken-Discount":
-        return _collect_netto_from_official_prospect(db, store, source)
+        return _collect_netto_from_official_prospect(db, store, source, benchmark_context)
     if store.retailer == "Lidl":
-        return _collect_lidl_from_official_leaflet(db, store, source)
+        return _collect_lidl_from_official_leaflet(db, store, source, benchmark_context)
 
     structured_error = None
     try:
-        result, summary, run = collect_structured_for_store(db, store.name)
+        result, summary, run = collect_structured_for_store(
+            db,
+            store.name,
+            benchmark_context=benchmark_context,
+        )
         if summary.imported:
             # Retailers with an explicit artifact adapter already archived the
             # exact successful collector response. Other retailers retain the
@@ -334,7 +355,12 @@ def collect_store_from_web(db: Session, store_name: str):
         pdf_url = discover_official_pdf(source.url)
         pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
         _archive_downloaded_prospect(db, store, source_url=source.url, pdf_url=pdf_url, pdf_path=pdf_path)
-        return collect_pdf_for_store(db, store.name, pdf_path)
+        return collect_pdf_for_store(
+            db,
+            store.name,
+            pdf_path,
+            benchmark_context=benchmark_context,
+        )
     except Exception as pdf_error:
         if structured_error:
             raise CollectionError(

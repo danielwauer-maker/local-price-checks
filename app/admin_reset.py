@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .collection_quality import CollectionQualitySnapshot
 from .models import (
     CollectionRun,
     FavoriteProduct,
@@ -109,6 +110,11 @@ def reset_store_offers(db: Session, store: Store) -> dict[str, int]:
     offer_ids = [row[0] for row in rows]
     product_ids = {row[1] for row in rows}
     result = _delete_offer_graph(db, offer_ids)
+    result["quality_snapshots"] = (
+        db.query(CollectionQualitySnapshot)
+        .filter(CollectionQualitySnapshot.store_id == store.id)
+        .delete(synchronize_session=False)
+    )
     result["runs"] = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).delete(synchronize_session=False)
     db.flush()
     result["orphan_products"] = _prune_orphan_products(db, product_ids)
@@ -123,6 +129,11 @@ def reset_store_qa(db: Session, store: Store) -> dict[str, int]:
     product_ids = {row[1] for row in rows}
 
     result = _delete_offer_graph(db, offer_ids)
+    result["quality_snapshots"] = (
+        db.query(CollectionQualitySnapshot)
+        .filter(CollectionQualitySnapshot.store_id == store.id)
+        .delete(synchronize_session=False)
+    )
     result["runs"] = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).delete(synchronize_session=False)
 
     archives = db.query(ProspectArchive).filter(ProspectArchive.store_id == store.id).all()
@@ -170,6 +181,7 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
         "offers": db.query(Offer).count(),
         "products": db.query(MasterProduct).count(),
         "runs": db.query(CollectionRun).count(),
+        "quality_snapshots": db.query(CollectionQualitySnapshot).count(),
         "archives": db.query(ProspectArchive).count(),
     }
 
@@ -177,6 +189,7 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
     db.query(OfferProvenance).delete(synchronize_session=False)
     db.query(ProspectMissingItem).delete(synchronize_session=False)
     db.query(Offer).delete(synchronize_session=False)
+    db.query(CollectionQualitySnapshot).delete(synchronize_session=False)
     db.query(CollectionRun).delete(synchronize_session=False)
     db.query(Prospect).delete(synchronize_session=False)
     db.query(ProspectArchive).delete(synchronize_session=False)

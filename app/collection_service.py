@@ -6,6 +6,7 @@ from typing import Callable, Protocol
 
 from sqlalchemy.orm import Session
 
+from .collection_quality import BenchmarkContext, persist_collection_quality
 from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
 from .product_media import persist_collected_product_images
@@ -92,6 +93,38 @@ def _persist_images_best_effort(db: Session, rows) -> int:
         return 0
 
 
+def _record_collection_quality(
+    db: Session,
+    *,
+    store: Store,
+    run: CollectionRun,
+    rows: list,
+    summary: ImportSummary,
+    images_saved: int,
+    status: str,
+    benchmark_context: BenchmarkContext | str,
+) -> str:
+    """Persist QA without conflating it with technical run health."""
+    try:
+        diagnostic, _metrics = persist_collection_quality(
+            db,
+            store=store,
+            run=run,
+            rows=rows,
+            summary=summary,
+            images_saved=images_saved,
+            run_status=status,
+            benchmark_context=benchmark_context,
+        )
+    except Exception as exc:
+        db.rollback()
+        return (
+            f"run_status={status} quality_status=FAIL "
+            f"benchmark_status=NOT_APPLICABLE qa_error={type(exc).__name__}: {exc}"
+        )
+    return diagnostic
+
+
 def collect_structured_for_store(
     db: Session,
     store_name: str,
@@ -99,6 +132,7 @@ def collect_structured_for_store(
     collector_fn: Callable | None = None,
     before_import_fn: Callable | None = None,
     artifact_handler: CollectionArtifactHandler | None = None,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
 ):
     """Fetch one official source with the structured collector and import it.
 
@@ -158,10 +192,21 @@ def collect_structured_for_store(
             status = "warning" if summary.imported else "failed"
         else:
             status = "success" if summary.imported else "no_offers"
+
+        quality_diagnostic = _record_collection_quality(
+            db,
+            store=store,
+            run=run,
+            rows=rows,
+            summary=summary,
+            images_saved=images_saved,
+            status=status,
+            benchmark_context=benchmark_context,
+        )
         fetch = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
-        parts = [fetch, *artifact_diagnostics, _summary_message(summary, images_saved)]
+        parts = [fetch, *artifact_diagnostics, quality_diagnostic, _summary_message(summary, images_saved)]
         message = " | ".join(part for part in parts if part)
-        _finish_run(db, run, status, len(rows), summary.imported, message[:1000])
+        _finish_run(db, run, status, len(rows), summary.imported, message[:1800])
         return result, summary, run
     except Exception as exc:
         db.rollback()
@@ -170,7 +215,13 @@ def collect_structured_for_store(
         raise
 
 
-def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
+def collect_pdf_for_store(
+    db: Session,
+    store_name: str,
+    pdf_path: str | Path,
+    *,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+):
     """Parse one official/local prospect and import only validated local offers."""
     store, source = _store_and_source(db, store_name)
     run = _start_run(db, store, source.key + ":pdf")
@@ -179,9 +230,19 @@ def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
         summary: ImportSummary = import_collected_offers(db, parsed.rows)
         images_saved = _persist_images_best_effort(db, parsed.rows)
         status = "success" if summary.imported else "no_offers"
+        quality_diagnostic = _record_collection_quality(
+            db,
+            store=store,
+            run=run,
+            rows=list(parsed.rows),
+            summary=summary,
+            images_saved=images_saved,
+            status=status,
+            benchmark_context=benchmark_context,
+        )
         notes = " | ".join(parsed.notes[-3:]) if parsed.notes else ""
-        message = f"{notes} | {_summary_message(summary, images_saved)}".strip(" |")
-        _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1000])
+        message = f"{notes} | {quality_diagnostic} | {_summary_message(summary, images_saved)}".strip(" |")
+        _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1800])
         return parsed, summary, run
     except Exception as exc:
         db.rollback()
