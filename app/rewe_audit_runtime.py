@@ -45,9 +45,6 @@ PRINT_LAYOUT_CSS = r"""
     overflow: visible !important;
     contain: none !important;
   }
-  .lpc-print-card {
-    position: relative !important;
-  }
   img, picture, figure {
     break-inside: avoid-page !important;
     page-break-inside: avoid !important;
@@ -116,7 +113,7 @@ def _archive_is_current_layout(archive: ProspectArchive | None) -> bool:
 
 
 def _needs_session_archive(db, store: Store) -> bool:
-    """Refresh missing, consent-dirty or pre-current-layout REWE snapshots."""
+    """Refresh missing, consent-dirty or pre-current-layout REWE session snapshots."""
     archive = _latest_archive(db, store)
     return (
         archive is None
@@ -403,28 +400,48 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
 
 
 def install() -> None:
+    """Install the REWE session-archive wrapper on every collector entrypoint.
+
+    Several modules import ``collect_store_from_web`` directly. Replacing only
+    ``web_collector.collect_store_from_web`` is therefore insufficient because
+    those modules keep their original bound function reference. Patch every
+    known entrypoint so manual admin runs and scheduler runs both use the same
+    REWE session snapshot logic.
+    """
     from . import web_collector
 
     original = web_collector.collect_store_from_web
     if getattr(original, "_lpc_rewe_session_patch", False):
-        return
+        wrapped = original
+    else:
+        def wrapped(db, store_name: str):
+            result, summary, run = original(db, store_name)
+            store = db.query(Store).filter(Store.name == store_name).first()
+            if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
+                try:
+                    if _needs_session_archive(db, store):
+                        status = archive_rewe_from_collector_result(db, store, result)
+                        web_collector._append_run_diagnostic(db, run, status)
+                except Exception as exc:
+                    db.rollback()
+                    web_collector._append_run_diagnostic(
+                        db,
+                        run,
+                        f"audit_session_fehler={type(exc).__name__}: {exc}",
+                    )
+            return result, summary, run
 
-    def wrapped(db, store_name: str):
-        result, summary, run = original(db, store_name)
-        store = db.query(Store).filter(Store.name == store_name).first()
-        if store and store.retailer == "REWE" and getattr(summary, "imported", 0):
-            try:
-                if _needs_session_archive(db, store):
-                    status = archive_rewe_from_collector_result(db, store, result)
-                    web_collector._append_run_diagnostic(db, run, status)
-            except Exception as exc:
-                db.rollback()
-                web_collector._append_run_diagnostic(
-                    db,
-                    run,
-                    f"audit_session_fehler={type(exc).__name__}: {exc}",
-                )
-        return result, summary, run
+        wrapped._lpc_rewe_session_patch = True
+        web_collector.collect_store_from_web = wrapped
 
-    wrapped._lpc_rewe_session_patch = True
-    web_collector.collect_store_from_web = wrapped
+    # These modules import the function directly, so update their bound refs too.
+    try:
+        from . import admin_collector_routes
+        admin_collector_routes.collect_store_from_web = wrapped
+    except Exception:
+        pass
+    try:
+        from . import scheduler
+        scheduler.collect_store_from_web = wrapped
+    except Exception:
+        pass
