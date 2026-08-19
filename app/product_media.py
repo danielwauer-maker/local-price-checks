@@ -128,3 +128,40 @@ def persist_product_image(
     db.add(asset)
     db.flush()
     return asset
+
+
+def persist_collected_product_images(db: Session, rows) -> int:
+    """Attach collector image URLs to the already-imported master products."""
+    from .extractor_adapter import normalize_master_key
+
+    saved = 0
+    handled: set[tuple[int, str]] = set()
+    for row in rows or []:
+        image_url = (getattr(row, "image_url", None) or "").strip()
+        if not image_url:
+            continue
+        try:
+            key = normalize_master_key(
+                getattr(row, "product_name", ""),
+                getattr(row, "quantity", None),
+                getattr(row, "unit", None),
+            )
+        except Exception:
+            continue
+        product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
+        if not product:
+            continue
+        marker = (product.id, image_url)
+        if marker in handled:
+            continue
+        handled.add(marker)
+        asset = persist_product_image(
+            db,
+            product,
+            image_url,
+            alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
+        )
+        if asset:
+            saved += 1
+    db.commit()
+    return saved
