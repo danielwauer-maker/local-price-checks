@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
+from .product_media import persist_collected_product_images
 from .engine_v140.collectors import collect_one
 from .engine_v140.prospect_pdf_engine import PdfParseResult, parse_pdf_file
 from .engine_v140.source_registry import RetailSource, source_for_store_record
@@ -53,13 +54,22 @@ def _store_and_source(db: Session, store_name: str):
     return store, source
 
 
-def _summary_message(summary: ImportSummary) -> str:
+def _summary_message(summary: ImportSummary, images_saved: int = 0) -> str:
     return (
         f"Importdiagnose: qualität={summary.rejected_quality}, "
         f"markt={summary.rejected_store}, datum={summary.rejected_date}, "
         f"online={summary.rejected_online}, neuProdukte={summary.created_products}, "
-        f"neuAngebote={summary.created_offers}, aktualisiert={summary.updated_offers}"
+        f"neuAngebote={summary.created_offers}, aktualisiert={summary.updated_offers}, "
+        f"bilder={images_saved}"
     )
+
+
+def _persist_images_best_effort(db: Session, rows) -> int:
+    try:
+        return persist_collected_product_images(db, rows)
+    except Exception:
+        db.rollback()
+        return 0
 
 
 def collect_structured_for_store(
@@ -89,9 +99,10 @@ def collect_structured_for_store(
             before_import_fn(result)
         rows = result.get("offers") or []
         summary = import_collected_offers(db, rows)
+        images_saved = _persist_images_best_effort(db, rows)
         status = "success" if summary.imported else "no_offers"
         fetch = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
-        message = f"{fetch} | {_summary_message(summary)}"
+        message = f"{fetch} | {_summary_message(summary, images_saved)}"
         _finish_run(db, run, status, len(rows), summary.imported, message[:1000])
         return result, summary, run
     except Exception as exc:
@@ -108,9 +119,10 @@ def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
     try:
         parsed: PdfParseResult = parse_pdf_file(source, pdf_path)
         summary: ImportSummary = import_collected_offers(db, parsed.rows)
+        images_saved = _persist_images_best_effort(db, parsed.rows)
         status = "success" if summary.imported else "no_offers"
         notes = " | ".join(parsed.notes[-3:]) if parsed.notes else ""
-        message = f"{notes} | {_summary_message(summary)}".strip(" |")
+        message = f"{notes} | {_summary_message(summary, images_saved)}".strip(" |")
         _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1000])
         return parsed, summary, run
     except Exception as exc:
