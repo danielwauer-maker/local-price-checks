@@ -11,7 +11,7 @@ from .models import Store
 from .prospect_models import ProspectArchive
 
 
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 
 REWE_CONSENT_MARKERS = (
     "optionale cookies und technologien erlauben",
@@ -42,6 +42,11 @@ PRINT_LAYOUT_CSS = r"""
     break-inside: avoid-page !important;
     page-break-inside: avoid !important;
     -webkit-column-break-inside: avoid !important;
+    overflow: visible !important;
+    contain: none !important;
+  }
+  .lpc-print-card {
+    position: relative !important;
   }
   img, picture, figure {
     break-inside: avoid-page !important;
@@ -111,7 +116,7 @@ def _archive_is_current_layout(archive: ProspectArchive | None) -> bool:
 
 
 def _needs_session_archive(db, store: Store) -> bool:
-    """Refresh missing, consent-dirty or pre-layout-v2 REWE session snapshots."""
+    """Refresh missing, consent-dirty or pre-current-layout REWE snapshots."""
     archive = _latest_archive(db, store)
     return (
         archive is None
@@ -358,7 +363,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             _clean_snapshot_dom(page)
             _mark_print_cards(page)
             page.add_style_tag(content=PRINT_LAYOUT_CSS)
-            page.emulate_media(media="screen")
+            page.emulate_media(media="print")
             page.evaluate("window.scrollTo(0,0)")
             page.wait_for_timeout(250)
             payload = page.pdf(
