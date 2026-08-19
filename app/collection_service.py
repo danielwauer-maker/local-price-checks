@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,26 @@ from .engine_v140.source_registry import RetailSource, source_for_store_record
 
 class CollectionError(RuntimeError):
     pass
+
+
+class CollectionArtifactHandler(Protocol):
+    """Retailer adapter for artifacts produced by one collector result.
+
+    Artifact creation runs after the official source has been fetched but before
+    offer persistence. Finalization runs after import so provenance can link to
+    the newly persisted offers. Failures do not discard valid raw offers, but
+    they downgrade the collection run from ``success`` to ``warning``.
+    """
+
+    def archive_before_import(self, db: Session, store: Store, result: dict) -> str | None: ...
+
+    def finalize_after_import(
+        self,
+        db: Session,
+        store: Store,
+        result: dict,
+        summary: ImportSummary,
+    ) -> str | None: ...
 
 
 def _start_run(db: Session, store: Store, source_key: str) -> CollectionRun:
@@ -78,6 +98,7 @@ def collect_structured_for_store(
     source_override: RetailSource | None = None,
     collector_fn: Callable | None = None,
     before_import_fn: Callable | None = None,
+    artifact_handler: CollectionArtifactHandler | None = None,
 ):
     """Fetch one official source with the structured collector and import it.
 
@@ -86,23 +107,60 @@ def collect_structured_for_store(
     current leaflet and rendered with Chromium. ``before_import_fn`` may archive
     an immutable audit artifact before rows are imported, so exact page
     provenance can be persisted during ``import_collected_offers``.
+
+    ``artifact_handler`` is the production lifecycle for retailer-specific
+    archives. Unlike the legacy runtime patch, it receives the exact successful
+    collector result explicitly and can finalize provenance after import.
     """
     store, registered_source = _store_and_source(db, store_name)
     source = source_override or registered_source
     if source.retailer != store.retailer or source.store_name != store.name:
         raise CollectionError(f"Aufgelöste Quelle passt nicht zum Markt: {store.name}")
+    if artifact_handler is None:
+        from .collection_artifacts import artifact_handler_for
+
+        artifact_handler = artifact_handler_for(store)
 
     run = _start_run(db, store, source.key + ":web")
     try:
         result = (collector_fn or collect_one)(source)
+        result["_artifact_managed"] = artifact_handler is not None
+        artifact_diagnostics: list[str] = []
+        artifact_failed = False
+        if artifact_handler:
+            try:
+                diagnostic = artifact_handler.archive_before_import(db, store, result)
+                if diagnostic:
+                    artifact_diagnostics.append(diagnostic)
+            except Exception as exc:
+                db.rollback()
+                artifact_failed = True
+                artifact_diagnostics.append(
+                    f"artifact_status=FAIL archive_created=false error={type(exc).__name__}: {exc}"
+                )
         if before_import_fn:
             before_import_fn(result)
         rows = result.get("offers") or []
         summary = import_collected_offers(db, rows)
         images_saved = _persist_images_best_effort(db, rows)
-        status = "success" if summary.imported else "no_offers"
+        if artifact_handler and not artifact_failed:
+            try:
+                diagnostic = artifact_handler.finalize_after_import(db, store, result, summary)
+                if diagnostic:
+                    artifact_diagnostics.append(diagnostic)
+            except Exception as exc:
+                db.rollback()
+                artifact_failed = True
+                artifact_diagnostics.append(
+                    f"artifact_status=FAIL archive_created=true error={type(exc).__name__}: {exc}"
+                )
+        if artifact_failed:
+            status = "warning" if summary.imported else "failed"
+        else:
+            status = "success" if summary.imported else "no_offers"
         fetch = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
-        message = f"{fetch} | {_summary_message(summary, images_saved)}"
+        parts = [fetch, *artifact_diagnostics, _summary_message(summary, images_saved)]
+        message = " | ".join(part for part in parts if part)
         _finish_run(db, run, status, len(rows), summary.imported, message[:1000])
         return result, summary, run
     except Exception as exc:

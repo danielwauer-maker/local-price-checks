@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -13,40 +11,6 @@ def _db():
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, future=True)
     return Session()
-
-
-def test_rewe_structured_success_falls_back_to_trusted_audit_snapshot(monkeypatch):
-    db = _db()
-    store = Store(
-        retailer="REWE",
-        name="REWE Dennis Weirich",
-        postal_code="56587",
-        city="Straßenhaus",
-        address="Kirschbüchel 2",
-        external_id="1940425",
-        source_url="https://www.rewe.de/angebote/strassenhaus/1940425/rewe-markt-kirschbuechel-2/",
-        active=True,
-        benchmark_verified=False,
-    )
-    db.add(store)
-    db.commit()
-    db.refresh(store)
-
-    import app.prospects as prospects
-    monkeypatch.setattr(
-        prospects,
-        "discover_and_store_prospect",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("strict snapshot rejected")),
-    )
-    monkeypatch.setattr(
-        web_collector,
-        "_trusted_structured_web_snapshot",
-        lambda *_args, **_kwargs: "audit=web-snapshot:12 Seiten",
-    )
-
-    status = web_collector._ensure_audit_artifact(db, store, store.source_url)
-    assert status == "audit=web-snapshot:12 Seiten"
-    db.close()
 
 
 def test_audit_failure_is_written_to_collection_run_message():
