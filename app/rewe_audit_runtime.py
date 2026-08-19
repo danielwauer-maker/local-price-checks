@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import html as html_module
 import re
 
 from .clock import app_today
@@ -9,6 +10,8 @@ from .config import settings
 from .models import Store
 from .prospect_models import ProspectArchive
 
+
+SNAPSHOT_VERSION = 2
 
 REWE_CONSENT_MARKERS = (
     "optionale cookies und technologien erlauben",
@@ -18,6 +21,34 @@ REWE_CONSENT_MARKERS = (
     "partner verwenden cookies",
     "verarbeitung ihrer daten",
 )
+
+
+PRINT_LAYOUT_CSS = r"""
+@media print {
+  html, body {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  .lpc-print-card,
+  article,
+  [data-testid*="product" i],
+  [data-testid*="offer" i],
+  [class*="product-card" i],
+  [class*="product_card" i],
+  [class*="offer-card" i],
+  [class*="offer_card" i],
+  [class*="product-tile" i],
+  [class*="product_tile" i] {
+    break-inside: avoid-page !important;
+    page-break-inside: avoid !important;
+    -webkit-column-break-inside: avoid !important;
+  }
+  img, picture, figure {
+    break-inside: avoid-page !important;
+    page-break-inside: avoid !important;
+  }
+}
+"""
 
 
 def _parse_date(value):
@@ -51,12 +82,10 @@ def _latest_archive(db, store: Store):
 
 
 def _has_archived_prospect(db, store: Store) -> bool:
-    """Return whether an immutable archive exists for this store."""
     return _latest_archive(db, store) is not None
 
 
 def _archive_contains_consent(archive: ProspectArchive | None) -> bool:
-    """Detect whether an archived REWE web snapshot still contains the CMP."""
     if not archive or not archive.pdf_bytes:
         return False
     if not str(archive.pdf_url or "").startswith("web-snapshot://"):
@@ -75,14 +104,39 @@ def _archive_contains_consent(archive: ProspectArchive | None) -> bool:
     return any(marker in normalised for marker in REWE_CONSENT_MARKERS)
 
 
+def _archive_is_current_layout(archive: ProspectArchive | None) -> bool:
+    if not archive:
+        return False
+    return f"/v{SNAPSHOT_VERSION}/" in str(archive.pdf_url or "")
+
+
 def _needs_session_archive(db, store: Store) -> bool:
-    """Create a snapshot if none exists or the latest archived one still has CMP UI."""
+    """Refresh missing, consent-dirty or pre-layout-v2 REWE session snapshots."""
     archive = _latest_archive(db, store)
-    return archive is None or _archive_contains_consent(archive)
+    return (
+        archive is None
+        or _archive_contains_consent(archive)
+        or not _archive_is_current_layout(archive)
+    )
+
+
+def _inject_base_href(document: str, source_url: str) -> str:
+    """Give set_content() the original REWE URL as base for relative assets."""
+    if re.search(r"<base\b", document, flags=re.I):
+        return document
+    base = f'<base href="{html_module.escape(source_url, quote=True)}">'
+    head = re.search(r"<head(?:\s[^>]*)?>", document, flags=re.I)
+    if head:
+        pos = head.end()
+        return document[:pos] + base + document[pos:]
+    html_tag = re.search(r"<html(?:\s[^>]*)?>", document, flags=re.I)
+    if html_tag:
+        pos = html_tag.end()
+        return document[:pos] + "<head>" + base + "</head>" + document[pos:]
+    return "<head>" + base + "</head>" + document
 
 
 def _clean_snapshot_dom(page) -> None:
-    """Remove REWE consent UI from the captured session before PDF rendering."""
     cleanup_js = """(markers) => {
       document.querySelectorAll('script').forEach(el => el.remove());
 
@@ -127,7 +181,6 @@ def _clean_snapshot_dom(page) -> None:
             });
           } catch (_) {}
         }
-
         let elements = [];
         try { elements = Array.from(root.querySelectorAll('*')); } catch (_) {}
         for (const el of elements) {
@@ -184,8 +237,89 @@ def _clean_snapshot_dom(page) -> None:
             pass
 
 
+def _prepare_snapshot_assets(page) -> None:
+    """Trigger lazy content, promote lazy image URLs and wait for image decode."""
+    page.evaluate(
+        """async () => {
+          const promoteLazy = () => {
+            document.querySelectorAll('img').forEach(img => {
+              img.loading = 'eager';
+              const src = img.getAttribute('src') || '';
+              const candidates = [
+                img.getAttribute('data-src'),
+                img.getAttribute('data-lazy-src'),
+                img.getAttribute('data-original'),
+                img.getAttribute('data-image-src')
+              ].filter(Boolean);
+              if ((!src || src.startsWith('data:image/svg') || src.includes('placeholder')) && candidates.length) {
+                img.setAttribute('src', candidates[0]);
+              }
+              const srcset = img.getAttribute('srcset');
+              const lazySrcset = img.getAttribute('data-srcset') || img.getAttribute('data-lazy-srcset');
+              if (!srcset && lazySrcset) img.setAttribute('srcset', lazySrcset);
+            });
+            document.querySelectorAll('source').forEach(source => {
+              const lazySrcset = source.getAttribute('data-srcset') || source.getAttribute('data-lazy-srcset');
+              if (!source.getAttribute('srcset') && lazySrcset) source.setAttribute('srcset', lazySrcset);
+            });
+          };
+
+          promoteLazy();
+          const step = Math.max(500, Math.floor(window.innerHeight * 0.75));
+          const maxY = Math.max(document.body?.scrollHeight || 0, document.documentElement.scrollHeight || 0);
+          for (let y = 0; y <= maxY; y += step) {
+            window.scrollTo(0, y);
+            await new Promise(resolve => setTimeout(resolve, 90));
+            promoteLazy();
+          }
+          window.scrollTo(0, 0);
+          await new Promise(resolve => setTimeout(resolve, 250));
+
+          const waits = Array.from(document.images || []).map(img => {
+            if (img.complete) {
+              if (img.decode) return img.decode().catch(() => undefined);
+              return Promise.resolve();
+            }
+            return new Promise(resolve => {
+              const done = () => resolve();
+              img.addEventListener('load', done, {once: true});
+              img.addEventListener('error', done, {once: true});
+              setTimeout(done, 2500);
+            });
+          });
+          await Promise.allSettled(waits);
+        }"""
+    )
+
+
+def _mark_print_cards(page) -> None:
+    """Mark visible price cards so Chromium keeps each card together on A4."""
+    page.evaluate(
+        """() => {
+          const priceRe = /(?:\d{1,3}[.,]\d{2})\s*€/;
+          const candidates = Array.from(document.querySelectorAll('article, li, section, div'));
+          for (const el of candidates) {
+            const text = (el.innerText || '').trim();
+            if (!priceRe.test(text)) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 180 || rect.width > Math.max(760, window.innerWidth * 0.75)) continue;
+            if (rect.height < 120 || rect.height > 950) continue;
+            let parent = el.parentElement;
+            let nestedPriceCards = 0;
+            if (parent) {
+              try {
+                nestedPriceCards = Array.from(parent.children).filter(child => priceRe.test((child.innerText || '').trim())).length;
+              } catch (_) {}
+            }
+            if (nestedPriceCards >= 2 || el.tagName === 'ARTICLE' || el.tagName === 'LI') {
+              el.classList.add('lpc-print-card');
+            }
+          }
+        }"""
+    )
+
+
 def archive_rewe_from_collector_result(db, store: Store, result) -> str:
-    """Render the HTML that the successful REWE collector already received."""
     raw = result.get("raw")
     if not raw:
         raise RuntimeError("Erfolgreicher REWE-Lauf enthält kein archivierungsfähiges HTML")
@@ -196,10 +330,11 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
     source_url = result.get("final_url") or getattr(result.get("source"), "url", None) or store.source_url
     if not source_url:
         raise RuntimeError("REWE-Quelle fehlt im erfolgreichen Lauf")
+    html = _inject_base_href(html, source_url)
 
     target_dir = settings.data_dir / "prospects" / "viewer" / str(store.id) / "current"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"rewe-session-web-{store.id}-{app_today().isoformat()}.pdf"
+    target = target_dir / f"rewe-session-web-v{SNAPSHOT_VERSION}-{store.id}-{app_today().isoformat()}.pdf"
 
     from playwright.sync_api import sync_playwright
 
@@ -215,17 +350,21 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
         try:
             page.set_content(html, wait_until="domcontentloaded", timeout=45000)
             try:
-                page.wait_for_load_state("networkidle", timeout=8000)
+                page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(1500)
             _clean_snapshot_dom(page)
-            page.wait_for_timeout(150)
+            _prepare_snapshot_assets(page)
             _clean_snapshot_dom(page)
+            _mark_print_cards(page)
+            page.add_style_tag(content=PRINT_LAYOUT_CSS)
+            page.emulate_media(media="screen")
             page.evaluate("window.scrollTo(0,0)")
+            page.wait_for_timeout(250)
             payload = page.pdf(
                 format="A4",
                 print_background=True,
-                margin={"top": "8mm", "right": "8mm", "bottom": "8mm", "left": "8mm"},
+                margin={"top": "6mm", "right": "6mm", "bottom": "6mm", "left": "6mm"},
             )
         finally:
             context.close()
@@ -243,7 +382,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
         store,
         period_key="current",
         source_url=source_url,
-        pdf_url=f"web-snapshot://captured-session/{store.id}/{app_today().isoformat()}",
+        pdf_url=f"web-snapshot://captured-session/v{SNAPSHOT_VERSION}/{store.id}/{app_today().isoformat()}",
         pdf_path=target,
         valid_from=valid_from,
         valid_to=valid_to,
@@ -255,7 +394,7 @@ def archive_rewe_from_collector_result(db, store: Store, result) -> str:
             linked = int(_link_web_snapshot_provenance(db, store, archive) or 0)
         except Exception:
             db.rollback()
-    return f"audit=session-web-snapshot:{row.page_count} Seiten; provenance={linked}"
+    return f"audit=session-web-snapshot-v{SNAPSHOT_VERSION}:{row.page_count} Seiten; provenance={linked}"
 
 
 def install() -> None:
