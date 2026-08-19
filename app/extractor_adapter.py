@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import re
 import unicodedata
 
 from sqlalchemy.orm import Session
 
-from .models import MasterProduct, Offer, OfferPriceReference, Store
+from .models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, Store
+from .offer_text import OfferTextDetails, parse_offer_text
 from .prospect_models import OfferProvenance, ProspectArchive
 from .admin_learning import resolve_product_alias
 from .category_classifier import ensure_auto_category
@@ -41,12 +43,6 @@ _LIDL_EXPLICIT_ONLINE_ONLY_PATTERNS = (
 
 
 def _row_has_explicit_online_only_marker(row: CollectedOffer) -> bool:
-    """Return True only for explicit retailer-provided online-only signals.
-
-    Lidl uses canonical ``/p/.../p123`` product URLs for both normal leaflet
-    offers and web-shop-only items. Therefore a Lidl product URL by itself must
-    never be treated as evidence that an offer is online-only.
-    """
     text = row.source_text or ""
     return any(re.search(pattern, text, flags=re.I) for pattern in _LIDL_EXPLICIT_ONLINE_ONLY_PATTERNS)
 
@@ -155,6 +151,39 @@ def _save_offer_provenance(db: Session, *, offer: Offer, store: Store, row: Coll
     ))
 
 
+def _save_offer_occurrence(db: Session, offer: Offer, row: CollectedOffer, details: OfferTextDetails) -> None:
+    page = _prospect_page(row.source_text)
+    fingerprint_source = "|".join([
+        str(page or ""),
+        (row.product_name or "").strip().lower(),
+        str(row.price or ""),
+        (details.detail_text or "").strip().lower(),
+        (row.source_url or "").strip(),
+    ])
+    fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8", errors="ignore")).hexdigest()
+    existing = db.query(OfferOccurrence).filter(
+        OfferOccurrence.offer_id == offer.id,
+        OfferOccurrence.occurrence_fingerprint == fingerprint,
+    ).first()
+    if existing:
+        existing.collected_at = datetime.utcnow()
+        if row.source_text:
+            existing.source_text = row.source_text
+        return
+    db.add(OfferOccurrence(
+        offer_id=offer.id,
+        prospect_page=page,
+        occurrence_fingerprint=fingerprint,
+        detail_text=details.detail_text,
+        package_size=details.package_label or package_size_label(row.quantity, row.unit),
+        unit_price=row.unit_price,
+        unit_price_unit=row.unit_price_unit,
+        source_text=row.source_text or None,
+        source_url=row.source_url or None,
+        collected_at=datetime.utcnow(),
+    ))
+
+
 def _save_price_reference(db: Session, offer: Offer, row: CollectedOffer) -> None:
     try:
         reference = float(row.regular_price) if row.regular_price is not None else None
@@ -182,9 +211,23 @@ def _save_price_reference(db: Session, offer: Offer, row: CollectedOffer) -> Non
         ))
 
 
+def _enrich_from_detail_text(row: CollectedOffer) -> OfferTextDetails:
+    details = parse_offer_text(row.source_text)
+    if row.quantity is None and details.quantity is not None:
+        row.quantity = details.quantity
+    if not row.unit and details.unit:
+        row.unit = details.unit
+    if row.unit_price is None and details.unit_price is not None:
+        row.unit_price = details.unit_price
+    if not row.unit_price_unit and details.unit_price_unit:
+        row.unit_price_unit = details.unit_price_unit
+    return details
+
+
 def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
     for row in rows:
+        details = _enrich_from_detail_text(row)
         local, _reason = classify_offer(row.source_text, row.source_url)
         if not _row_is_local_offer(row) or not local:
             counts["rejected_online"] += 1
@@ -208,11 +251,14 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
         product = resolve_product_alias(db, key)
         if not product:
             product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
+        package_label = details.package_label or package_size_label(row.quantity, row.unit)
         if not product:
-            product = MasterProduct(brand=None, name=name, package_size=package_size_label(row.quantity, row.unit), normalized_key=key)
+            product = MasterProduct(brand=None, name=name, package_size=package_label, normalized_key=key)
             db.add(product)
             db.flush()
             counts["created_products"] += 1
+        elif not product.package_size and package_label:
+            product.package_size = package_label
         ensure_auto_category(db, product)
 
         offer = db.query(Offer).filter(
@@ -238,8 +284,10 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
             counts["created_offers"] += 1
         else:
             offer.valid_to = valid_to
-            offer.unit_price = row.unit_price
-            offer.unit_price_unit = row.unit_price_unit
+            if row.unit_price is not None:
+                offer.unit_price = row.unit_price
+            if row.unit_price_unit:
+                offer.unit_price_unit = row.unit_price_unit
             offer.local_store_offer = True
             if row.source_url:
                 offer.source_url = row.source_url
@@ -247,6 +295,7 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
 
         _save_price_reference(db, offer, row)
         _save_offer_provenance(db, offer=offer, store=store, row=row, valid_from=valid_from, valid_to=valid_to)
+        _save_offer_occurrence(db, offer, row, details)
         counts["imported"] += 1
 
     db.commit()
