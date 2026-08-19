@@ -26,6 +26,13 @@ from .prospect_routes import router as prospect_router
 from .admin_seed import seed_admin_catalog
 from .category_classifier import backfill_auto_categories
 from .db import SessionLocal
+from .rewe_audit_runtime import install as install_rewe_audit_runtime
+
+# Install after collector/admin modules are imported so their direct function
+# references can be replaced as well. This makes manual admin runs and scheduler
+# runs use the REWE successful-session archive path instead of a second WAF-prone
+# request to rewe.de.
+install_rewe_audit_runtime()
 
 _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 
