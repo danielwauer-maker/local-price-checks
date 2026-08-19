@@ -6,6 +6,7 @@ from typing import Callable, Protocol
 
 from sqlalchemy.orm import Session
 
+from .collection_quality import persist_collection_quality
 from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
 from .product_media import persist_collected_product_images
@@ -92,6 +93,39 @@ def _persist_images_best_effort(db: Session, rows) -> int:
         return 0
 
 
+def _apply_quality_gate(
+    db: Session,
+    *,
+    store: Store,
+    run: CollectionRun,
+    rows: list,
+    summary: ImportSummary,
+    images_saved: int,
+    status: str,
+) -> tuple[str, str]:
+    """Persist automatic QA and downgrade optimistic run states when needed."""
+    try:
+        diagnostic, metrics = persist_collection_quality(
+            db,
+            store=store,
+            run=run,
+            rows=rows,
+            summary=summary,
+            images_saved=images_saved,
+        )
+    except Exception as exc:
+        db.rollback()
+        diagnostic = f"qa_status=WARN qa_error={type(exc).__name__}: {exc}"
+        return ("warning" if summary.imported else "failed"), diagnostic
+
+    qa_status = metrics["qa_status"]
+    if qa_status == "FAIL":
+        status = "warning" if summary.imported else "failed"
+    elif qa_status == "WARN" and status == "success":
+        status = "warning"
+    return status, diagnostic
+
+
 def collect_structured_for_store(
     db: Session,
     store_name: str,
@@ -158,10 +192,20 @@ def collect_structured_for_store(
             status = "warning" if summary.imported else "failed"
         else:
             status = "success" if summary.imported else "no_offers"
+
+        status, quality_diagnostic = _apply_quality_gate(
+            db,
+            store=store,
+            run=run,
+            rows=rows,
+            summary=summary,
+            images_saved=images_saved,
+            status=status,
+        )
         fetch = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
-        parts = [fetch, *artifact_diagnostics, _summary_message(summary, images_saved)]
+        parts = [fetch, *artifact_diagnostics, quality_diagnostic, _summary_message(summary, images_saved)]
         message = " | ".join(part for part in parts if part)
-        _finish_run(db, run, status, len(rows), summary.imported, message[:1000])
+        _finish_run(db, run, status, len(rows), summary.imported, message[:1800])
         return result, summary, run
     except Exception as exc:
         db.rollback()
@@ -179,9 +223,18 @@ def collect_pdf_for_store(db: Session, store_name: str, pdf_path: str | Path):
         summary: ImportSummary = import_collected_offers(db, parsed.rows)
         images_saved = _persist_images_best_effort(db, parsed.rows)
         status = "success" if summary.imported else "no_offers"
+        status, quality_diagnostic = _apply_quality_gate(
+            db,
+            store=store,
+            run=run,
+            rows=list(parsed.rows),
+            summary=summary,
+            images_saved=images_saved,
+            status=status,
+        )
         notes = " | ".join(parsed.notes[-3:]) if parsed.notes else ""
-        message = f"{notes} | {_summary_message(summary, images_saved)}".strip(" |")
-        _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1000])
+        message = f"{notes} | {quality_diagnostic} | {_summary_message(summary, images_saved)}".strip(" |")
+        _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1800])
         return parsed, summary, run
     except Exception as exc:
         db.rollback()
