@@ -28,6 +28,21 @@ class ShoppingItemCheck(Base):
     checked: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class FavoriteAlternativePreference(Base):
+    """Per-favorite opt-in for broader product-family recommendations.
+
+    Kept in an additive table so existing SQLite installations receive it via
+    ``Base.metadata.create_all`` without an in-place migration.
+    """
+
+    __tablename__ = "favorite_alternative_preferences"
+    __table_args__ = (UniqueConstraint("user_id", "master_product_id", name="uq_favorite_alternative_preference"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class ProfilePayload(BaseModel):
     display_name: str
     postal_code: str
@@ -38,16 +53,49 @@ class CheckedPayload(BaseModel):
     checked: bool
 
 
+class FavoriteAlternativesPayload(BaseModel):
+    enabled: bool
+
+
 @router.get("/bootstrap")
 def ux_bootstrap(db: Session = Depends(get_db)):
     user = current_user(db)
     favorites = [str(x.master_product_id) for x in db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()]
     checked = [str(x.master_product_id) for x in db.query(ShoppingItemCheck).filter(ShoppingItemCheck.user_id == user.id, ShoppingItemCheck.checked.is_(True)).all()]
+    alternative_preferences = {
+        str(x.master_product_id): bool(x.enabled)
+        for x in db.query(FavoriteAlternativePreference).filter(FavoriteAlternativePreference.user_id == user.id).all()
+    }
     return {
         "profile": {"displayName": user.display_name, "postalCode": user.postal_code or "", "city": user.city or ""},
         "productFavorites": favorites,
+        "favoriteAlternatives": alternative_preferences,
         "checked": checked,
     }
+
+
+@router.get("/favorite-alternatives")
+def favorite_alternatives(db: Session = Depends(get_db)):
+    user = current_user(db)
+    return {
+        str(x.master_product_id): bool(x.enabled)
+        for x in db.query(FavoriteAlternativePreference).filter(FavoriteAlternativePreference.user_id == user.id).all()
+    }
+
+
+@router.put("/favorites/{product_id}/alternatives")
+def set_favorite_alternatives(product_id: int, payload: FavoriteAlternativesPayload, db: Session = Depends(get_db)):
+    user = current_user(db)
+    favorite = db.query(FavoriteProduct).filter_by(user_id=user.id, master_product_id=product_id).first()
+    if not favorite:
+        raise HTTPException(404, "Favorite product not found")
+    row = db.query(FavoriteAlternativePreference).filter_by(user_id=user.id, master_product_id=product_id).first()
+    if row:
+        row.enabled = payload.enabled
+    else:
+        db.add(FavoriteAlternativePreference(user_id=user.id, master_product_id=product_id, enabled=payload.enabled))
+    db.commit()
+    return {"productId": str(product_id), "enabled": payload.enabled}
 
 
 @router.put("/profile")
@@ -72,6 +120,7 @@ def toggle_product_favorite(product_id: int, db: Session = Depends(get_db)):
     row = db.query(FavoriteProduct).filter_by(user_id=user.id, master_product_id=product_id).first()
     if row:
         db.delete(row)
+        db.query(FavoriteAlternativePreference).filter_by(user_id=user.id, master_product_id=product_id).delete()
         active = False
     else:
         db.add(FavoriteProduct(user_id=user.id, master_product_id=product_id))
