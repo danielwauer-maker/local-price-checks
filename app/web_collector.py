@@ -5,6 +5,7 @@ from datetime import date
 import hashlib
 import html as html_lib
 import re
+import time
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -14,10 +15,11 @@ from sqlalchemy.orm import Session
 
 from .clock import app_today
 from .collection_quality import BenchmarkContext
+from .collection_progress import CollectionProgressReporter
 from .collection_service import CollectionError, collect_pdf_for_store, collect_structured_for_store
 from .config import settings
 from .models import Store
-from .engine_v140.lidl_flipbook import capture_lidl_flipbook
+from .engine_v140.lidl_flipbook import LidlCollectionTimeout, capture_lidl_flipbook
 from .engine_v140.lidl_live import lidl_store_page_for, resolve_lidl_leaflet
 from .engine_v140.source_registry import source_for_store_record
 
@@ -209,33 +211,71 @@ def _collect_lidl_from_official_leaflet(
     source,
     benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
 ):
-    """Resolve, capture and import the complete current Lidl action leaflet."""
-    store_page = lidl_store_page_for(store.name)
-    leaflet = resolve_lidl_leaflet(source.url, app_today(), store_page_url=store_page)
-    resolved_source = replace(
-        source,
-        url=leaflet.url,
-        mode="leaflet_viewer",
-        locality="store_specific" if leaflet.store_context_confirmed else "regional_chain",
-        notes=(
-            f"Automatisch aufgelöst: {leaflet.title}; "
-            f"Filialkontext={'bestätigt' if leaflet.store_context_confirmed else 'nicht bestätigt'}"
-        ),
-        store_specific=leaflet.store_context_confirmed,
-    )
+    """Resolve and collect Lidl through the canonical manifest-first pipeline."""
+    total_timeout_seconds = 540.0
+    started = time.monotonic()
+    state: dict = {}
 
-    capture_holder = {}
+    def on_run_started(run):
+        reporter = CollectionProgressReporter(db, run)
+        state["reporter"] = reporter
+        reporter.update("leaflet_discovery", pages_done=0)
+
+    def report(phase: str, **values):
+        reporter = state.get("reporter")
+        if reporter:
+            # The collector owns elapsed time; the reporter persists its own
+            # monotonic elapsed value and ignores the transport-only copy.
+            values.pop("elapsed_seconds", None)
+            reporter.update(phase, **values)
 
     def collector(src):
-        capture = capture_lidl_flipbook(
+        report("leaflet_discovery", pages_done=0)
+        try:
+            remaining = total_timeout_seconds - (time.monotonic() - started)
+            if remaining <= 0:
+                raise LidlCollectionTimeout("leaflet_discovery", time.monotonic() - started)
+            store_page = lidl_store_page_for(store.name)
+            leaflet = resolve_lidl_leaflet(
+                src.url,
+                app_today(),
+                store_page_url=store_page,
+                timeout_seconds=min(45.0, remaining),
+            )
+        except TimeoutError as exc:
+            timeout = LidlCollectionTimeout("leaflet_discovery", time.monotonic() - started)
+            report("leaflet_discovery", error_type="timeout")
+            raise timeout from exc
+
+        resolved_source = replace(
             src,
-            valid_from=leaflet.valid_from,
-            valid_to=leaflet.valid_to,
-            target_dir=settings.data_dir / "prospects" / "viewer" / str(store.id) / "current",
+            url=leaflet.url,
+            mode="leaflet_viewer",
+            locality="store_specific" if leaflet.store_context_confirmed else "regional_chain",
+            notes=(
+                f"Automatisch aufgelöst: {leaflet.title}; "
+                f"Filialkontext={'bestätigt' if leaflet.store_context_confirmed else 'nicht bestätigt'}"
+            ),
+            store_specific=leaflet.store_context_confirmed,
         )
-        capture_holder["capture"] = capture
+        state["leaflet"] = leaflet
+        state["resolved_source"] = resolved_source
+        remaining = total_timeout_seconds - (time.monotonic() - started)
+        try:
+            capture = capture_lidl_flipbook(
+                resolved_source,
+                valid_from=leaflet.valid_from,
+                valid_to=leaflet.valid_to,
+                target_dir=settings.data_dir / "prospects" / "viewer" / str(store.id) / "current",
+                total_timeout_seconds=max(1.0, remaining),
+                progress=report,
+            )
+        except LidlCollectionTimeout as exc:
+            report(exc.phase, error_type="timeout")
+            raise
+        state["capture"] = capture
         return {
-            "source": src,
+            "source": resolved_source,
             "raw": b"",
             "content_type": "application/pdf+html-audit",
             "fetch_mode": capture.fetch_mode,
@@ -245,54 +285,43 @@ def _collect_lidl_from_official_leaflet(
             "capture_diagnostics": capture.diagnostics,
             "audit_pdf_path": str(capture.pdf_path),
             "audit_page_count": capture.page_count,
+            "technical_warning": capture.warning,
         }
 
     def archive_before_import(result):
-        capture = capture_holder.get("capture")
+        capture = state.get("capture")
+        leaflet = state.get("leaflet")
         if capture is None:
             raise CollectionError("Lidl-Flipbook wurde nicht erzeugt")
-
-        # Prefer an official retailer PDF if the viewer exposes one. Otherwise
-        # the complete multi-page viewer capture is archived and explicitly
-        # labelled as a web snapshot. Either way it exists before import so
-        # ``PDF Seite N`` provenance can attach to the immutable archive.
-        try:
-            pdf_url = discover_official_pdf(leaflet.url)
-            pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / "lidl_puderbach")
-            _archive_downloaded_prospect(
-                db,
-                store,
-                source_url=leaflet.url,
-                pdf_url=pdf_url,
-                pdf_path=pdf_path,
-                valid_from=leaflet.valid_from,
-                valid_to=leaflet.valid_to,
-            )
-            from .prospects import current_prospect
-            row = current_prospect(db, store, "current")
-            result["audit_status"] = f"audit=original-pdf:{row.page_count if row else '?'} Seiten"
-        except Exception:
-            db.rollback()
-            _archive_downloaded_prospect(
-                db,
-                store,
-                source_url=leaflet.url,
-                pdf_url=f"web-snapshot://{leaflet.url}",
-                pdf_path=capture.pdf_path,
-                valid_from=leaflet.valid_from,
-                valid_to=leaflet.valid_to,
-            )
-            from .prospects import current_prospect
-            row = current_prospect(db, store, "current")
-            result["audit_status"] = f"audit=web-snapshot:{row.page_count if row else capture.page_count} Seiten"
+        report("artifact_archive", pages_total=capture.page_count)
+        _archive_downloaded_prospect(
+            db,
+            store,
+            source_url=leaflet.url,
+            pdf_url=capture.pdf_url or f"web-snapshot://{leaflet.url}",
+            pdf_path=capture.pdf_path,
+            valid_from=leaflet.valid_from,
+            valid_to=leaflet.valid_to,
+        )
+        from .prospects import current_prospect
+        row = current_prospect(db, store, "current")
+        result["audit_status"] = f"audit=original-pdf:{row.page_count if row else capture.page_count} Seiten"
+        report("import", pages_total=capture.page_count)
 
     result, summary, run = collect_structured_for_store(
         db,
         store.name,
-        source_override=resolved_source,
         collector_fn=collector,
         before_import_fn=archive_before_import,
         benchmark_context=benchmark_context,
+        run_started_fn=on_run_started,
+    )
+    leaflet = state["leaflet"]
+    capture = state["capture"]
+    report(
+        "complete",
+        pages_total=capture.page_count,
+        pages_done=capture.page_count,
     )
     context_status = "lidl_filiale=bestätigt" if leaflet.store_context_confirmed else "lidl_filiale=nicht_bestaetigt"
     _append_run_diagnostic(

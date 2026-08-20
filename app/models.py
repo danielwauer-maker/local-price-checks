@@ -152,6 +152,30 @@ class CollectionRun(Base):
     store: Mapped[Store] = relationship()
 
 
+class CollectionRunProgress(Base):
+    """Persisted, queryable progress for long-running collector phases.
+
+    This is an additive table instead of new ``collection_runs`` columns so
+    existing production SQLite databases can adopt it through ``create_all``
+    without an in-place schema migration.
+    """
+
+    __tablename__ = "collection_run_progress"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_collection_run_progress_run"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("collection_runs.id"), index=True)
+    phase: Mapped[str] = mapped_column(String(50), default="starting", index=True)
+    error_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pages_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pages_structured: Mapped[int] = mapped_column(Integer, default=0)
+    pages_ocr: Mapped[int] = mapped_column(Integer, default=0)
+    pages_done: Mapped[int] = mapped_column(Integer, default=0)
+    assets_cached: Mapped[int] = mapped_column(Integer, default=0)
+    elapsed_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    run: Mapped[CollectionRun] = relationship()
+
+
 class ProductCategory(Base):
     __tablename__ = "product_categories"
     id: Mapped[int] = mapped_column(primary_key=True)
