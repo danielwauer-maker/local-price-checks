@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import html as html_lib
 import re
 from pathlib import Path
@@ -7,6 +8,7 @@ from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .collection_quality import BenchmarkContext
@@ -67,26 +69,26 @@ def _extract_pdf_candidates(base_url: str, markup: str) -> list[str]:
     return candidates
 
 
-def _probe_pdf(client: httpx.Client, url: str) -> str | None:
+def _probe_pdf(client: httpx.Client, url: str) -> tuple[str, int, int] | None:
     try:
         response = client.get(url)
         response.raise_for_status()
     except Exception:
         return None
     content_type = response.headers.get("content-type", "").lower()
-    if "application/pdf" in content_type or response.content.startswith(b"%PDF"):
-        return str(response.url)
-    return None
+    payload = response.content
+    if "application/pdf" not in content_type and not payload.startswith(b"%PDF"):
+        return None
+    pages = 0
+    try:
+        pages = len(PdfReader(BytesIO(payload)).pages)
+    except Exception:
+        pass
+    return str(response.url), pages, len(payload)
 
 
 def _browser_pdf_candidates(source_url: str) -> list[str]:
-    """Resolve JS-only EDEKA prospect links without relying on a store ID.
-
-    EDEKA market pages can load the actual market flyer through client-side JSON
-    and the SMP media backend. Capture both PDF-like response URLs and PDF URLs
-    embedded in relevant JSON responses, then inspect the rendered DOM as a
-    final fallback.
-    """
+    """Resolve JS-only EDEKA prospect links without relying on a store ID."""
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
@@ -171,10 +173,12 @@ def discover_edeka_market_pdf(source_url: str) -> str:
         candidates = static_candidates + [
             url for url in _browser_pdf_candidates(source_url) if url not in static_candidates
         ]
-        for candidate in candidates:
-            resolved = _probe_pdf(client, candidate)
-            if resolved:
-                return resolved
+        resolved = [probe for candidate in candidates if (probe := _probe_pdf(client, candidate))]
+        if resolved:
+            # Market pages can expose several PDFs (e.g. a short supplemental
+            # leaflet and the full weekly flyer). Prefer the document with the
+            # most pages, then the larger payload, instead of trusting DOM order.
+            return max(resolved, key=lambda item: (item[1], item[2]))[0]
 
     detail = f"; page_error={type(static_error).__name__}: {static_error}" if static_error else ""
     raise CollectionError(
@@ -221,12 +225,29 @@ def collect_edeka_market_pdf(
     )
     pdf_path = Path(registered.local_path) if registered and registered.local_path else None
 
+    discovery_url = source.url
     if pdf_path is None or not pdf_path.is_file():
-        pdf_url = pdf_url or discover_edeka_market_pdf(source.url)
+        if not pdf_url:
+            errors: list[str] = []
+            for candidate_source in (source.url, *source.alternate_urls):
+                try:
+                    pdf_url = discover_edeka_market_pdf(candidate_source)
+                    discovery_url = candidate_source
+                    break
+                except Exception as exc:
+                    errors.append(f"{candidate_source}: {type(exc).__name__}: {exc}")
+            if not pdf_url:
+                raise CollectionError(
+                    "Kein offizieller EDEKA-Marktprospekt über konfigurierte Marktquellen auffindbar; "
+                    + " | ".join(errors)
+                )
         pdf_path = _download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
     if not pdf_url:
         raise CollectionError(f"Kein offizieller EDEKA-Marktprospekt auffindbar: {source.url}")
 
+    # Keep the canonical EDEKA market URL as provenance source; alternate market
+    # pages are discovery helpers only. The archived payload remains the exact
+    # official SMP PDF URL returned by the market site.
     save_prospect(
         db,
         store,
@@ -237,9 +258,10 @@ def collect_edeka_market_pdf(
         valid_from=registered.valid_from if registered else None,
         valid_to=registered.valid_to if registered else None,
     )
-    return collect_pdf_for_store(
+    result = collect_pdf_for_store(
         db,
         store.name,
         pdf_path,
         benchmark_context=benchmark_context,
     )
+    return result
