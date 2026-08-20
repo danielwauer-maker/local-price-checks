@@ -5,6 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .config import settings
 from .collection_quality import BenchmarkContext
 from .db import SessionLocal
+from .edeka_discovery import collect_edeka_market_pdf
 from .models import Store
 from .web_collector import collect_store_from_web
 
@@ -23,11 +24,18 @@ def run_verified_market_collection() -> dict[str, str]:
         )
         for store in stores:
             try:
-                _, summary, run = collect_store_from_web(
-                    db,
-                    store.name,
-                    benchmark_context=BenchmarkContext.PRODUCTION,
-                )
+                if store.retailer == "EDEKA":
+                    _, summary, run = collect_edeka_market_pdf(
+                        db,
+                        store,
+                        benchmark_context=BenchmarkContext.PRODUCTION,
+                    )
+                else:
+                    _, summary, run = collect_store_from_web(
+                        db,
+                        store.name,
+                        benchmark_context=BenchmarkContext.PRODUCTION,
+                    )
                 results[store.name] = f"{run.status}:{summary.imported}"
             except Exception as exc:
                 results[store.name] = f"failed:{type(exc).__name__}"
