@@ -14,6 +14,7 @@ from .admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from .admin_routes import _admin
 from .config import settings
 from .db import SessionLocal, get_db
+from .edeka_discovery import collect_edeka_market_pdf
 from .models import CollectionRun, CollectionRunProgress, Store
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
@@ -142,8 +143,6 @@ def _persist_background_failure(
         run.finished_at = now
         run.message = f"{run.message} | {message}"[:1800] if run.message else message
     else:
-        # A collector that already persisted its own terminal run must not get a
-        # duplicate failure merely because the exception propagated outward.
         return
 
     progress = (
@@ -194,7 +193,10 @@ def _run_store_collection_background(store_id: int) -> None:
             timeout_timer.daemon = True
             timeout_timer.start()
         context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
-        collect_store_from_web(db, store.name, benchmark_context=context)
+        if store.retailer == "EDEKA":
+            collect_edeka_market_pdf(db, store, benchmark_context=context)
+        else:
+            collect_store_from_web(db, store.name, benchmark_context=context)
     except Exception as exc:
         try:
             _persist_background_failure(
