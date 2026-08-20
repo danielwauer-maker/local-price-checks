@@ -247,9 +247,23 @@ def collect_pdf_for_store(
     run = _start_run(db, store, source.key + ":pdf")
     try:
         parsed: PdfParseResult = parse_pdf_file(source, pdf_path)
+        if store.retailer == "EDEKA":
+            from .prospects import current_prospect
+
+            prospect = current_prospect(db, store, "current")
+            if prospect and Path(prospect.local_path).resolve(strict=False) == Path(pdf_path).resolve(strict=False):
+                for row in parsed.rows:
+                    if prospect.valid_from:
+                        row.valid_from = prospect.valid_from.strftime("%d.%m.%Y")
+                    if prospect.valid_to:
+                        row.valid_to = prospect.valid_to.strftime("%d.%m.%Y")
+                    row.source_url = prospect.source_url
         summary: ImportSummary = import_collected_offers(db, parsed.rows)
         images_saved = _persist_images_best_effort(db, parsed.rows)
-        status = "success" if summary.imported else "no_offers"
+        if parsed.technical_warning:
+            status = "warning" if summary.imported else "failed"
+        else:
+            status = "success" if summary.imported else "no_offers"
         quality_diagnostic = _record_collection_quality(
             db,
             store=store,
@@ -261,7 +275,23 @@ def collect_pdf_for_store(
             benchmark_context=benchmark_context,
         )
         notes = " | ".join(parsed.notes[-3:]) if parsed.notes else ""
-        message = f"{notes} | {quality_diagnostic} | {_summary_message(summary, images_saved)}".strip(" |")
+        parser_diagnostic = (
+            f"native_text_pages={len(parsed.native_text_pages)} ocr_pages={len(parsed.ocr_pages)} "
+            f"price_anchors_detected={parsed.price_anchors_detected} "
+            f"price_anchors_matched={parsed.price_anchors_matched} "
+            f"price_anchors_ignored={parsed.price_anchors_ignored} "
+            f"price_anchors_unmatched={parsed.price_anchors_unmatched} "
+            f"page_offer_recall={parsed.page_offer_recall:.1f}"
+        )
+        message = " | ".join(
+            part for part in (
+                notes,
+                parsed.technical_warning or "",
+                parser_diagnostic,
+                quality_diagnostic,
+                _summary_message(summary, images_saved),
+            ) if part
+        )
         _finish_run(db, run, status, len(parsed.rows), summary.imported, message[:1800])
         return parsed, summary, run
     except Exception as exc:

@@ -205,6 +205,47 @@ def _collect_netto_from_official_prospect(
     return collect_pdf_for_store(db, store.name, pdf_path, benchmark_context=benchmark_context)
 
 
+def _collect_edeka_from_official_prospect(
+    db: Session,
+    store: Store,
+    source,
+    benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+):
+    """Collect EDEKA from the immutable market PDF, not the landing-page cards.
+
+    The official market page remains discovery metadata. A still-current PDF
+    already registered in ``Prospect`` wins, which makes retries independent
+    from transient Akamai/landing-page failures. Fresh markets fall back to the
+    normal official-link discovery without any store-id-specific parser code.
+    """
+    from .prospects import current_prospect
+
+    registered = current_prospect(db, store, "current")
+    pdf_url = registered.pdf_url if registered and registered.pdf_url.startswith(("http://", "https://")) else None
+    pdf_path = Path(registered.local_path) if registered and registered.local_path else None
+    if pdf_path is None or not pdf_path.is_file():
+        pdf_url = pdf_url or discover_official_pdf(source.url)
+        pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
+    if not pdf_url:
+        raise CollectionError(f"Kein offizieller EDEKA-Marktprospekt auffindbar: {source.url}")
+
+    _archive_downloaded_prospect(
+        db,
+        store,
+        source_url=source.url,
+        pdf_url=pdf_url,
+        pdf_path=pdf_path,
+        valid_from=registered.valid_from if registered else None,
+        valid_to=registered.valid_to if registered else None,
+    )
+    return collect_pdf_for_store(
+        db,
+        store.name,
+        pdf_path,
+        benchmark_context=benchmark_context,
+    )
+
+
 def _collect_lidl_from_official_leaflet(
     db: Session,
     store: Store,
@@ -361,6 +402,8 @@ def collect_store_from_web(
         return _collect_netto_from_official_prospect(db, store, source, benchmark_context)
     if store.retailer == "Lidl":
         return _collect_lidl_from_official_leaflet(db, store, source, benchmark_context)
+    if store.retailer == "EDEKA":
+        return _collect_edeka_from_official_prospect(db, store, source, benchmark_context)
 
     structured_error = None
     try:
