@@ -209,6 +209,19 @@ def evaluate_collection_quality(
     provenance_rate = _pct(len(provenance_offer_ids), len(offer_ids)) if archive else 0.0
     occurrence_rate = _pct(len(occurrence_offer_ids), len(offer_ids))
     suspicious_rate = _pct(suspicious_count, len(products))
+    lidl_diagnostic_row = next(
+        (row for row in rows if hasattr(row, "lidl_price_anchors_detected")),
+        None,
+    )
+    price_anchors_detected = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_detected", 0) or 0)
+    price_anchors_matched = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_matched", 0) or 0)
+    price_anchors_ignored = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_ignored", 0) or 0)
+    price_anchors_unmatched = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_unmatched", 0) or 0)
+    price_anchor_match_rate = float(getattr(lidl_diagnostic_row, "lidl_price_anchor_match_rate", 0.0) or 0.0)
+    page_offer_recall = float(getattr(lidl_diagnostic_row, "lidl_page_offer_recall", 0.0) or 0.0)
+    pages_with_unmatched_prices = list(
+        getattr(lidl_diagnostic_row, "lidl_pages_with_unmatched_prices", ()) or ()
+    )
 
     quality_score = 0.0
     quality_score += min(import_rate / 100.0, 1.0) * 25.0
@@ -257,6 +270,10 @@ def evaluate_collection_quality(
         benchmark_reasons.append("offer_count_below_pass_floor")
     else:
         benchmark_status = "PASS"
+    if context is not BenchmarkContext.NOT_APPLICABLE and price_anchors_unmatched:
+        if benchmark_status == "PASS":
+            benchmark_status = "WARN"
+        benchmark_reasons.append("unmatched_local_price_anchors")
 
     metrics = {
         "run_status": run_status,
@@ -292,6 +309,13 @@ def evaluate_collection_quality(
         ),
         "online_only_rejected": online_rejected,
         "occurrence_rate": occurrence_rate,
+        "price_anchors_detected": price_anchors_detected,
+        "price_anchors_matched": price_anchors_matched,
+        "price_anchors_ignored": price_anchors_ignored,
+        "price_anchors_unmatched": price_anchors_unmatched,
+        "price_anchor_match_rate": price_anchor_match_rate,
+        "page_offer_recall": page_offer_recall,
+        "pages_with_unmatched_prices": pages_with_unmatched_prices,
         "suspicious_name_count": suspicious_count,
         "suspicious_rate": suspicious_rate,
         "suspicious_names": suspicious_names,
@@ -365,6 +389,12 @@ def persist_collection_quality(
         f"local_only={metrics['local_only']} "
         f"local_and_online={metrics['local_and_online']} "
         f"online_only_rejected={metrics['online_only_rejected']} "
+        f"price_anchors_detected={metrics['price_anchors_detected']} "
+        f"price_anchors_matched={metrics['price_anchors_matched']} "
+        f"price_anchors_ignored={metrics['price_anchors_ignored']} "
+        f"price_anchors_unmatched={metrics['price_anchors_unmatched']} "
+        f"price_anchor_match_rate={metrics['price_anchor_match_rate']:.1f} "
+        f"page_offer_recall={metrics['page_offer_recall']:.1f} "
         f"suspicious={metrics['suspicious_name_count']}"
     )
     return diagnostic, metrics

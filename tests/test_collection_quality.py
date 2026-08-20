@@ -250,6 +250,68 @@ def test_small_synthetic_run_does_not_apply_absolute_retailer_benchmark(monkeypa
     assert "benchmark_status=NOT_APPLICABLE" in diagnostic
 
 
+def test_unmatched_price_anchor_is_not_a_benchmark_in_synthetic_context(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=2, min_image_rate=50.0),
+    )
+    rows[0].lidl_price_anchors_detected = 2
+    rows[0].lidl_price_anchors_matched = 1
+    rows[0].lidl_price_anchors_ignored = 0
+    rows[0].lidl_price_anchors_unmatched = 1
+    rows[0].lidl_price_anchor_match_rate = 50.0
+    rows[0].lidl_page_offer_recall = 50.0
+    rows[0].lidl_pages_with_unmatched_prices = (3,)
+
+    quality_status, benchmark_status, _score, metrics = evaluate_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=rows,
+        summary=ImportSummary(received=2, imported=2),
+        images_saved=2,
+    )
+
+    assert quality_status == "PASS"
+    assert benchmark_status == "NOT_APPLICABLE"
+    assert metrics["price_anchors_unmatched"] == 1
+    assert metrics["pages_with_unmatched_prices"] == [3]
+
+
+def test_unmatched_price_anchor_warns_benchmark_but_not_technical_quality(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=2, min_image_rate=50.0),
+    )
+    rows[0].lidl_price_anchors_detected = 2
+    rows[0].lidl_price_anchors_matched = 1
+    rows[0].lidl_price_anchors_ignored = 0
+    rows[0].lidl_price_anchors_unmatched = 1
+    rows[0].lidl_price_anchor_match_rate = 50.0
+    rows[0].lidl_page_offer_recall = 50.0
+    rows[0].lidl_pages_with_unmatched_prices = (3,)
+
+    quality_status, benchmark_status, _score, metrics = evaluate_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=rows,
+        summary=ImportSummary(received=2, imported=2),
+        images_saved=2,
+        benchmark_context=BenchmarkContext.PRODUCTION,
+    )
+
+    assert quality_status == "PASS"
+    assert benchmark_status == "WARN"
+    assert "unmatched_local_price_anchors" in metrics["benchmark_reasons"]
+
+
 def test_online_rejections_do_not_reduce_local_import_quality(monkeypatch):
     db = _session()
     store, run, rows = _seed_complete_rewe(db)

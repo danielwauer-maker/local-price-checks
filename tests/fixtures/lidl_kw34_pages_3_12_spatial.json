@@ -1,0 +1,31 @@
+{
+  "source": "Official Lidl KW34/2026 PDF, frozen production geometry for logical pages 3 and 12",
+  "page_width": 459.2,
+  "page_height": 793.7,
+  "pages": [
+    {
+      "logical_page": 3,
+      "offers": [
+        {"title": "Galiamelone", "title_bbox": [14.2, 241.0, 80.0, 253.0], "details": "Ursprung: Spanien\nKlasse I", "details_bbox": [14.2, 253.0, 80.0, 275.0], "price": "1.39*", "price_bbox": [91.4, 235.6, 150.0, 279.0]},
+        {"title": "Bio Mini-Möhren", "title_bbox": [167.2, 202.6, 230.0, 227.0], "details": "Ursprung: Dänemark\nKlasse I\nJe 200 g\n1 kg = 3.95", "details_bbox": [167.2, 227.0, 230.0, 274.0], "price": "-20%\n0.99\n0.79*", "price_bbox": [224.8, 214.8, 310.0, 279.0]},
+        {"title": "Lilien orientalisch", "title_bbox": [324.3, 237.5, 398.0, 250.0], "details": "Versch. Farben.\nHöhe ca. 55 cm\nJe Topf", "details_bbox": [324.3, 250.0, 398.0, 305.0], "price": "7.99*", "price_bbox": [323.7, 304.7, 365.0, 328.0], "plus_label": "Mit Lidl Plus", "plus_label_bbox": [323.7, 328.0, 365.0, 340.0], "app_price": "6.99*", "app_price_bbox": [320.3, 352.5, 382.0, 396.0]},
+        {"title": "Phalaenopsis Multiflora", "title_bbox": [400.4, 101.9, 458.0, 126.0], "details": "2-Trieber\nVersch. Farben\nHöhe ca. 50 cm\nJe Topf", "details_bbox": [400.4, 126.0, 458.0, 181.0], "price": "7.99*", "price_bbox": [400.1, 175.7, 458.0, 221.0]},
+        {"title": "Salat-Mix", "title_bbox": [204.5, 401.6, 280.0, 414.0], "details": "Ursprung: Deutschland/Italien\nKlasse I\nJe 125 g\n1 kg = 7.92", "details_bbox": [204.5, 414.0, 280.0, 443.0], "price": "0.99*", "price_bbox": [170.6, 422.5, 205.0, 445.0], "plus_label": "Mit Lidl Plus", "plus_label_bbox": [170.6, 445.0, 225.0, 457.0], "app_price": "0.79*", "app_price_bbox": [167.2, 469.3, 230.0, 513.0]},
+        {"title": "Deutsche Rote Zwiebeln", "title_bbox": [14.2, 451.5, 90.0, 487.0], "details": "Klasse II\nJe 1 kg", "details_bbox": [14.2, 487.0, 90.0, 507.0], "price": "1-kg-Netz\n1.19*", "price_bbox": [69.4, 450.7, 156.0, 513.0]},
+        {"title": "Heidekraut (Calluna)", "title_bbox": [320.3, 512.3, 398.0, 536.0], "details": "Lizenzsorte Calluna Beauty Ladies\nWinterhart. Je 6er-Tray", "details_bbox": [320.3, 536.0, 398.0, 565.0], "price": "6.99*", "price_bbox": [394.4, 525.8, 458.0, 571.0]},
+        {"title": "Frischer Zuckermais", "title_bbox": [14.2, 687.4, 90.0, 711.0], "details": "Ursprung: Deutschland/Spanien\nJe 2 Stück", "details_bbox": [14.2, 711.0, 90.0, 740.0], "price": "2 Stück\n1.39*", "price_bbox": [239.7, 684.0, 310.0, 746.0]},
+        {"title": "Romantisches Rosen-Duo", "title_bbox": [320.3, 687.4, 395.0, 711.0], "details": "Höhe ca. 34 cm\nJe Topf", "details_bbox": [320.3, 711.0, 395.0, 740.0], "price": "4.99*", "price_bbox": [394.8, 700.8, 458.0, 746.0]}
+      ]
+    },
+    {
+      "logical_page": 12,
+      "offers": [
+        {"title": "ARLA Kærgården XXL", "title_bbox": [66.8, 307.7, 145.0, 332.0], "details": "Versch. Sorten. Gekühlt.\nJe 400 g\n1 kg = 4.98", "details_bbox": [66.8, 332.0, 145.0, 352.0], "price": "UVP\n3.19\n1.99*", "price_bbox": [14.2, 352.5, 96.0, 396.0]},
+        {"title": "GRANINI Trinkgenuss/Selection", "title_bbox": [301.6, 307.1, 430.0, 331.0], "details": "Versch. Sorten. Je 1/0,75 l\n1 l = 1.49/1.99", "details_bbox": [301.6, 331.0, 430.0, 352.0], "price": "UVP\n2.69\n1.49*", "price_bbox": [243.8, 352.5, 324.0, 396.0]},
+        {"title": "ALESTO Walnusskerne", "title_bbox": [20.4, 418.1, 90.0, 442.0], "details": "Naturbelassen\nJe 200 g\n1 kg = 9.95\nNormalpreis: 2.99", "details_bbox": [20.4, 442.0, 100.0, 498.0], "plus_label": "Mit Lidl Plus", "plus_label_bbox": [20.4, 501.1, 80.0, 513.0], "price": "2.99\n1.99*", "price_bbox": [14.7, 527.5, 102.0, 571.0]},
+        {"title": "LENOR Waschmittel", "title_bbox": [249.4, 436.1, 310.0, 460.0], "details": "Gel, Pulver oder Pods\nJe 100/90/76 Waschladungen\n1 WL = -.17/-.19/-.23", "details_bbox": [249.4, 460.0, 330.0, 507.0], "price": "UVP\n23.99\n16.99*", "price_bbox": [243.8, 527.5, 346.0, 571.0]},
+        {"title": "PEPSI", "title_bbox": [14.2, 622.0, 70.0, 635.0], "details": "Versch. Sorten. Koffeinhaltig.\nJe 1,75 l zzgl. 0.25 Pfand\n1 l = -.57", "details_bbox": [14.2, 635.0, 80.0, 681.0], "price": "UVP\n1.79\n0.99*", "price_bbox": [14.7, 684.1, 98.0, 746.0]}
+      ]
+    }
+  ]
+}
