@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,21 @@ class RetailSource:
     notes: str = ""
     supports_products: bool = True
     store_specific: bool = False
+
+
+EDEKA_MARKET_PATH_RE = re.compile(r"^(https://www\.edeka\.de/maerkte/\d{6}/)(?:angebote/|prospekte/)?$", re.I)
+
+
+def _normalize_edeka_market_url(url: str) -> str:
+    """Prefer the canonical market root for EDEKA prospect discovery.
+
+    The market root exposes the prospect/catalog entry while the dedicated
+    ``/angebote/`` route can return Akamai 403 to server-side collectors.
+    Normalize known market-specific URLs generically so newly onboarded EDEKA
+    stores do not depend on the blocked sub-route.
+    """
+    match = EDEKA_MARKET_PATH_RE.match((url or "").strip())
+    return match.group(1) if match else (url or "").strip()
 
 
 SOURCES = [
@@ -47,7 +63,7 @@ SOURCES = [
     ),
     RetailSource(
         "edeka_puderbach", "EDEKA", "EDEKA Fellenzer",
-        "https://www.edeka.de/maerkte/071378/angebote/", "prospect_discovery", "store_specific",
+        "https://www.edeka.de/maerkte/071378/", "prospect_discovery", "store_specific",
         "Offizielle EDEKA-Marktseite zur Discovery des marktbezogenen PDF-Prospekts.", True, True,
     ),
     RetailSource(
@@ -83,10 +99,24 @@ def source_for_store_record(store) -> RetailSource | None:
     """
     known = SOURCE_BY_STORE.get(store.name)
     if known:
+        if known.retailer == "EDEKA":
+            return RetailSource(
+                key=known.key,
+                retailer=known.retailer,
+                store_name=known.store_name,
+                url=_normalize_edeka_market_url(known.url),
+                mode=known.mode,
+                locality=known.locality,
+                notes=known.notes,
+                supports_products=known.supports_products,
+                store_specific=known.store_specific,
+            )
         return known
     url = (store.source_url or "").strip() or RETAILER_FALLBACK_URLS.get(store.retailer)
     if not url:
         return None
+    if store.retailer == "EDEKA":
+        url = _normalize_edeka_market_url(url)
     store_specific = bool((store.source_url or "").strip())
     return RetailSource(
         key=f"auto_{store.retailer.lower().replace(' ', '_').replace('-', '_')}_{store.id}",
