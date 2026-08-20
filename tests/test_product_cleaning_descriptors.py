@@ -16,6 +16,26 @@ def test_rejects_descriptor_only_product_names():
         "ohne Speckwürfel, leckere Würzung, vom Eifelschwein",
         "gegart, geschnitten, vom Eifelschwein",
         "grob oder fein, feine Würzung, vom Eifelschwein",
+        "Peanut",
+        "gegart",
+        "je St.",
+        "aus Rind- und Schweinefleisch, mit Käse",
+        "vom Jungbullen, am Stück oder in Scheiben",
+        "mit Silberzwiebeln verfeinert",
+        "ohne Knochen",
+        "in feiner Beize eingelegt",
+        "für Grill & Pfanne",
+        "cremiger Brotaufstrich",
+        "Sorte: siehe Etikett, Kl. I",
+        "„Aromatica“, Kl. I",
+        "natur oder mariniert",
+        "geschnitten, mittelfeine Körnung, vom Eifelschwein",
+        "zart und mager",
+        "Schnittkäse, mind. 50% Fett i.Tr.",
+        "Nordische Art",
+        "mittelscharf",
+        "vorgekocht",
+        "extra Ananas",
     ]
     for name in bad:
         assert product_name_issue(name), name
@@ -28,6 +48,10 @@ def test_keeps_real_product_names():
         "Oreo Double Creme",
         "Ehrmann Almighurt",
         "Müller Milch Reis",
+        "Bifteki",
+        "Mars m&m’s Peanut",
+        "Ausgezogene Küchle",
+        "schonend gegarte Schweinerippchen in Whiskey Marinade",
     ]
     for name in good:
         assert product_name_issue(name) is None, name

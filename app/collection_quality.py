@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -12,6 +11,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from .db import Base
 from .models import CollectionRun, MasterProduct, MediaAsset, MediaAssetMetadata, Offer, OfferOccurrence, Store
 from .prospect_models import OfferProvenance, ProspectArchive
+from .engine_v140.product_cleaning import product_name_issue
 
 
 class BenchmarkContext(str, Enum):
@@ -101,13 +101,10 @@ def _offers_for_archive(db: Session, store: Store, archive: ProspectArchive | No
     return query.all()
 
 
-def _suspicious_name(name: str) -> bool:
-    text = re.sub(r"\s+", " ", (name or "").strip().lower())
-    if len(text) < 4:
-        return True
-    if text in {"peanut", "gegart", "je st", "je st.", "schoko", "kl ii", "kl. ii", "100% pflanzlich"}:
-        return True
-    return bool(re.fullmatch(r"(?:feine würzung|grillfertig gewürzt|aus .+|je \d+\s*(?:g|kg|ml|l|st\.?))", text))
+def _suspicious_name_reason(name: str) -> str | None:
+    """Use the same canonical name validator at import and aggregate QA time."""
+
+    return product_name_issue(name)
 
 
 def evaluate_collection_quality(
@@ -132,7 +129,16 @@ def evaluate_collection_quality(
     products = db.query(MasterProduct).filter(MasterProduct.id.in_(product_ids)).all() if product_ids else []
 
     package_count = sum(1 for product in products if (product.package_size or "").strip())
-    suspicious_count = sum(1 for product in products if _suspicious_name(product.name))
+    suspicious_names = [
+        {
+            "product_id": product.id,
+            "product_name": product.name,
+            "reason": reason,
+        }
+        for product in products
+        if (reason := _suspicious_name_reason(product.name)) is not None
+    ]
+    suspicious_count = len(suspicious_names)
     unit_price_count = sum(1 for offer in offers if offer.unit_price is not None and offer.unit_price > 0)
     media_rows = (
         db.query(MediaAsset)
@@ -288,6 +294,7 @@ def evaluate_collection_quality(
         "occurrence_rate": occurrence_rate,
         "suspicious_name_count": suspicious_count,
         "suspicious_rate": suspicious_rate,
+        "suspicious_names": suspicious_names,
         "quality_rejected": int(summary.rejected_quality or 0),
         "online_rejected": online_rejected,
         "store_rejected": int(summary.rejected_store or 0),
