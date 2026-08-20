@@ -2,8 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { MapPin, Settings } from "lucide-react";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
-import { currentOffers, formatEuro } from "@/data/demo";
+import { PRODUCTS, currentOffers, formatEuro } from "@/data/demo";
 import { groupIdenticalOffers, marketSummary } from "@/lib/offer-groups";
+import { matchesFavorite } from "@/lib/favorite-matching";
+import { useFavoriteAlternatives } from "@/lib/use-favorite-alternatives";
 import { CoverageMapPanel } from "@/components/CoverageMapPanel";
 import type { CoverageRegion } from "@/components/CoverageMap";
 
@@ -19,6 +21,7 @@ export const Route = createFileRoute("/")({
 
 function Index() {
   const { location, productFavorites, profile } = useStore();
+  const { preferences } = useFavoriteAlternatives();
   const activeIds = useActiveMarketIds();
   const [regions, setRegions] = useState<CoverageRegion[]>([]);
 
@@ -32,10 +35,13 @@ function Index() {
   }, []);
 
   const favoriteOffers = useMemo(() => {
-    if (activeIds.length === 0) return [];
-    const raw = currentOffers(activeIds).filter((o) => productFavorites.includes(o.product.id));
+    if (activeIds.length === 0 || productFavorites.length === 0) return [];
+    const favorites = PRODUCTS.filter((product) => productFavorites.includes(product.id));
+    const raw = currentOffers(activeIds).filter((offer) => favorites.some((favorite) =>
+      matchesFavorite(favorite, offer.product, Boolean(preferences[favorite.id])),
+    ));
     return groupIdenticalOffers(raw);
-  }, [activeIds, productFavorites]);
+  }, [activeIds, productFavorites, preferences]);
   const topOffers = favoriteOffers.slice(0, 4);
   const favoriteHeadline = favoriteOffers.length === 1
     ? "1 Favorit ist aktuell besonders günstig"
