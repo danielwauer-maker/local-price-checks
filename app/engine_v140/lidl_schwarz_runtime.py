@@ -6,6 +6,7 @@ from typing import Any
 
 from . import lidl_manifest as legacy
 from .collectors import CollectedOffer, cat, clean_product_name, compute_unit_price, parse_lidl_text, product_name_issue, size
+from .lidl_semantics import LidlSourceKind, classify_lidl_link, has_strong_shop_signal
 
 _ONLINE_MARKERS = (
     "shoppe auf lidl.de",
@@ -33,18 +34,19 @@ def _text(value: Any) -> str:
     if isinstance(value, list):
         return "\n".join(_text(v) for v in value if v is not None)
     if isinstance(value, dict):
-        return "\n".join(_text(v) for v in value.values() if isinstance(v, (str, int, float)))
+        return "\n".join(_text(v) for v in value.values() if v is not None)
     return str(value)
 
 
-def _page_text(page: dict) -> str:
-    parts = [
-        _text(page.get("altText")),
-        _text(page.get("keyWords")),
-    ]
-    for link in page.get("links") or []:
-        if isinstance(link, dict):
-            parts.extend((_text(link.get("title")), _text(link.get("label"))))
+def _page_text(page: dict, extra_text: str = "") -> str:
+    parts = [extra_text]
+    for key, value in page.items():
+        if str(key).lower() in {
+            "image", "imageurl", "zoom", "thumbnail", "thumbnailurl",
+            "picture", "pictureurl",
+        }:
+            continue
+        parts.append(_text(value))
     return "\n".join(p for p in parts if p).strip()
 
 
@@ -57,6 +59,8 @@ def _product_online_only(product: dict, page: dict) -> bool:
     if _page_online_only(page):
         return True
     if legacy._online_only(product):
+        return True
+    if has_strong_shop_signal(product):
         return True
     raw = json.dumps(product, ensure_ascii=False, default=str).lower()
     return any(marker in raw for marker in _ONLINE_MARKERS)
@@ -73,6 +77,34 @@ def _catalog_by_product_id(flyer: dict) -> dict[str, dict]:
         if ident:
             result[ident] = product
     return result
+
+
+def _manifest_text_by_page(flyer: dict) -> dict[int, str]:
+    """Map optional Schwarz `flyer.texts` entries without assuming one schema."""
+    result: dict[int, list[str]] = {}
+    page_ids = {
+        str(page.get("id")): index + 1
+        for index, page in enumerate(flyer.get("pages") or [])
+        if isinstance(page, dict) and page.get("id") is not None
+    }
+    for entry in flyer.get("texts") or []:
+        if not isinstance(entry, dict):
+            continue
+        page_no = legacy._number_from(entry, legacy._PAGE_KEYS)
+        if page_no is None:
+            ref = entry.get("pageId") or entry.get("page_id")
+            page_no = page_ids.get(str(ref)) if ref is not None else None
+        if page_no is None:
+            continue
+        value = _text(
+            entry.get("text")
+            or entry.get("content")
+            or entry.get("value")
+            or entry.get("label")
+        ).strip()
+        if value:
+            result.setdefault(page_no, []).append(value)
+    return {page: "\n".join(values) for page, values in result.items()}
 
 
 def _iter_schwarz_flyers(payloads: list[dict]):
@@ -142,7 +174,10 @@ def _offers_from_product_links(flyer: dict, source, valid_from: str, valid_to: s
             brand = str(product.get("brand") or "").strip()
             package = str(product.get("packageSize") or product.get("content") or "").strip()
             name = " ".join(p for p in (brand, title, package) if p)
-            online = _product_online_only(product, page)
+            source_kind = classify_lidl_link(link, product)
+            online = source_kind is not LidlSourceKind.LOCAL_PROSPECT and (
+                source_kind is LidlSourceKind.SHOP_ONLINE or _product_online_only(product, page)
+            )
             offer = _build_offer(
                 source,
                 name=name,
@@ -153,7 +188,7 @@ def _offers_from_product_links(flyer: dict, source, valid_from: str, valid_to: s
                 valid_from=valid_from,
                 valid_to=valid_to,
                 local=not online,
-                source_kind="SchwarzFlyerLink+Catalog",
+                source_kind="SchwarzShopHotspot" if online else "SchwarzLocalHotspot",
             )
             if not offer:
                 continue
@@ -174,11 +209,12 @@ def _offers_from_page_text(flyer: dict, source, valid_from: str, valid_to: str) 
     """
     out: list[CollectedOffer] = []
     pages = flyer.get("pages") or []
+    text_by_page = _manifest_text_by_page(flyer)
     for idx, page in enumerate(pages):
         if not isinstance(page, dict) or _page_online_only(page):
             continue
         page_no = idx + 1
-        text = _page_text(page)
+        text = _page_text(page, text_by_page.get(page_no, ""))
         if not text or len(text) < 20:
             continue
         try:
@@ -232,8 +268,3 @@ def schwarz_manifest_offers(payloads: list[dict], source, *, valid_from: str, va
 
 
 _LEGACY_MANIFEST_OFFERS = legacy.manifest_offers
-
-
-def install() -> None:
-    """Compatibility bridge used while the old generic manifest parser remains in place."""
-    legacy.manifest_offers = schwarz_manifest_offers

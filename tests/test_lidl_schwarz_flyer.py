@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.engine_v140.lidl_manifest import manifest_offers
+from app.engine_v140.lidl_schwarz_runtime import schwarz_manifest_offers
 
 
 def _source():
@@ -12,7 +12,7 @@ def _source():
     )
 
 
-def test_schwarz_flyer_joins_page_product_details_to_global_catalog():
+def test_schwarz_flyer_shop_product_is_emitted_only_for_online_rejection_accounting():
     payloads = [{
         "url": "https://endpoints.leaflets.schwarz/v4/flyer",
         "page_hint": 1,
@@ -44,15 +44,15 @@ def test_schwarz_flyer_joins_page_product_details_to_global_catalog():
         },
     }]
 
-    rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
+    rows = schwarz_manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
     joined = [row for row in rows if row.price == 0.99]
     assert len(joined) == 1
-    assert joined[0].local_store_offer is True
+    assert joined[0].local_store_offer is False
     assert "PDF Seite 1" in joined[0].source_text
     assert "Milbona" in joined[0].product_name
 
 
-def test_schwarz_flyer_drops_page_level_online_only_products():
+def test_schwarz_flyer_marks_page_level_online_only_products_non_local():
     payloads = [{
         "url": "https://endpoints.leaflets.schwarz/v4/flyer",
         "page_hint": 8,
@@ -86,8 +86,10 @@ def test_schwarz_flyer_drops_page_level_online_only_products():
         },
     }]
 
-    rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
-    assert all(row.price != 49.99 for row in rows)
+    rows = schwarz_manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
+    online = [row for row in rows if row.price == 49.99]
+    assert len(online) == 1
+    assert online[0].local_store_offer is False
 
 
 def test_schwarz_flyer_does_not_emit_unreferenced_global_catalog_product():
@@ -108,5 +110,5 @@ def test_schwarz_flyer_does_not_emit_unreferenced_global_catalog_product():
         },
     }]
 
-    rows = manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
+    rows = schwarz_manifest_offers(payloads, _source(), valid_from="17.08.2026", valid_to="22.08.2026")
     assert all(row.price != 12.99 for row in rows)

@@ -12,14 +12,14 @@ def _row(source_text: str, *, local_store_offer: bool = False):
     )
 
 
-def test_lidl_canonical_product_url_does_not_mean_online_only():
+def test_lidl_product_id_and_shop_url_are_strong_online_signals():
     row = _row(
         'PDF Seite 2: Manifest {"productId":"100409050",'
         '"title":"Milbona Joghurt",'
         '"url":"https://www.lidl.de/p/milbona-joghurt/p100409050",'
         '"price":"0.99"}'
     )
-    assert _row_is_local_offer(row) is True
+    assert _row_is_local_offer(row) is False
 
 
 def test_lidl_explicit_online_only_boolean_is_rejected():

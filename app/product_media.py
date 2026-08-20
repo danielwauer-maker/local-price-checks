@@ -130,6 +130,89 @@ def persist_product_image(
     return asset
 
 
+def persist_product_image_file(
+    db: Session,
+    product: MasterProduct,
+    image_path: str | Path | None,
+    *,
+    alt_text: str | None = None,
+    media_dir: Path | None = None,
+) -> MediaAsset | None:
+    """Persist a collector-generated crop from inside the configured data dir."""
+    if not image_path:
+        return None
+    try:
+        source = Path(image_path).resolve(strict=True)
+        data_root = settings.data_dir.resolve(strict=False)
+        if not source.is_file() or not source.is_relative_to(data_root):
+            return None
+        size = source.stat().st_size
+        if size <= 0 or size > _MAX_IMAGE_BYTES:
+            return None
+        extension = source.suffix.lower()
+        mime_type = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+        }.get(extension)
+        if mime_type is None:
+            return None
+        payload = source.read_bytes()
+    except (OSError, ValueError):
+        return None
+
+    content_digest = hashlib.sha256(payload).hexdigest()
+    source_url = f"prospect-crop:{content_digest}"
+    existing = (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "product",
+            MediaAsset.master_product_id == product.id,
+            MediaAsset.source_url == source_url,
+        )
+        .first()
+    )
+    if existing:
+        existing.active = True
+        return existing
+
+    target_dir = media_dir or (settings.data_dir / "admin_media")
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"product-{product.id}-{content_digest[:24]}{'.jpg' if extension == '.jpeg' else extension}"
+        target = target_dir / filename
+        if not target.exists():
+            target.write_bytes(payload)
+    except OSError:
+        return None
+
+    has_primary = (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "product",
+            MediaAsset.master_product_id == product.id,
+            MediaAsset.active.is_(True),
+            MediaAsset.is_primary.is_(True),
+        )
+        .first()
+        is not None
+    )
+    asset = MediaAsset(
+        kind="product",
+        master_product_id=product.id,
+        file_path=filename,
+        source_url=source_url,
+        alt_text=(alt_text or product.name)[:240],
+        mime_type=mime_type,
+        is_primary=not has_primary,
+        active=True,
+    )
+    db.add(asset)
+    db.flush()
+    return asset
+
+
 def persist_collected_product_images(db: Session, rows) -> int:
     """Attach collector image URLs to the already-imported master products."""
     from .extractor_adapter import normalize_master_key
@@ -138,7 +221,8 @@ def persist_collected_product_images(db: Session, rows) -> int:
     handled: set[tuple[int, str]] = set()
     for row in rows or []:
         image_url = (getattr(row, "image_url", None) or "").strip()
-        if not image_url:
+        image_path = (getattr(row, "image_path", None) or "").strip()
+        if not image_url and not image_path:
             continue
         try:
             key = normalize_master_key(
@@ -151,16 +235,24 @@ def persist_collected_product_images(db: Session, rows) -> int:
         product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         if not product:
             continue
-        marker = (product.id, image_url)
+        marker = (product.id, image_url or image_path)
         if marker in handled:
             continue
         handled.add(marker)
-        asset = persist_product_image(
-            db,
-            product,
-            image_url,
-            alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
-        )
+        if image_url:
+            asset = persist_product_image(
+                db,
+                product,
+                image_url,
+                alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
+            )
+        else:
+            asset = persist_product_image_file(
+                db,
+                product,
+                image_path,
+                alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
+            )
         if asset:
             saved += 1
     db.commit()

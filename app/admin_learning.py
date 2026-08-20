@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from sqlalchemy.orm import Session
 
 from .models import AdminAuditLog, MasterProduct, ProductAdminData, ProductAlias
@@ -13,6 +14,64 @@ def audit(db: Session, action: str, entity_type: str, entity_id: str | int | Non
 def resolve_product_alias(db: Session, alias_key: str) -> MasterProduct | None:
     row = db.query(ProductAlias).filter(ProductAlias.alias_key == alias_key).first()
     return db.get(MasterProduct, row.master_product_id) if row else None
+
+
+_GENERIC_BRAND_WORDS = {
+    "bio", "deutsche", "deutscher", "frische", "frischer", "frisches",
+    "helle", "heller", "helles", "rote", "roter", "rotes", "feine",
+    "frische-sieger", "aktion", "premium", "classic", "natur",
+}
+
+
+def learned_brand_candidates(db: Session) -> set[str]:
+    candidates: set[str] = set()
+    corrected = (
+        db.query(MasterProduct.brand)
+        .join(ProductAdminData, ProductAdminData.master_product_id == MasterProduct.id)
+        .filter(ProductAdminData.name_locked.is_(True), MasterProduct.brand.is_not(None))
+        .all()
+    )
+    candidates.update(str(brand).strip() for (brand,) in corrected if brand and str(brand).strip())
+    aliased = (
+        db.query(MasterProduct.brand)
+        .join(ProductAlias, ProductAlias.master_product_id == MasterProduct.id)
+        .filter(ProductAlias.source == "admin-correction", MasterProduct.brand.is_not(None))
+        .all()
+    )
+    candidates.update(str(brand).strip() for (brand,) in aliased if brand and str(brand).strip())
+    from .prospect_models import ProspectOfferReview
+
+    reviewed = db.query(ProspectOfferReview.expected_brand).filter(
+        ProspectOfferReview.expected_brand.is_not(None)
+    ).all()
+    candidates.update(str(brand).strip() for (brand,) in reviewed if brand and str(brand).strip())
+    return candidates
+
+
+def infer_learned_brand(
+    db: Session,
+    product_name: str,
+    *,
+    candidates: set[str] | None = None,
+) -> str | None:
+    """Infer only brands backed by an explicit admin learning signal.
+
+    This deliberately is not a first-word heuristic. A candidate must already
+    exist in an admin-corrected product/alias or an audited prospect review and
+    must match the beginning of the new product name on a token boundary.
+    """
+    if candidates is None:
+        candidates = learned_brand_candidates(db)
+
+    name = re.sub(r"\s+", " ", product_name or "").strip()
+    matches = []
+    for brand in candidates:
+        clean = re.sub(r"[®™]+", "", brand).strip()
+        if not clean or clean.lower() in _GENERIC_BRAND_WORDS or len(clean) < 2:
+            continue
+        if re.match(rf"^{re.escape(clean)}(?:\b|\s|[-–:/])", name, re.I):
+            matches.append(brand)
+    return max(matches, key=len) if matches else None
 
 
 def remember_product_alias(db: Session, alias_key: str, product: MasterProduct, source: str = "admin"):

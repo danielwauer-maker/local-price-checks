@@ -166,7 +166,9 @@ def evaluate_collection_quality(
 
     received = len(rows)
     imported = int(summary.imported or 0)
-    import_rate = _pct(imported, received)
+    online_rejected = int(summary.rejected_online or 0)
+    eligible_received = max(0, received - online_rejected)
+    import_rate = _pct(imported, eligible_received)
     expected_offer_ratio = _pct(imported, policy.expected_min_offers)
     package_rate = _pct(package_count, len(products))
     unit_price_rate = _pct(unit_price_count, len(offers))
@@ -190,10 +192,10 @@ def evaluate_collection_quality(
     if imported <= 0:
         quality_fail = True
         quality_reasons.append("no_imported_offers")
-    if received > 0 and import_rate < 50.0:
+    if eligible_received > 0 and import_rate < 50.0:
         quality_fail = True
         quality_reasons.append("import_rate_below_50")
-    elif received > 0 and import_rate < policy.min_import_rate:
+    elif eligible_received > 0 and import_rate < policy.min_import_rate:
         quality_reasons.append("import_rate_below_target")
     if archive is not None and provenance_rate < policy.min_provenance_rate:
         quality_reasons.append("provenance_below_target")
@@ -232,6 +234,7 @@ def evaluate_collection_quality(
         "retailer": store.retailer,
         "expected_min_offers": policy.expected_min_offers,
         "offers_received": received,
+        "eligible_offers_received": eligible_received,
         "offers_imported": imported,
         "import_rate": import_rate,
         "expected_offer_ratio": expected_offer_ratio,
@@ -247,7 +250,7 @@ def evaluate_collection_quality(
         "suspicious_name_count": suspicious_count,
         "suspicious_rate": suspicious_rate,
         "quality_rejected": int(summary.rejected_quality or 0),
-        "online_rejected": int(summary.rejected_online or 0),
+        "online_rejected": online_rejected,
         "store_rejected": int(summary.rejected_store or 0),
         "date_rejected": int(summary.rejected_date or 0),
         "quality_reasons": quality_reasons,

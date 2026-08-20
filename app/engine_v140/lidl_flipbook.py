@@ -22,11 +22,12 @@ from .lidl_manifest import (
     add_image_pdf_page,
     embedded_json_states,
     logical_page_images,
-    manifest_offers,
     manifest_page_count,
 )
 from .lidl_ocr import offers_from_leaflet_image
-from .lidl_schwarz_runtime import _page_online_only
+from .lidl_pdf import extract_lidl_pdf_offers
+from .lidl_semantics import LidlSourceKind, classify_lidl_link
+from .lidl_schwarz_runtime import _page_online_only, schwarz_manifest_offers
 
 _TOTAL_RE = re.compile(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b")
 
@@ -55,6 +56,7 @@ class LidlCollectionTimeout(RuntimeError):
 _TOTAL_TIMEOUT_SECONDS = 540.0
 _PHASE_TIMEOUTS = {
     "viewer_manifest": 65.0,
+    "pdf_text_extract": 100.0,
     "structured_extract": 20.0,
     "page_assets": 80.0,
     "ocr_fallback": 240.0,
@@ -107,11 +109,12 @@ def _offer_page_numbers(offers: list) -> set[int]:
 
 
 def _structured_authority_pages(offers: list) -> set[int]:
-    """Catalogue links enrich offers but never suppress page-image OCR."""
+    """Only a local, price-bearing source may suppress fallback extraction."""
     return _offer_page_numbers(
         [
             offer for offer in offers
-            if "SchwarzFlyerLink+Catalog" not in (getattr(offer, "source_text", "") or "")
+            if bool(getattr(offer, "local_store_offer", True))
+            and "SchwarzShopHotspot" not in (getattr(offer, "source_text", "") or "")
         ]
     )
 
@@ -147,12 +150,43 @@ def _schwarz_page_assets(flyer: dict) -> list[dict]:
     return assets
 
 
-def _ocr_candidate_assets(page_assets: list[dict], structured_pages: set[int]) -> list[dict]:
+def _ocr_candidate_assets(
+    page_assets: list[dict],
+    structured_pages: set[int],
+    *,
+    fallback_pages: set[int] | None = None,
+) -> list[dict]:
     """Return only local pages that still lack a structured offer."""
     return [
         asset for asset in page_assets
         if asset["page_no"] not in structured_pages and not asset["online_only"]
+        and (fallback_pages is None or asset["page_no"] in fallback_pages)
     ]
+
+
+def _shop_hotspot_count(flyer: dict) -> int:
+    return sum(
+        1
+        for page in flyer.get("pages") or []
+        if isinstance(page, dict)
+        for link in page.get("links") or []
+        if isinstance(link, dict) and classify_lidl_link(link) is LidlSourceKind.SHOP_ONLINE
+    )
+
+
+_FOOD_WORDS = {
+    "kaffee", "caffè", "pepsi", "schwip", "trauben", "zitron", "feigen",
+    "möhren", "zwiebel", "salat", "mais", "joghurt", "käse", "milch",
+    "fleisch", "wurst", "brot", "brötchen", "obst", "gemüse", "bier",
+    "wein", "saft", "wasser", "schokolade", "keks", "chips", "pom-bär",
+}
+
+
+def _is_food_offer(offer) -> bool:
+    text = f"{getattr(offer, 'category', '')} {getattr(offer, 'product_name', '')}".lower()
+    if any(word in text for word in _FOOD_WORDS):
+        return True
+    return getattr(offer, "category", "") not in {"Sonstiges", "Non-Food"}
 
 
 def _download_cached_asset(asset: dict, cache_dir: Path, timeout_seconds: float) -> tuple[int, bytes, bool, str]:
@@ -604,9 +638,30 @@ def capture_lidl_flipbook(
     explicit_total = len(flyer.get("pages") or []) or manifest_page_count(all_payloads)
     _report(progress, "viewer_manifest", budget, pages_total=explicit_total, pages_done=0)
 
+    budget.begin("pdf_text_extract")
+    _report(progress, "pdf_text_extract", budget, pages_total=explicit_total, pages_done=0)
+    _download_official_pdf(flyer, target, budget)
+    pdf_extraction = extract_lidl_pdf_offers(
+        target,
+        source,
+        valid_from=vf,
+        valid_to=vt,
+        flyer=flyer,
+        crop_dir=target_dir / "offer-crops",
+    )
+    _report(
+        progress,
+        "pdf_text_extract",
+        budget,
+        pages_total=explicit_total,
+        pages_structured=len(pdf_extraction.pages_with_local_offers),
+        pages_done=len(pdf_extraction.pages_with_text),
+    )
+
     budget.begin("structured_extract")
-    manifest_rows = manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
-    for offer in manifest_rows:
+    manifest_rows = schwarz_manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
+    structured_rows = [*pdf_extraction.offers, *manifest_rows]
+    for offer in structured_rows:
         if offer.unit_price is None:
             offer.unit_price, offer.unit_price_unit = compute_unit_price(
                 offer.app_price if offer.app_price is not None else offer.price,
@@ -615,11 +670,15 @@ def capture_lidl_flipbook(
             )
         elif not offer.unit_price_unit:
             offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
-    structured_pages = _offer_page_numbers(manifest_rows)
-    sufficient_structured_pages = _structured_authority_pages(manifest_rows)
+    structured_pages = _offer_page_numbers(structured_rows)
+    sufficient_structured_pages = _structured_authority_pages(structured_rows)
     online_pages = {asset["page_no"] for asset in page_assets if asset["online_only"]}
-    ocr_assets = _ocr_candidate_assets(page_assets, sufficient_structured_pages)
-    pages_done = len(sufficient_structured_pages | online_pages)
+    ocr_assets = _ocr_candidate_assets(
+        page_assets,
+        sufficient_structured_pages,
+        fallback_pages=pdf_extraction.ocr_candidate_pages,
+    )
+    pages_done = len(pdf_extraction.pages_with_text | online_pages)
     _report(
         progress,
         "structured_extract",
@@ -705,7 +764,7 @@ def capture_lidl_flipbook(
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
-    offers = _dedupe_offers([*manifest_rows, *ocr_rows])
+    offers = _dedupe_offers([*structured_rows, *ocr_rows])
     warnings = []
     if asset_timeout:
         warnings.append(f"error_type=timeout phase=page_assets elapsed_seconds={budget.elapsed:.1f}")
@@ -730,7 +789,6 @@ def capture_lidl_flipbook(
         pages_done=pages_done,
         assets_cached=assets_cached,
     )
-    _download_official_pdf(flyer, target, budget)
     try:
         archive_pages = len(PdfReader(str(target)).pages)
     except Exception as exc:
@@ -739,11 +797,22 @@ def capture_lidl_flipbook(
         raise RuntimeError("Offizielles Lidl-PDF enthält weniger als zwei Seiten")
 
     warning = " ".join(warnings) or None
+    local_rows = [offer for offer in offers if bool(getattr(offer, "local_store_offer", False))]
+    food_offers = sum(1 for offer in local_rows if _is_food_offer(offer))
+    nonfood_local_offers = len(local_rows) - food_offers
+    online_rejected = sum(1 for offer in offers if not bool(getattr(offer, "local_store_offer", False)))
+    manifest_text_offers = sum(
+        1 for offer in manifest_rows if "SchwarzFlyerPageText" in (offer.source_text or "")
+    )
     diagnostics = (
         f"phase=complete pages_total={explicit_total} pages_structured={len(structured_pages)} "
         f"pages_ocr={len(downloaded)} pages_done={pages_done} assets_cached={assets_cached} "
         f"manifest_payloads={len(all_payloads)} manifest_offers={len(manifest_rows)} "
-        f"ocr_offers={len(ocr_rows)} archive_pages={archive_pages} "
+        f"shop_hotspots_seen={_shop_hotspot_count(flyer)} online_rejected={online_rejected} "
+        f"pdf_text_offers={len(pdf_extraction.offers)} manifest_text_offers={manifest_text_offers} "
+        f"ocr_offers={len(ocr_rows)} food_offers={food_offers} "
+        f"nonfood_local_offers={nonfood_local_offers} image_crops={pdf_extraction.image_crops} "
+        f"archive_pages={archive_pages} "
         f"viewer_navigation=0 elapsed_seconds={budget.elapsed:.1f}"
     )
     return LidlFlipbookResult(

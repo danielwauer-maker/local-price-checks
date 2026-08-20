@@ -45,8 +45,8 @@ def test_lidl_ocr_is_only_planned_for_local_pages_without_structured_hits():
 
 
 def test_catalogue_link_does_not_suppress_page_ocr():
-    catalogue = SimpleNamespace(source_text="PDF Seite 1: SchwarzFlyerLink+Catalog {}")
-    hotspot = SimpleNamespace(source_text="PDF Seite 2: ManifestHotspot {}")
+    catalogue = SimpleNamespace(source_text="PDF Seite 1: SchwarzShopHotspot {}", local_store_offer=False)
+    hotspot = SimpleNamespace(source_text="PDF Seite 2: ManifestHotspot {}", local_store_offer=True)
     assert _structured_authority_pages([catalogue, hotspot]) == {2}
 
 
