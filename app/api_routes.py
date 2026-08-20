@@ -12,6 +12,7 @@ from .db import SessionLocal, get_db
 from .geo import haversine_km
 from .models import CollectionRun, FavoriteStore, MasterProduct, MediaAsset, Offer, ProductAdminData, ProductBarcode, ShoppingItem, Store
 from .optimizer import optimize_shopping
+from .product_media import preferred_product_media
 from .services import current_user, favorite_store_ids, selected_store_ids
 
 router = APIRouter(prefix="/api")
@@ -35,6 +36,8 @@ def _media_url(row: MediaAsset | None) -> str | None:
 
 
 def _primary_media(db: Session, *, kind: str, product_id: int | None = None, store_id: int | None = None, retailer: str | None = None) -> str | None:
+    if kind == "product" and product_id is not None:
+        return _media_url(preferred_product_media(db, product_id, purpose="public"))
     q = db.query(MediaAsset).filter(MediaAsset.kind == kind, MediaAsset.active.is_(True))
     if product_id is not None:
         q = q.filter(MediaAsset.master_product_id == product_id)

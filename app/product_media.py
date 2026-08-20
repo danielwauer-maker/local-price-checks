@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import MasterProduct, MediaAsset
+from .models import MasterProduct, MediaAsset, MediaAssetMetadata
 
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _CONTENT_EXTENSIONS = {
@@ -18,6 +18,89 @@ _CONTENT_EXTENSIONS = {
     "image/gif": ".gif",
     "image/avif": ".avif",
 }
+MEDIA_SOURCE_PRIORITY = {
+    "prospect_crop": 100,
+    "retailer_cdn": 200,
+    "official_product": 300,
+    "admin_curated": 400,
+}
+
+
+def media_source_for_asset(db: Session, asset: MediaAsset) -> str:
+    metadata = db.query(MediaAssetMetadata).filter(
+        MediaAssetMetadata.media_asset_id == asset.id
+    ).first()
+    if metadata:
+        return metadata.media_source
+    if (asset.source_url or "").startswith("prospect-crop:"):
+        return "prospect_crop"
+    if (asset.source_url or "").startswith(("http://", "https://")):
+        return "retailer_cdn"
+    return "admin_curated"
+
+
+def _set_media_metadata(
+    db: Session,
+    asset: MediaAsset,
+    *,
+    media_source: str,
+    external_product_id: str | None = None,
+    canonical_url: str | None = None,
+    audit_relevant: bool = False,
+) -> MediaAssetMetadata:
+    source = media_source if media_source in MEDIA_SOURCE_PRIORITY else "retailer_cdn"
+    row = db.query(MediaAssetMetadata).filter(
+        MediaAssetMetadata.media_asset_id == asset.id
+    ).first()
+    if row is None:
+        row = MediaAssetMetadata(media_asset_id=asset.id, media_source=source)
+        db.add(row)
+    row.media_source = source
+    row.priority = MEDIA_SOURCE_PRIORITY[source]
+    row.audit_relevant = audit_relevant
+    row.external_product_id = (external_product_id or "")[:160] or None
+    row.canonical_url = canonical_url or None
+    db.flush()
+    return row
+
+
+def preferred_product_media(db: Session, product_id: int, *, purpose: str = "public") -> MediaAsset | None:
+    assets = db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product_id,
+        MediaAsset.active.is_(True),
+    ).all()
+    if not assets:
+        return None
+    metadata = {
+        row.media_asset_id: row
+        for row in db.query(MediaAssetMetadata).filter(
+            MediaAssetMetadata.media_asset_id.in_([asset.id for asset in assets])
+        )
+    }
+
+    def rank(asset: MediaAsset) -> tuple[int, int, int, int]:
+        meta = metadata.get(asset.id)
+        source = meta.media_source if meta else media_source_for_asset(db, asset)
+        priority = meta.priority if meta else MEDIA_SOURCE_PRIORITY[source]
+        audit = bool(meta.audit_relevant) if meta else source == "prospect_crop"
+        if purpose == "audit":
+            return (int(audit), int(source == "prospect_crop"), priority, asset.id)
+        return (priority, int(asset.is_primary), int(not audit), asset.id)
+
+    return max(assets, key=rank)
+
+
+def _refresh_product_primary(db: Session, product_id: int) -> None:
+    preferred = preferred_product_media(db, product_id, purpose="public")
+    if preferred is None:
+        return
+    for asset in db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product_id,
+        MediaAsset.active.is_(True),
+    ):
+        asset.is_primary = asset.id == preferred.id
 
 
 def _image_extension(content_type: str, url: str) -> str | None:
@@ -37,6 +120,9 @@ def persist_product_image(
     *,
     alt_text: str | None = None,
     media_dir: Path | None = None,
+    media_source: str = "retailer_cdn",
+    external_product_id: str | None = None,
+    canonical_url: str | None = None,
 ) -> MediaAsset | None:
     """Persist one retailer product image locally and attach it to a product.
 
@@ -61,6 +147,14 @@ def persist_product_image(
         if alt_text and not existing.alt_text:
             existing.alt_text = alt_text[:240]
         existing.active = True
+        _set_media_metadata(
+            db,
+            existing,
+            media_source=media_source,
+            external_product_id=external_product_id,
+            canonical_url=canonical_url,
+        )
+        _refresh_product_primary(db, product.id)
         return existing
 
     try:
@@ -127,6 +221,14 @@ def persist_product_image(
     )
     db.add(asset)
     db.flush()
+    _set_media_metadata(
+        db,
+        asset,
+        media_source=media_source,
+        external_product_id=external_product_id,
+        canonical_url=canonical_url,
+    )
+    _refresh_product_primary(db, product.id)
     return asset
 
 
@@ -137,6 +239,7 @@ def persist_product_image_file(
     *,
     alt_text: str | None = None,
     media_dir: Path | None = None,
+    media_source: str = "prospect_crop",
 ) -> MediaAsset | None:
     """Persist a collector-generated crop from inside the configured data dir."""
     if not image_path:
@@ -175,6 +278,8 @@ def persist_product_image_file(
     )
     if existing:
         existing.active = True
+        _set_media_metadata(db, existing, media_source=media_source, audit_relevant=True)
+        _refresh_product_primary(db, product.id)
         return existing
 
     target_dir = media_dir or (settings.data_dir / "admin_media")
@@ -210,6 +315,8 @@ def persist_product_image_file(
     )
     db.add(asset)
     db.flush()
+    _set_media_metadata(db, asset, media_source=media_source, audit_relevant=True)
+    _refresh_product_primary(db, product.id)
     return asset
 
 
@@ -221,7 +328,11 @@ def persist_collected_product_images(db: Session, rows) -> int:
     handled: set[tuple[int, str]] = set()
     for row in rows or []:
         image_url = (getattr(row, "image_url", None) or "").strip()
-        image_path = (getattr(row, "image_path", None) or "").strip()
+        image_path = (
+            getattr(row, "audit_image_path", None)
+            or getattr(row, "image_path", None)
+            or ""
+        ).strip()
         if not image_url and not image_path:
             continue
         try:
@@ -235,25 +346,34 @@ def persist_collected_product_images(db: Session, rows) -> int:
         product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         if not product:
             continue
-        marker = (product.id, image_url or image_path)
-        if marker in handled:
-            continue
-        handled.add(marker)
         if image_url:
-            asset = persist_product_image(
-                db,
-                product,
-                image_url,
-                alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
-            )
-        else:
+            marker = (product.id, image_url)
+            if marker not in handled:
+                handled.add(marker)
+                asset = persist_product_image(
+                    db,
+                    product,
+                    image_url,
+                    alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
+                    media_source=getattr(row, "image_media_source", None) or "retailer_cdn",
+                    external_product_id=getattr(row, "lidl_product_id", None),
+                    canonical_url=getattr(row, "canonical_url", None),
+                )
+                if asset:
+                    saved += 1
+        if image_path:
+            marker = (product.id, image_path)
+            if marker in handled:
+                continue
+            handled.add(marker)
             asset = persist_product_image_file(
                 db,
                 product,
                 image_path,
                 alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
+                media_source="prospect_crop",
             )
-        if asset:
-            saved += 1
+            if asset:
+                saved += 1
     db.commit()
     return saved

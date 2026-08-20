@@ -2,11 +2,17 @@
   "source": "official Lidl Aktionsprospekt 17.08.2026-22.08.2026, page 1",
   "page_width": 467.717,
   "page_height": 793.701,
+  "products": [
+    {"productId": "100409050", "title": "LIVARNO Musselin-Bettwäsche, 155 x 220 cm", "brand": "LIVARNO", "canonicalUrl": "/p/livarno-musselin-bettwaesche/p100409050", "image": "https://www.lidl.de/assets/livarno-isolated.jpg", "price": "19.99"},
+    {"productId": "100393714", "title": "PARKSIDE Elektro-Kettensäge PEKS 2200 B1", "brand": "PARKSIDE", "canonicalUrl": "/p/parkside-elektro-kettensaege/p100393714", "image": "https://www.lidl.de/assets/parkside-isolated.jpg", "price": "49.99"},
+    {"productId": "100999999", "title": "LIVARNO Online-Regal", "brand": "LIVARNO", "canonicalUrl": "/p/livarno-online-regal/p100999999", "image": "https://www.lidl.de/assets/online-regal.jpg", "price": "99.99"}
+  ],
   "links": [
     {"url": "https://rezepte.lidl.de/alle-rezepte?q=kaffee", "title": "Link", "top": 26.7003, "left": 0.0, "width": 33.9744, "height": 22.796},
     {"url": "https://www.lidl.de/p/livarno-musselin-bettwaesche/p100409050?flyx_content=p-100409050", "title": "LIVARNO Musselin-Bettwäsche", "top": 50.6297, "left": 35.2564, "width": 32.4786, "height": 6.4232, "productDetails": {"productId": "100409050"}},
     {"url": "https://rezepte.lidl.de/alle-rezepte?q=Weintrauben", "title": "Link", "top": 74.8111, "left": 33.1197, "width": 33.3333, "height": 19.6474},
-    {"url": "https://www.lidl.de/p/parkside-elektro-kettensage/p100393714?flyx_content=p-100393714", "title": "PARKSIDE Elektro-Kettensäge", "top": 78.9673, "left": 67.9487, "width": 10.8974, "height": 6.4232, "productDetails": {"productId": "100393714"}}
+    {"url": "https://www.lidl.de/p/parkside-elektro-kettensage/p100393714?flyx_content=p-100393714", "title": "PARKSIDE Elektro-Kettensäge", "top": 78.9673, "left": 67.9487, "width": 10.8974, "height": 6.4232, "productDetails": {"productId": "100393714"}},
+    {"url": "https://www.lidl.de/p/livarno-online-regal/p100999999?flyx_content=p-100999999", "title": "LIVARNO Online-Regal", "top": 5.0, "left": 80.0, "width": 8.0, "height": 5.0, "productDetails": {"productId": "100999999"}}
   ],
   "blocks": [
     {"bbox": [14.2, 349.3, 76.0, 382.7], "text": "LAVAZZA\nCaffè Crema\nGanze Bohnen. Je 1 kg"},

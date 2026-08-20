@@ -52,6 +52,13 @@ class _Block:
     text: str
 
 
+@dataclass(frozen=True)
+class _ProductLinkEvidence:
+    rect: pymupdf.Rect
+    link: dict
+    product: dict
+
+
 def _number(raw: str) -> float:
     return float(raw.replace(",", "."))
 
@@ -116,14 +123,31 @@ def _rect_distance(a: pymupdf.Rect, b: pymupdf.Rect) -> float:
     return dx + dy + center
 
 
-def _shop_regions(flyer: dict | None, page_index: int, page_rect: pymupdf.Rect) -> list[pymupdf.Rect]:
+def _product_catalog(flyer: dict | None) -> dict[str, dict]:
+    products = (flyer or {}).get("products") or []
+    values = products.values() if isinstance(products, dict) else products
+    return {
+        str(product.get("productId")): product
+        for product in values
+        if isinstance(product, dict) and product.get("productId") is not None
+    }
+
+
+def _product_link_evidence(
+    flyer: dict | None,
+    page_index: int,
+    page_rect: pymupdf.Rect,
+) -> list[_ProductLinkEvidence]:
     pages = (flyer or {}).get("pages") or []
     if page_index >= len(pages) or not isinstance(pages[page_index], dict):
         return []
-    regions = []
+    catalog = _product_catalog(flyer)
+    evidence: list[_ProductLinkEvidence] = []
     for link in pages[page_index].get("links") or []:
-        if not isinstance(link, dict) or classify_lidl_link(link) is not LidlSourceKind.SHOP_ONLINE:
+        if not isinstance(link, dict) or classify_lidl_link(link) is not LidlSourceKind.ONLINE_ONLY:
             continue
+        details = link.get("productDetails") or {}
+        product = catalog.get(str(details.get("productId") or ""), {})
         try:
             x0 = page_rect.width * float(link.get("left")) / 100.0
             y0 = page_rect.height * float(link.get("top")) / 100.0
@@ -131,27 +155,30 @@ def _shop_regions(flyer: dict | None, page_index: int, page_rect: pymupdf.Rect) 
             y1 = y0 + page_rect.height * float(link.get("height")) / 100.0
         except (TypeError, ValueError):
             continue
-        regions.append(pymupdf.Rect(x0 - 12, y0 - 10, x1 + 12, y1 + 90) & page_rect)
-    return regions
+        rect = pymupdf.Rect(x0 - 12, y0 - 10, x1 + 12, y1 + 90) & page_rect
+        evidence.append(_ProductLinkEvidence(rect, link, product))
+    return evidence
 
 
-def _shop_titles(flyer: dict | None, page_index: int) -> list[str]:
-    pages = (flyer or {}).get("pages") or []
-    if page_index >= len(pages) or not isinstance(pages[page_index], dict):
-        return []
-    return [
-        str(link.get("title") or (link.get("productDetails") or {}).get("title") or "").strip()
-        for link in pages[page_index].get("links") or []
-        if isinstance(link, dict) and classify_lidl_link(link) is LidlSourceKind.SHOP_ONLINE
-    ]
+def _evidence_title(evidence: _ProductLinkEvidence) -> str:
+    return str(
+        evidence.product.get("title")
+        or evidence.link.get("title")
+        or (evidence.link.get("productDetails") or {}).get("title")
+        or ""
+    ).strip()
+
+
+def _title_tokens(value: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-zäöüß0-9]+", value.lower())
+        if len(token) >= 3 and token not in {"und", "oder", "mit", "fuer", "für", "stueck", "stück"}
+    }
 
 
 def _matches_shop_title(name: str, titles: list[str]) -> bool:
     def tokens(value: str) -> set[str]:
-        return {
-            token for token in re.findall(r"[a-zäöüß0-9]+", value.lower())
-            if len(token) >= 3 and token not in {"und", "oder", "mit", "fuer", "für", "stueck", "stück"}
-        }
+        return _title_tokens(value)
 
     name_tokens = tokens(name)
     if not name_tokens:
@@ -166,13 +193,86 @@ def _matches_shop_title(name: str, titles: list[str]) -> bool:
     return False
 
 
+def _matching_product_evidence(
+    rect: pymupdf.Rect,
+    name: str,
+    price: float,
+    evidence: list[_ProductLinkEvidence],
+) -> _ProductLinkEvidence | None:
+    spatial = [item for item in evidence if _inside_shop_region(rect, [item.rect])]
+    title_matches = [
+        item for item in evidence
+        if _matches_shop_title(name, [_evidence_title(item)])
+    ]
+    candidates: list[_ProductLinkEvidence] = []
+    for item in [*spatial, *title_matches]:
+        if item not in candidates:
+            candidates.append(item)
+    if not candidates:
+        return None
+    name_tokens = _title_tokens(name)
+    def same_price(item: _ProductLinkEvidence) -> int:
+        try:
+            return int(abs(float(str(item.product.get("price")).replace(",", ".")) - price) < 0.011)
+        except (TypeError, ValueError):
+            return 0
+
+    return max(
+        candidates,
+        key=lambda item: (
+            same_price(item),
+            len(name_tokens & _title_tokens(_evidence_title(item))),
+            -_rect_distance(rect, item.rect),
+        ),
+    )
+
+
+def _page_is_online_only(page_text: str) -> bool:
+    low = re.sub(r"\s+", " ", page_text).lower()
+    return "shoppe auf lidl.de" in low or (
+        "online shoppen" in low and "onlineshop-angebote" in low
+    )
+
+
+def _exact_image_identity(name: str, price: float, product: dict) -> bool:
+    """Require exact hotspot identity, compatible title and identical price."""
+    if not product.get("productId") or not product.get("image"):
+        return False
+    try:
+        product_price = float(str(product.get("price")).replace(",", "."))
+    except (TypeError, ValueError):
+        return False
+    name_tokens = _title_tokens(name)
+    product_title = str(product.get("title") or "")
+    product_tokens = _title_tokens(product_title)
+    overlap = name_tokens & product_tokens
+    normalized_name = re.sub(r"\s+", " ", name.lower())
+    normalized_title = re.sub(r"\s+", " ", product_title.lower())
+    for marker in ("king size", "standardgröße", "standardgroesse"):
+        if (marker in normalized_name) != (marker in normalized_title):
+            return False
+    dimensions = re.compile(r"\b\d{2,3}\s*[x×]\s*\d{2,3}\b", re.I)
+    name_dimensions = {re.sub(r"\s+", "", value.lower()) for value in dimensions.findall(name)}
+    title_dimensions = {re.sub(r"\s+", "", value.lower()) for value in dimensions.findall(product_title)}
+    if name_dimensions and title_dimensions and name_dimensions != title_dimensions:
+        return False
+    return (
+        abs(product_price - float(price)) < 0.011
+        and len(overlap) >= min(2, len(name_tokens), len(product_tokens))
+        and len(overlap) / max(1, min(len(name_tokens), len(product_tokens))) >= 0.6
+    )
+
+
 def _local_link_regions(flyer: dict | None, page_index: int, page_rect: pymupdf.Rect) -> list[pymupdf.Rect]:
     pages = (flyer or {}).get("pages") or []
     if page_index >= len(pages) or not isinstance(pages[page_index], dict):
         return []
     regions = []
     for link in pages[page_index].get("links") or []:
-        if not isinstance(link, dict) or classify_lidl_link(link) is LidlSourceKind.SHOP_ONLINE:
+        if not isinstance(link, dict) or classify_lidl_link(link) not in {
+            LidlSourceKind.LOCAL_ONLY,
+            LidlSourceKind.ONLINE_ONLY,
+        }:
             continue
         try:
             x0 = page_rect.width * float(link.get("left")) / 100.0
@@ -243,9 +343,9 @@ def extract_lidl_pdf_offers(
         product_blocks = [segment for block in raw_blocks for segment in _segments(block) if _PACKAGE.search(segment.text)]
         price_blocks = [(block, _price_values(block.text)) for block in raw_blocks]
         price_blocks = [(block, values) for block, values in price_blocks if values is not None]
-        regions = _shop_regions(flyer, page_index, page.rect)
-        shop_titles = _shop_titles(flyer, page_index)
+        product_evidence = _product_link_evidence(flyer, page_index, page.rect)
         local_regions = _local_link_regions(flyer, page_index, page.rect)
+        page_online_only = _page_is_online_only(full_text)
 
         pairs: list[tuple[float, int, int]] = []
         for product_index, product in enumerate(product_blocks):
@@ -283,10 +383,22 @@ def extract_lidl_pdf_offers(
             effective_price = app_price if app_price is not None else price
             if unit_price is None:
                 unit_price, unit_price_unit = compute_unit_price(effective_price, quantity, unit)
-            online = _inside_shop_region(product.rect, regions) or _matches_shop_title(name, shop_titles)
-            source_kind = "LidlPdfShopRegion" if online else "LidlPdfText"
+            matched_evidence = _matching_product_evidence(
+                product.rect | price_block.rect,
+                name,
+                price,
+                product_evidence,
+            )
+            if page_online_only:
+                availability = LidlSourceKind.ONLINE_ONLY
+            elif matched_evidence is not None:
+                availability = LidlSourceKind.LOCAL_AND_ONLINE
+            else:
+                availability = LidlSourceKind.LOCAL_ONLY
+            local = availability is not LidlSourceKind.ONLINE_ONLY
+            source_kind = f"LidlPdfText:{availability.value}"
             image_path = None
-            if not online and crop_dir is not None:
+            if local and crop_dir is not None:
                 image_path = _crop_offer(
                     page,
                     product.rect | price_block.rect,
@@ -311,14 +423,32 @@ def extract_lidl_pdf_offers(
                 valid_to=valid_to,
                 source_text=f"PDF Seite {page_no}: {source_kind} {combined}"[:4000],
                 source_url=source.url,
-                local_store_offer=not online,
-                confidence=.99 if not online else .98,
+                local_store_offer=local,
+                confidence=.99 if local else .98,
             )
+            offer.lidl_availability = availability.value
+            if matched_evidence is not None:
+                details = matched_evidence.link.get("productDetails") or {}
+                catalog_product = matched_evidence.product
+                offer.lidl_product_id = str(
+                    catalog_product.get("productId") or details.get("productId") or ""
+                )
+                offer.canonical_url = str(
+                    catalog_product.get("canonicalUrl")
+                    or catalog_product.get("url")
+                    or matched_evidence.link.get("url")
+                    or ""
+                )
+                if local and _exact_image_identity(name, price, catalog_product):
+                    offer.image_url = str(catalog_product.get("image"))
+                    offer.image_media_source = "official_product"
+                    offer.image_identity_key = f"lidl:productId:{offer.lidl_product_id}"
             if image_path is not None:
                 setattr(offer, "image_path", str(image_path))
+                offer.audit_image_path = str(image_path)
                 offer.image_alt = name
             offers.append(offer)
-            if not online:
+            if local:
                 pages_with_local.add(page_no)
 
         if page_no not in pages_with_text:

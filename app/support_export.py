@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .clock import app_today
 from .config import settings
-from .models import CollectionRun, CollectionRunProgress, MasterProduct, Offer, Store
+from .models import CollectionRun, CollectionRunProgress, MasterProduct, MediaAsset, MediaAssetMetadata, Offer, Store
 from .collection_quality import CollectionQualitySnapshot
 from .prospect_models import OfferProvenance, Prospect, ProspectArchive
 
@@ -81,6 +81,11 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
     stores = db.query(Store).order_by(Store.retailer, Store.name).all()
     runs = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).limit(200).all()
     products = db.query(MasterProduct).order_by(MasterProduct.id).all()
+    media_assets = db.query(MediaAsset).order_by(MediaAsset.id).all()
+    media_metadata = {
+        row.media_asset_id: row
+        for row in db.query(MediaAssetMetadata).order_by(MediaAssetMetadata.media_asset_id).all()
+    }
     offers = (
         db.query(Offer)
         .filter(Offer.valid_from <= today, Offer.valid_to >= today)
@@ -245,6 +250,27 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "created_at": snapshot.created_at,
                 }
                 for snapshot in quality_snapshots
+            ],
+        )
+        _write_json(
+            zf,
+            "product_media.json",
+            [
+                {
+                    "id": asset.id,
+                    "master_product_id": asset.master_product_id,
+                    "file_path": asset.file_path,
+                    "source_url": asset.source_url,
+                    "active": asset.active,
+                    "is_primary": asset.is_primary,
+                    "media_source": media_metadata[asset.id].media_source if asset.id in media_metadata else None,
+                    "priority": media_metadata[asset.id].priority if asset.id in media_metadata else None,
+                    "audit_relevant": media_metadata[asset.id].audit_relevant if asset.id in media_metadata else None,
+                    "external_product_id": media_metadata[asset.id].external_product_id if asset.id in media_metadata else None,
+                    "canonical_url": media_metadata[asset.id].canonical_url if asset.id in media_metadata else None,
+                }
+                for asset in media_assets
+                if asset.kind == "product"
             ],
         )
         _write_json(

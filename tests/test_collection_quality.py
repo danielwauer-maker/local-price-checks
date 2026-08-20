@@ -14,7 +14,7 @@ from app.collection_quality import (
 )
 from app.db import Base
 from app.extractor_adapter import ImportSummary
-from app.models import CollectionRun, MasterProduct, MediaAsset, Offer, OfferOccurrence, Store
+from app.models import CollectionRun, MasterProduct, MediaAsset, MediaAssetMetadata, Offer, OfferOccurrence, Store
 from app.prospect_models import OfferProvenance, ProspectArchive
 
 
@@ -244,3 +244,43 @@ def test_online_rejections_do_not_reduce_local_import_quality(monkeypatch):
     assert metrics["eligible_offers_received"] == 2
     assert metrics["online_rejected"] == 200
     assert metrics["import_rate"] == 100.0
+
+
+def test_crop_only_coverage_is_reported_but_weighted_below_official_media(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    for asset in db.query(MediaAsset).all():
+        asset.source_url = f"prospect-crop:{asset.id}"
+        db.add(MediaAssetMetadata(
+            media_asset_id=asset.id,
+            media_source="prospect_crop",
+            priority=100,
+            audit_relevant=True,
+        ))
+    rows[0].lidl_availability = "LOCAL_ONLY"
+    rows[1].lidl_availability = "LOCAL_AND_ONLINE"
+    db.commit()
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=2, min_image_rate=50.0),
+    )
+
+    quality_status, _benchmark_status, score, metrics = evaluate_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=rows,
+        summary=ImportSummary(received=2, imported=2),
+        images_saved=2,
+        benchmark_context=BenchmarkContext.PRODUCTION,
+    )
+
+    assert quality_status == "PASS"
+    assert metrics["image_rate"] == 100.0
+    assert metrics["official_image_rate"] == 0.0
+    assert metrics["crop_fallback_rate"] == 100.0
+    assert metrics["weighted_image_rate"] == 50.0
+    assert metrics["local_only"] == 1
+    assert metrics["local_and_online"] == 1
+    assert score < 100.0

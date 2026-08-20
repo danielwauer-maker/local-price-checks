@@ -10,7 +10,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, String, Text, UniqueConstrai
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .db import Base
-from .models import CollectionRun, MasterProduct, MediaAsset, Offer, OfferOccurrence, Store
+from .models import CollectionRun, MasterProduct, MediaAsset, MediaAssetMetadata, Offer, OfferOccurrence, Store
 from .prospect_models import OfferProvenance, ProspectArchive
 
 
@@ -146,6 +146,29 @@ def evaluate_collection_quality(
         else []
     )
     image_product_ids = {media.master_product_id for media in media_rows if media.master_product_id is not None}
+    media_metadata = {
+        row.media_asset_id: row
+        for row in db.query(MediaAssetMetadata).filter(
+            MediaAssetMetadata.media_asset_id.in_([media.id for media in media_rows])
+        )
+    } if media_rows else {}
+    official_image_product_ids: set[int] = set()
+    crop_product_ids: set[int] = set()
+    for media in media_rows:
+        metadata = media_metadata.get(media.id)
+        source = metadata.media_source if metadata else (
+            "prospect_crop"
+            if (media.source_url or "").startswith("prospect-crop:")
+            else "retailer_cdn"
+            if (media.source_url or "").startswith(("http://", "https://"))
+            else "admin_curated"
+        )
+        if media.master_product_id is None:
+            continue
+        if source in {"official_product", "retailer_cdn"}:
+            official_image_product_ids.add(media.master_product_id)
+        if source == "prospect_crop":
+            crop_product_ids.add(media.master_product_id)
 
     provenance_offer_ids: set[int] = set()
     if archive is not None and offer_ids:
@@ -173,6 +196,10 @@ def evaluate_collection_quality(
     package_rate = _pct(package_count, len(products))
     unit_price_rate = _pct(unit_price_count, len(offers))
     image_rate = _pct(len(image_product_ids), len(product_ids))
+    official_image_rate = _pct(len(official_image_product_ids), len(product_ids))
+    crop_fallback_product_ids = crop_product_ids - official_image_product_ids
+    crop_fallback_rate = _pct(len(crop_fallback_product_ids), len(product_ids))
+    weighted_image_rate = round(min(100.0, official_image_rate + crop_fallback_rate * 0.5), 1)
     provenance_rate = _pct(len(provenance_offer_ids), len(offer_ids)) if archive else 0.0
     occurrence_rate = _pct(len(occurrence_offer_ids), len(offer_ids))
     suspicious_rate = _pct(suspicious_count, len(products))
@@ -181,7 +208,7 @@ def evaluate_collection_quality(
     quality_score += min(import_rate / 100.0, 1.0) * 25.0
     quality_score += min(package_rate / 100.0, 1.0) * 15.0
     quality_score += min(unit_price_rate / 100.0, 1.0) * 15.0
-    quality_score += min(image_rate / 100.0, 1.0) * 15.0
+    quality_score += min(weighted_image_rate / 100.0, 1.0) * 15.0
     quality_score += min(provenance_rate / 100.0, 1.0) * 25.0
     quality_score += min(occurrence_rate / 100.0, 1.0) * 5.0
     quality_score -= min(suspicious_rate, 20.0)
@@ -246,6 +273,18 @@ def evaluate_collection_quality(
         "package_rate": package_rate,
         "unit_price_rate": unit_price_rate,
         "image_rate": image_rate,
+        "official_image_rate": official_image_rate,
+        "crop_fallback_rate": crop_fallback_rate,
+        "weighted_image_rate": weighted_image_rate,
+        "local_only": sum(
+            1 for row in rows
+            if getattr(row, "lidl_availability", "") == "LOCAL_ONLY"
+        ),
+        "local_and_online": sum(
+            1 for row in rows
+            if getattr(row, "lidl_availability", "") == "LOCAL_AND_ONLINE"
+        ),
+        "online_only_rejected": online_rejected,
         "occurrence_rate": occurrence_rate,
         "suspicious_name_count": suspicious_count,
         "suspicious_rate": suspicious_rate,
@@ -313,6 +352,12 @@ def persist_collection_quality(
         f"provenance_rate={metrics['provenance_rate']:.1f} "
         f"package_rate={metrics['package_rate']:.1f} "
         f"unit_price_rate={metrics['unit_price_rate']:.1f} "
-        f"image_rate={metrics['image_rate']:.1f} suspicious={metrics['suspicious_name_count']}"
+        f"image_rate={metrics['image_rate']:.1f} "
+        f"official_image_rate={metrics['official_image_rate']:.1f} "
+        f"crop_fallback_rate={metrics['crop_fallback_rate']:.1f} "
+        f"local_only={metrics['local_only']} "
+        f"local_and_online={metrics['local_and_online']} "
+        f"online_only_rejected={metrics['online_only_rejected']} "
+        f"suspicious={metrics['suspicious_name_count']}"
     )
     return diagnostic, metrics

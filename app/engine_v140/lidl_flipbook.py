@@ -170,7 +170,7 @@ def _shop_hotspot_count(flyer: dict) -> int:
         for page in flyer.get("pages") or []
         if isinstance(page, dict)
         for link in page.get("links") or []
-        if isinstance(link, dict) and classify_lidl_link(link) is LidlSourceKind.SHOP_ONLINE
+        if isinstance(link, dict) and classify_lidl_link(link) is LidlSourceKind.ONLINE_ONLY
     )
 
 
@@ -508,6 +508,25 @@ def _dedupe_offers(offers: list) -> list:
     return out
 
 
+def _reconcile_manifest_with_pdf(pdf_rows: list, manifest_rows: list) -> list:
+    """Drop online-link duplicates when the PDF proves the item is local.
+
+    The PDF row remains authoritative for name, price, page and audit crop.
+    ``productId`` is used only as an exact join key, never as an exclusion
+    signal.
+    """
+    local_product_ids = {
+        str(getattr(row, "lidl_product_id", "") or "")
+        for row in pdf_rows
+        if bool(getattr(row, "local_store_offer", False))
+        and getattr(row, "lidl_product_id", None)
+    }
+    return [
+        row for row in manifest_rows
+        if str(getattr(row, "lidl_product_id", "") or "") not in local_product_ids
+    ]
+
+
 def _next_page_hint(current_page: int | None) -> int | None:
     if current_page is None:
         return None
@@ -659,7 +678,8 @@ def capture_lidl_flipbook(
     )
 
     budget.begin("structured_extract")
-    manifest_rows = schwarz_manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
+    raw_manifest_rows = schwarz_manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
+    manifest_rows = _reconcile_manifest_with_pdf(pdf_extraction.offers, raw_manifest_rows)
     structured_rows = [*pdf_extraction.offers, *manifest_rows]
     for offer in structured_rows:
         if offer.unit_price is None:
@@ -798,6 +818,14 @@ def capture_lidl_flipbook(
 
     warning = " ".join(warnings) or None
     local_rows = [offer for offer in offers if bool(getattr(offer, "local_store_offer", False))]
+    local_only = sum(
+        1 for offer in local_rows
+        if getattr(offer, "lidl_availability", "") == LidlSourceKind.LOCAL_ONLY.value
+    )
+    local_and_online = sum(
+        1 for offer in local_rows
+        if getattr(offer, "lidl_availability", "") == LidlSourceKind.LOCAL_AND_ONLINE.value
+    )
     food_offers = sum(1 for offer in local_rows if _is_food_offer(offer))
     nonfood_local_offers = len(local_rows) - food_offers
     online_rejected = sum(1 for offer in offers if not bool(getattr(offer, "local_store_offer", False)))
@@ -807,8 +835,9 @@ def capture_lidl_flipbook(
     diagnostics = (
         f"phase=complete pages_total={explicit_total} pages_structured={len(structured_pages)} "
         f"pages_ocr={len(downloaded)} pages_done={pages_done} assets_cached={assets_cached} "
-        f"manifest_payloads={len(all_payloads)} manifest_offers={len(manifest_rows)} "
+        f"manifest_payloads={len(all_payloads)} manifest_offers={len(raw_manifest_rows)} "
         f"shop_hotspots_seen={_shop_hotspot_count(flyer)} online_rejected={online_rejected} "
+        f"local_only={local_only} local_and_online={local_and_online} "
         f"pdf_text_offers={len(pdf_extraction.offers)} manifest_text_offers={manifest_text_offers} "
         f"ocr_offers={len(ocr_rows)} food_offers={food_offers} "
         f"nonfood_local_offers={nonfood_local_offers} image_crops={pdf_extraction.image_crops} "
