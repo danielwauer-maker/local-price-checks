@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
@@ -13,7 +14,7 @@ from .admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from .admin_routes import _admin
 from .config import settings
 from .db import SessionLocal, get_db
-from .models import CollectionRun, Store
+from .models import CollectionRun, CollectionRunProgress, Store
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
@@ -23,6 +24,41 @@ from .web_collector import collect_store_from_web
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
+
+_LIDL_HARD_TIMEOUT_SECONDS = 550.0
+
+
+def _expire_stuck_lidl_run(store_id: int) -> None:
+    """Close the run even if a browser/native dependency stops responding."""
+    db = SessionLocal()
+    try:
+        run = (
+            db.query(CollectionRun)
+            .filter(CollectionRun.store_id == store_id, CollectionRun.status == "running")
+            .order_by(CollectionRun.started_at.desc())
+            .first()
+        )
+        if run is None:
+            return
+        progress = (
+            db.query(CollectionRunProgress)
+            .filter(CollectionRunProgress.run_id == run.id)
+            .first()
+        )
+        phase = progress.phase if progress else "unknown"
+        elapsed = progress.elapsed_seconds if progress else _LIDL_HARD_TIMEOUT_SECONDS
+        if progress:
+            progress.error_type = "timeout"
+            progress.updated_at = datetime.utcnow()
+        run.status = "failed"
+        run.finished_at = datetime.utcnow()
+        run.message = (
+            f"run_status=failed error_type=timeout phase={phase} "
+            f"elapsed_seconds={max(elapsed, _LIDL_HARD_TIMEOUT_SECONDS):.1f}"
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def _write_lidl_debug_failure(store: Store, exc: Exception) -> None:
@@ -67,26 +103,28 @@ def _run_store_collection_background(store_id: int) -> None:
     session and continues independently after the admin request has returned.
     """
     db = SessionLocal()
+    timeout_timer = None
     try:
         store = db.get(Store, store_id)
         if not store or not store.active:
             return
+        if store.retailer == "Lidl":
+            timeout_timer = threading.Timer(
+                _LIDL_HARD_TIMEOUT_SECONDS,
+                _expire_stuck_lidl_run,
+                args=(store.id,),
+            )
+            timeout_timer.daemon = True
+            timeout_timer.start()
         context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
         collect_store_from_web(db, store.name, benchmark_context=context)
-        if store.retailer == "Lidl":
-            try:
-                from .engine_v140.lidl_manifest_debug import capture_lidl_manifest_debug
-                capture_lidl_manifest_debug(store, data_dir=settings.data_dir)
-            except Exception as exc:
-                # Diagnostics must never turn an otherwise completed QA scrape
-                # into a failed collector run, but a support artifact must still
-                # exist so the concrete setup failure becomes visible.
-                _write_lidl_debug_failure(store, exc)
     except Exception:
         db.rollback()
         # collect_store_from_web / collection_service persists a failed run with
         # the concrete diagnostic whenever the collector itself was started.
     finally:
+        if timeout_timer is not None:
+            timeout_timer.cancel()
         db.close()
 
 
@@ -114,12 +152,23 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
             else []
         )
     }
+    progress_by_run = {
+        progress.run_id: progress
+        for progress in (
+            db.query(CollectionRunProgress)
+            .filter(CollectionRunProgress.run_id.in_(run_ids))
+            .all()
+            if run_ids
+            else []
+        )
+    }
     return templates.TemplateResponse("admin_collector.html", {
         "request": request, "actor": actor, "stores": stores, "latest": latest,
         "prospects": prospects, "next_prospects": next_prospects, "recent": recent,
         "collected": collected, "scheduler_enabled": settings.scheduler_enabled,
         "manual_collection_enabled": settings.manual_collection_enabled,
         "quality_by_run": quality_by_run,
+        "progress_by_run": progress_by_run,
     })
 
 

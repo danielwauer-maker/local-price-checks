@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import re
+import time
 from urllib.parse import urljoin
 
 import httpx
@@ -89,7 +90,13 @@ def _select_leaflet(rows: list[LidlLeaflet], target_date: date) -> LidlLeaflet:
     raise RuntimeError("Kein datiertes Lidl-Aktionsprospekt in der Seite gefunden")
 
 
-def _resolve_with_store_context(source_url: str, store_page_url: str, target_date: date) -> LidlLeaflet | None:
+def _resolve_with_store_context(
+    source_url: str,
+    store_page_url: str,
+    target_date: date,
+    *,
+    timeout_seconds: float = 45.0,
+) -> LidlLeaflet | None:
     """Best-effort: select the exact Lidl branch before opening prospect page."""
     try:
         from playwright.sync_api import sync_playwright
@@ -106,7 +113,12 @@ def _resolve_with_store_context(source_url: str, store_page_url: str, target_dat
         )
         page = context.new_page()
         try:
-            page.goto(store_page_url, wait_until="domcontentloaded", timeout=45000)
+            started = time.monotonic()
+            page.goto(
+                store_page_url,
+                wait_until="domcontentloaded",
+                timeout=max(1000, int(min(25.0, timeout_seconds) * 1000)),
+            )
             for label in ("Alle akzeptieren", "Akzeptieren", "Zustimmen", "Alle Cookies akzeptieren"):
                 try:
                     button = page.get_by_role("button", name=label, exact=False)
@@ -133,9 +145,20 @@ def _resolve_with_store_context(source_url: str, store_page_url: str, target_dat
                 except Exception:
                     pass
 
-            page.goto(source_url, wait_until="domcontentloaded", timeout=45000)
+            remaining = timeout_seconds - (time.monotonic() - started)
+            if remaining <= 1:
+                return None
+            page.goto(
+                source_url,
+                wait_until="domcontentloaded",
+                timeout=max(1000, int(min(remaining, 25.0) * 1000)),
+            )
             try:
-                page.wait_for_load_state("networkidle", timeout=12000)
+                remaining = timeout_seconds - (time.monotonic() - started)
+                page.wait_for_load_state(
+                    "networkidle",
+                    timeout=max(500, int(min(8.0, max(0.5, remaining)) * 1000)),
+                )
             except Exception:
                 page.wait_for_timeout(2500)
             html = page.content()
@@ -153,6 +176,7 @@ def resolve_lidl_leaflet(
     target_date: date,
     *,
     store_page_url: str | None = None,
+    timeout_seconds: float = 45.0,
 ) -> LidlLeaflet:
     """Resolve Lidl's generic prospect landing page to the exact action leaflet.
 
@@ -161,8 +185,17 @@ def resolve_lidl_leaflet(
     Lidl explicitly regionalises leaflets by selected branch. Static HTML is a
     fallback for environments where the selection control is unavailable.
     """
+    started = time.monotonic()
     if store_page_url:
-        contextual = _resolve_with_store_context(source_url, store_page_url, target_date)
+        try:
+            contextual = _resolve_with_store_context(
+                source_url,
+                store_page_url,
+                target_date,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception:
+            contextual = None
         if contextual:
             return contextual
 
@@ -173,7 +206,10 @@ def resolve_lidl_leaflet(
     rows: list[LidlLeaflet] = []
     final_url = source_url
     try:
-        with httpx.Client(follow_redirects=True, timeout=30, headers=headers) as client:
+        remaining = timeout_seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError("Lidl leaflet discovery timeout")
+        with httpx.Client(follow_redirects=True, timeout=min(15.0, remaining), headers=headers) as client:
             response = client.get(source_url)
             response.raise_for_status()
             final_url = str(response.url)
@@ -181,13 +217,10 @@ def resolve_lidl_leaflet(
     except Exception:
         rows = []
 
-    if not rows:
-        rendered = browser_fetch(source_url)
-        final_url = rendered.final_url or source_url
-        rows = _leaflets_from_html(final_url, rendered.content.decode("utf-8", errors="replace"))
-
     if rows:
         return _select_leaflet(rows, target_date)
+    if time.monotonic() - started >= timeout_seconds:
+        raise TimeoutError("Lidl leaflet discovery timeout")
     raise RuntimeError(f"Kein datiertes Lidl-Aktionsprospekt auffindbar: {source_url}")
 
 

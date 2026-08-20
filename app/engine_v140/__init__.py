@@ -19,10 +19,6 @@ from .lidl_schwarz_hardening import install as _install_lidl_schwarz_hardening
 
 _install_lidl_schwarz_hardening()
 
-# Many grocery cards are raster-only in the official viewer and have no
-# productDetails object. Reuse the already archived logical page images as a
-# page-aware OCR fallback. This is installed after the structured bridge so
-# structured data remains preferred and OCR only fills the gaps.
-from .lidl_ocr_runtime import install as _install_lidl_ocr_runtime
-
-_install_lidl_ocr_runtime()
+# OCR is invoked explicitly by the canonical Lidl manifest pipeline. Keeping it
+# out of a runtime monkey patch makes page selection, deadlines and diagnostics
+# visible to the collector instead of silently OCRing every viewer page.

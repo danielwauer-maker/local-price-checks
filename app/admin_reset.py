@@ -9,6 +9,7 @@ from .config import settings
 from .collection_quality import CollectionQualitySnapshot
 from .models import (
     CollectionRun,
+    CollectionRunProgress,
     FavoriteProduct,
     MasterProduct,
     MediaAsset,
@@ -115,6 +116,13 @@ def reset_store_offers(db: Session, store: Store) -> dict[str, int]:
         .filter(CollectionQualitySnapshot.store_id == store.id)
         .delete(synchronize_session=False)
     )
+    run_ids = [row[0] for row in db.query(CollectionRun.id).filter(CollectionRun.store_id == store.id).all()]
+    result["run_progress"] = (
+        db.query(CollectionRunProgress)
+        .filter(CollectionRunProgress.run_id.in_(run_ids))
+        .delete(synchronize_session=False)
+        if run_ids else 0
+    )
     result["runs"] = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).delete(synchronize_session=False)
     db.flush()
     result["orphan_products"] = _prune_orphan_products(db, product_ids)
@@ -133,6 +141,13 @@ def reset_store_qa(db: Session, store: Store) -> dict[str, int]:
         db.query(CollectionQualitySnapshot)
         .filter(CollectionQualitySnapshot.store_id == store.id)
         .delete(synchronize_session=False)
+    )
+    run_ids = [row[0] for row in db.query(CollectionRun.id).filter(CollectionRun.store_id == store.id).all()]
+    result["run_progress"] = (
+        db.query(CollectionRunProgress)
+        .filter(CollectionRunProgress.run_id.in_(run_ids))
+        .delete(synchronize_session=False)
+        if run_ids else 0
     )
     result["runs"] = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).delete(synchronize_session=False)
 
@@ -182,6 +197,7 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
         "products": db.query(MasterProduct).count(),
         "runs": db.query(CollectionRun).count(),
         "quality_snapshots": db.query(CollectionQualitySnapshot).count(),
+        "run_progress": db.query(CollectionRunProgress).count(),
         "archives": db.query(ProspectArchive).count(),
     }
 
@@ -190,6 +206,7 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
     db.query(ProspectMissingItem).delete(synchronize_session=False)
     db.query(Offer).delete(synchronize_session=False)
     db.query(CollectionQualitySnapshot).delete(synchronize_session=False)
+    db.query(CollectionRunProgress).delete(synchronize_session=False)
     db.query(CollectionRun).delete(synchronize_session=False)
     db.query(Prospect).delete(synchronize_session=False)
     db.query(ProspectArchive).delete(synchronize_session=False)

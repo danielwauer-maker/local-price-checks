@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
-from pypdf import PdfWriter
+import httpx
+from pypdf import PdfReader, PdfWriter
 
 from .collectors import (
     canonical_unit_price_unit,
@@ -22,6 +25,8 @@ from .lidl_manifest import (
     manifest_offers,
     manifest_page_count,
 )
+from .lidl_ocr import offers_from_leaflet_image
+from .lidl_schwarz_runtime import _page_online_only
 
 _TOTAL_RE = re.compile(r"\b(\d{1,3})\s*/\s*(\d{1,3})\b")
 
@@ -34,6 +39,215 @@ class LidlFlipbookResult:
     final_url: str
     fetch_mode: str
     diagnostics: str
+    warning: str | None = None
+    pdf_url: str | None = None
+
+
+class LidlCollectionTimeout(RuntimeError):
+    def __init__(self, phase: str, elapsed_seconds: float):
+        self.phase = phase
+        self.elapsed_seconds = elapsed_seconds
+        super().__init__(
+            f"error_type=timeout phase={phase} elapsed_seconds={elapsed_seconds:.1f}"
+        )
+
+
+_TOTAL_TIMEOUT_SECONDS = 540.0
+_PHASE_TIMEOUTS = {
+    "viewer_manifest": 65.0,
+    "structured_extract": 20.0,
+    "page_assets": 80.0,
+    "ocr_fallback": 240.0,
+    "artifact_archive": 80.0,
+}
+
+
+class _RuntimeBudget:
+    def __init__(self, total_seconds: float):
+        self.started = time.monotonic()
+        self.total_seconds = total_seconds
+        self.phase = "starting"
+        self.phase_started = self.started
+        self.phase_seconds = total_seconds
+
+    @property
+    def elapsed(self) -> float:
+        return time.monotonic() - self.started
+
+    def begin(self, phase: str) -> None:
+        self.phase = phase
+        self.phase_started = time.monotonic()
+        self.phase_seconds = _PHASE_TIMEOUTS.get(phase, self.total_seconds)
+        self.check()
+
+    def remaining(self) -> float:
+        now = time.monotonic()
+        return min(
+            self.total_seconds - (now - self.started),
+            self.phase_seconds - (now - self.phase_started),
+        )
+
+    def check(self) -> None:
+        if self.remaining() <= 0:
+            raise LidlCollectionTimeout(self.phase, self.elapsed)
+
+
+def _report(progress, phase: str, budget: _RuntimeBudget, **values) -> None:
+    if progress:
+        progress(phase, elapsed_seconds=round(budget.elapsed, 1), **values)
+
+
+def _offer_page_numbers(offers: list) -> set[int]:
+    found: set[int] = set()
+    for offer in offers:
+        match = re.search(r"\bPDF\s+Seite\s+(\d+)\b", getattr(offer, "source_text", "") or "", re.I)
+        if match:
+            found.add(int(match.group(1)))
+    return found
+
+
+def _structured_authority_pages(offers: list) -> set[int]:
+    """Catalogue links enrich offers but never suppress page-image OCR."""
+    return _offer_page_numbers(
+        [
+            offer for offer in offers
+            if "SchwarzFlyerLink+Catalog" not in (getattr(offer, "source_text", "") or "")
+        ]
+    )
+
+
+def _schwarz_flyer(payloads: list[dict]) -> dict | None:
+    for payload in payloads:
+        data = payload.get("data")
+        flyer = data.get("flyer") if isinstance(data, dict) else None
+        if isinstance(flyer, dict) and isinstance(flyer.get("pages"), list):
+            return flyer
+    return None
+
+
+def _schwarz_page_assets(flyer: dict) -> list[dict]:
+    assets = []
+    for index, page in enumerate(flyer.get("pages") or []):
+        if not isinstance(page, dict):
+            continue
+        page_no = page.get("number") or index + 1
+        try:
+            page_no = int(page_no)
+        except (TypeError, ValueError):
+            page_no = index + 1
+        url = page.get("zoom") or page.get("image") or page.get("thumbnail")
+        if isinstance(url, str) and url.startswith(("https://", "http://")):
+            assets.append(
+                {
+                    "page_no": page_no,
+                    "url": url,
+                    "online_only": _page_online_only(page),
+                }
+            )
+    return assets
+
+
+def _ocr_candidate_assets(page_assets: list[dict], structured_pages: set[int]) -> list[dict]:
+    """Return only local pages that still lack a structured offer."""
+    return [
+        asset for asset in page_assets
+        if asset["page_no"] not in structured_pages and not asset["online_only"]
+    ]
+
+
+def _download_cached_asset(asset: dict, cache_dir: Path, timeout_seconds: float) -> tuple[int, bytes, bool, str]:
+    url = asset["url"]
+    url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    cache_path = cache_dir / f"{url_hash}.asset"
+    if cache_path.exists() and cache_path.stat().st_size > 1000:
+        payload = cache_path.read_bytes()
+        return asset["page_no"], payload, True, hashlib.sha256(payload).hexdigest()
+    response = httpx.get(url, follow_redirects=True, timeout=max(1.0, timeout_seconds))
+    response.raise_for_status()
+    payload = response.content
+    if len(payload) < 1000:
+        raise RuntimeError(f"Lidl-Seitenasset ist leer/zu klein: page={asset['page_no']}")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(payload)
+    return asset["page_no"], payload, False, hashlib.sha256(payload).hexdigest()
+
+
+def _download_assets(
+    assets: list[dict],
+    cache_dir: Path,
+    budget: _RuntimeBudget,
+    progress,
+    *,
+    pages_total: int,
+    pages_structured: int,
+    pages_done_start: int,
+) -> tuple[dict[int, bytes], int, int, bool]:
+    downloaded: dict[int, bytes] = {}
+    content_seen: dict[str, bytes] = {}
+    cached = 0
+    errors = 0
+    timed_out = False
+    executor = ThreadPoolExecutor(max_workers=min(8, max(1, len(assets))))
+    futures = {
+        executor.submit(
+            _download_cached_asset,
+            asset,
+            cache_dir,
+            min(20.0, max(1.0, budget.remaining())),
+        ): asset
+        for asset in assets
+    }
+    try:
+        for future in as_completed(futures, timeout=max(0.1, budget.remaining())):
+            budget.check()
+            try:
+                page_no, payload, was_cached, digest = future.result()
+                if digest in content_seen:
+                    payload = content_seen[digest]
+                    was_cached = True
+                else:
+                    content_seen[digest] = payload
+                downloaded[page_no] = payload
+                cached += int(was_cached)
+            except Exception:
+                errors += 1
+            _report(
+                progress,
+                "page_assets",
+                budget,
+                pages_total=pages_total,
+                pages_structured=pages_structured,
+                pages_ocr=len(assets),
+                pages_done=pages_done_start,
+                assets_cached=cached,
+            )
+    except FuturesTimeout:
+        timed_out = True
+        for future in futures:
+            future.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return downloaded, cached, errors, timed_out
+
+
+def _download_official_pdf(flyer: dict, target: Path, budget: _RuntimeBudget) -> Path:
+    budget.check()
+    url = flyer.get("hiResPdfUrl") or flyer.get("pdfUrl")
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        raise RuntimeError("Schwarz-Manifest enthält keine direkte offizielle PDF-URL")
+    if target.exists() and target.stat().st_size > 10_000:
+        return target
+    response = httpx.get(
+        url,
+        follow_redirects=True,
+        timeout=max(1.0, min(60.0, budget.remaining())),
+    )
+    response.raise_for_status()
+    if len(response.content) < 10_000 or not response.content.startswith(b"%PDF"):
+        raise RuntimeError("Offizielles Lidl-PDF ist leer oder ungültig")
+    target.write_bytes(response.content)
+    budget.check()
+    return target
 
 
 def _inject_network_json(html: str, payloads: list[dict]) -> str:
@@ -275,29 +489,31 @@ def capture_lidl_flipbook(
     valid_to,
     target_dir: Path,
     max_pages: int = 80,
+    total_timeout_seconds: float = _TOTAL_TIMEOUT_SECONDS,
+    progress=None,
 ) -> LidlFlipbookResult:
-    """Capture Lidl's live leaflet including manifest data and logical pages."""
+    """Collect Lidl from one manifest response without visual page traversal.
+
+    The Schwarz response already contains every logical page, direct page
+    assets and the official PDF. Structured page data is evaluated first; OCR
+    is only scheduled for pages that have no structured local offer.
+    """
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:
         raise RuntimeError("Playwright ist für Lidl-Flipbook-Erfassung nicht verfügbar") from exc
 
+    budget = _RuntimeBudget(total_timeout_seconds)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"lidl-flipbook-{valid_from.isoformat()}-{valid_to.isoformat()}.pdf"
-    writer = PdfWriter()
-    all_offers = []
-    fingerprints: set[str] = set()
-    explicit_total: int | None = None
-    captured_states = 0
-    archived_pages: set[int] = set()
     final_url = source.url
     vf = valid_from.strftime("%d.%m.%Y")
     vt = valid_to.strftime("%d.%m.%Y")
-    navigation_methods: set[str] = set()
     all_payloads: list[dict] = []
     payload_hashes: set[str] = set()
-    capture_hint = {"page": 1}
 
+    budget.begin("viewer_manifest")
+    _report(progress, "viewer_manifest", budget, pages_done=0)
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -311,7 +527,6 @@ def capture_lidl_flipbook(
             extra_http_headers={"Accept-Language": "de-DE,de;q=0.9,en;q=0.7"},
         )
         page = context.new_page()
-        page_payloads: list[dict] = []
 
         def capture_response(response):
             try:
@@ -345,23 +560,30 @@ def capture_lidl_flipbook(
                 if digest in payload_hashes:
                     return
                 payload_hashes.add(digest)
-                item = {"url": response.url, "data": data, "page_hint": capture_hint.get("page")}
-                if len(page_payloads) < 300:
-                    page_payloads.append(item)
-                if len(all_payloads) < 900:
+                item = {"url": response.url, "data": data, "page_hint": 1}
+                if len(all_payloads) < 120:
                     all_payloads.append(item)
             except Exception:
                 pass
 
         page.on("response", capture_response)
         try:
-            page.goto(source.url, wait_until="domcontentloaded", timeout=45000)
+            page.goto(
+                source.url,
+                wait_until="domcontentloaded",
+                timeout=max(1000, int(min(45.0, budget.remaining()) * 1000)),
+            )
             _dismiss_cookies(page)
             try:
-                page.wait_for_load_state("networkidle", timeout=12000)
+                page.wait_for_load_state(
+                    "networkidle",
+                    timeout=max(1000, int(min(12.0, budget.remaining()) * 1000)),
+                )
             except Exception:
-                page.wait_for_timeout(2500)
+                page.wait_for_timeout(max(100, int(min(2.5, budget.remaining()) * 1000)))
             _dismiss_cookies(page)
+            budget.check()
+            final_url = page.url or source.url
 
             for state in embedded_json_states(page):
                 raw = json.dumps(state.get("data"), ensure_ascii=False, default=str)
@@ -369,76 +591,20 @@ def capture_lidl_flipbook(
                 if digest not in payload_hashes:
                     payload_hashes.add(digest)
                     all_payloads.append(state)
-
-            explicit_total = manifest_page_count(all_payloads) or _extract_total_pages(_visible_body(page))
-
-            for logical_state in range(1, max_pages + 1):
-                _dismiss_cookies(page)
-                body = _visible_body(page)
-                if not body and logical_state > 1:
-                    break
-                final_url = page.url or source.url
-                current_page = _extract_current_page(body) or capture_hint.get("page") or logical_state
-                capture_hint["page"] = current_page
-                if explicit_total is None:
-                    explicit_total = manifest_page_count(all_payloads) or _extract_total_pages(body)
-
-                fingerprint = _page_fingerprint(page, body)
-                if fingerprint in fingerprints:
-                    break
-                fingerprints.add(fingerprint)
-                captured_states += 1
-
-                html = _inject_network_json(page.content(), list(page_payloads))
-                imgs = images(html, final_url)
-                page_offers = parse_lidl_text(source, body, imgs)
-                structured = structured_network_offers(html, source, imgs)
-                existing = {(o.product_name.lower(), o.price, o.quantity, o.unit) for o in page_offers}
-                for offer in structured:
-                    key = (offer.product_name.lower(), offer.price, offer.quantity, offer.unit)
-                    if key not in existing:
-                        page_offers.append(offer)
-                        existing.add(key)
-
-                for offer in page_offers:
-                    offer.valid_from = vf
-                    offer.valid_to = vt
-                    offer.source_url = source.url
-                    original = (offer.source_text or "").strip()
-                    offer.source_text = f"PDF Seite {current_page}: {original}"[:4000]
-                    if offer.unit_price is None:
-                        offer.unit_price, offer.unit_price_unit = compute_unit_price(
-                            offer.app_price if offer.app_price is not None else offer.price,
-                            offer.quantity,
-                            offer.unit,
-                        )
-                    elif not offer.unit_price_unit:
-                        offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
-                all_offers.extend(page_offers)
-
-                # CMPs can re-appear asynchronously after navigation; clean once
-                # more immediately before the immutable archive image is taken.
-                _dismiss_cookies(page)
-                for page_no, image_payload in logical_page_images(page, current_page, explicit_total):
-                    if page_no in archived_pages:
-                        continue
-                    add_image_pdf_page(writer, image_payload)
-                    archived_pages.add(page_no)
-
-                if explicit_total is not None and len(archived_pages) >= explicit_total:
-                    break
-
-                page_payloads.clear()
-                capture_hint["page"] = _next_page_hint(current_page)
-                changed, method = _advance_and_wait(page, fingerprint, current_page)
-                if method:
-                    navigation_methods.add(method)
-                if not changed:
-                    break
         finally:
             context.close()
             browser.close()
 
+    flyer = _schwarz_flyer(all_payloads)
+    if flyer is None:
+        raise RuntimeError(
+            "Lidl-Schwarz-Manifest fehlt; visueller Volltraversal ist aus Laufzeitgründen deaktiviert"
+        )
+    page_assets = _schwarz_page_assets(flyer)[:max_pages]
+    explicit_total = len(flyer.get("pages") or []) or manifest_page_count(all_payloads)
+    _report(progress, "viewer_manifest", budget, pages_total=explicit_total, pages_done=0)
+
+    budget.begin("structured_extract")
     manifest_rows = manifest_offers(all_payloads, source, valid_from=vf, valid_to=vt)
     for offer in manifest_rows:
         if offer.unit_price is None:
@@ -449,32 +615,144 @@ def capture_lidl_flipbook(
             )
         elif not offer.unit_price_unit:
             offer.unit_price_unit = canonical_unit_price_unit(offer.unit)
-    all_offers.extend(manifest_rows)
+    structured_pages = _offer_page_numbers(manifest_rows)
+    sufficient_structured_pages = _structured_authority_pages(manifest_rows)
+    online_pages = {asset["page_no"] for asset in page_assets if asset["online_only"]}
+    ocr_assets = _ocr_candidate_assets(page_assets, sufficient_structured_pages)
+    pages_done = len(sufficient_structured_pages | online_pages)
+    _report(
+        progress,
+        "structured_extract",
+        budget,
+        pages_total=explicit_total,
+        pages_structured=len(structured_pages),
+        pages_ocr=len(ocr_assets),
+        pages_done=pages_done,
+    )
 
-    if len(archived_pages) < 2:
-        nav = ",".join(sorted(navigation_methods)) or "kein Navigationscontrol gefunden"
-        raise RuntimeError(
-            "Lidl-Flipbook konnte nicht vollständig erfasst werden; "
-            f"viewer_states={captured_states}, logische_seiten={len(archived_pages)}, navigation={nav}"
-        )
+    budget.begin("page_assets")
+    _report(
+        progress,
+        "page_assets",
+        budget,
+        pages_total=explicit_total,
+        pages_structured=len(structured_pages),
+        pages_ocr=len(ocr_assets),
+        pages_done=pages_done,
+    )
+    downloaded, assets_cached, asset_errors, asset_timeout = _download_assets(
+        ocr_assets,
+        target_dir / "asset-cache",
+        budget,
+        progress,
+        pages_total=explicit_total,
+        pages_structured=len(structured_pages),
+        pages_done_start=pages_done,
+    ) if ocr_assets else ({}, 0, 0, False)
 
-    with target.open("wb") as fh:
-        writer.write(fh)
+    budget.begin("ocr_fallback")
+    _report(
+        progress,
+        "ocr_fallback",
+        budget,
+        pages_total=explicit_total,
+        pages_structured=len(structured_pages),
+        pages_ocr=len(downloaded),
+        pages_done=pages_done,
+        assets_cached=assets_cached,
+    )
+    ocr_rows = []
+    ocr_errors = 0
+    ocr_completed = 0
+    ocr_timeout = False
+    executor = ThreadPoolExecutor(max_workers=min(4, max(1, len(downloaded))))
+    futures = {
+        executor.submit(
+            offers_from_leaflet_image,
+            source,
+            payload,
+            page_no=page_no,
+            valid_from=vf,
+            valid_to=vt,
+            timeout_seconds=min(18.0, max(1.0, budget.remaining())),
+        ): page_no
+        for page_no, payload in downloaded.items()
+    }
+    try:
+        for future in as_completed(futures, timeout=max(0.1, budget.remaining())):
+            try:
+                rows, _text, online = future.result()
+                if not online:
+                    ocr_rows.extend(rows)
+            except Exception:
+                ocr_errors += 1
+            ocr_completed += 1
+            pages_done += 1
+            _report(
+                progress,
+                "ocr_fallback",
+                budget,
+                pages_total=explicit_total,
+                pages_structured=len(structured_pages),
+                pages_ocr=len(downloaded),
+                pages_done=pages_done,
+                assets_cached=assets_cached,
+            )
+    except FuturesTimeout:
+        ocr_timeout = True
+        for future in futures:
+            future.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
-    offers = _dedupe_offers(all_offers)
-    total_label = str(explicit_total) if explicit_total is not None else "automatisch"
-    nav_label = ",".join(sorted(navigation_methods)) or "unbekannt"
+    offers = _dedupe_offers([*manifest_rows, *ocr_rows])
+    warnings = []
+    if asset_timeout:
+        warnings.append(f"error_type=timeout phase=page_assets elapsed_seconds={budget.elapsed:.1f}")
+    if ocr_timeout:
+        warnings.append(f"error_type=timeout phase=ocr_fallback elapsed_seconds={budget.elapsed:.1f}")
+    if asset_errors:
+        warnings.append(f"asset_errors={asset_errors}")
+    if ocr_errors:
+        warnings.append(f"ocr_errors={ocr_errors}")
+    if not offers and warnings:
+        phase = "ocr_fallback" if ocr_timeout else "page_assets"
+        raise LidlCollectionTimeout(phase, budget.elapsed)
+
+    budget.begin("artifact_archive")
+    _report(
+        progress,
+        "artifact_archive",
+        budget,
+        pages_total=explicit_total,
+        pages_structured=len(structured_pages),
+        pages_ocr=len(downloaded),
+        pages_done=pages_done,
+        assets_cached=assets_cached,
+    )
+    _download_official_pdf(flyer, target, budget)
+    try:
+        archive_pages = len(PdfReader(str(target)).pages)
+    except Exception as exc:
+        raise RuntimeError(f"Offizielles Lidl-PDF ist nicht lesbar: {exc}") from exc
+    if archive_pages < 2:
+        raise RuntimeError("Offizielles Lidl-PDF enthält weniger als zwei Seiten")
+
+    warning = " ".join(warnings) or None
     diagnostics = (
-        f"lidl_flipbook={len(archived_pages)} logische Seiten "
-        f"(viewer_states={captured_states}, viewer_total={total_label}), "
-        f"page_offers={len(offers)}, manifest_payloads={len(all_payloads)}, "
-        f"manifest_offers={len(manifest_rows)}, navigation={nav_label}"
+        f"phase=complete pages_total={explicit_total} pages_structured={len(structured_pages)} "
+        f"pages_ocr={len(downloaded)} pages_done={pages_done} assets_cached={assets_cached} "
+        f"manifest_payloads={len(all_payloads)} manifest_offers={len(manifest_rows)} "
+        f"ocr_offers={len(ocr_rows)} archive_pages={archive_pages} "
+        f"viewer_navigation=0 elapsed_seconds={budget.elapsed:.1f}"
     )
     return LidlFlipbookResult(
         offers=offers,
         pdf_path=target,
-        page_count=len(archived_pages),
+        page_count=archive_pages,
         final_url=final_url,
-        fetch_mode="playwright-flipbook-manifest",
+        fetch_mode="playwright-manifest-direct-assets",
         diagnostics=diagnostics,
+        warning=warning,
+        pdf_url=flyer.get("hiResPdfUrl") or flyer.get("pdfUrl"),
     )

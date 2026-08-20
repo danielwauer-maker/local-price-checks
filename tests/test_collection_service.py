@@ -63,3 +63,40 @@ def test_collection_pipeline_records_failure(monkeypatch, tmp_path):
     run = db.query(CollectionRun).one()
     assert run.status == "failed"
     assert "kaputt" in (run.message or "")
+
+
+def test_partial_collector_timeout_with_imports_is_warning():
+    db = _db(); store = _store(db)
+    row = CollectedOffer(
+        source_key="rewe_dierdorf", store_name=store.name, retailer="REWE",
+        product_name="Teilresultat Kaffee 1 kg", category="Kaffee", price=9.99,
+        quantity=1, unit="kg", unit_price=9.99, unit_price_unit="kg",
+        valid_from="17.08.2026", valid_to="22.08.2026",
+        source_text="PDF Seite 1: Teilresultat", source_url="https://example.test/prospect",
+        local_store_offer=True, confidence=.99,
+    )
+
+    class NoopArtifacts:
+        def archive_before_import(self, db, store, result):
+            return None
+
+        def finalize_after_import(self, db, store, result, summary):
+            return None
+
+    result, summary, run = service.collect_structured_for_store(
+        db,
+        store.name,
+        collector_fn=lambda source: {
+            "offers": [row],
+            "fetch_mode": "partial-test",
+            "final_url": source.url,
+            "technical_warning": "error_type=timeout phase=ocr_fallback",
+        },
+        artifact_handler=NoopArtifacts(),
+    )
+
+    assert summary.imported == 1
+    assert run.status == "warning"
+    assert "error_type=timeout phase=ocr_fallback" in run.message
+    snapshot = db.query(CollectionQualitySnapshot).one()
+    assert snapshot.run_status == "warning"

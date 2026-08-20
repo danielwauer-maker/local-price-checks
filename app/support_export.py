@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .clock import app_today
 from .config import settings
-from .models import CollectionRun, MasterProduct, Offer, Store
+from .models import CollectionRun, CollectionRunProgress, MasterProduct, Offer, Store
 from .collection_quality import CollectionQualitySnapshot
 from .prospect_models import OfferProvenance, Prospect, ProspectArchive
 
@@ -97,6 +97,13 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
         .all()
     )
     quality_by_run = {snapshot.run_id: snapshot for snapshot in quality_snapshots}
+    progress_rows = (
+        db.query(CollectionRunProgress)
+        .order_by(CollectionRunProgress.updated_at.desc())
+        .limit(200)
+        .all()
+    )
+    progress_by_run = {row.run_id: row for row in progress_rows}
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -117,6 +124,7 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "prospect_archives": len(archives),
                     "offer_provenance": len(provenance),
                     "collection_quality_snapshots": len(quality_snapshots),
+                    "collection_run_progress": len(progress_rows),
                 },
                 "runtime": {
                     "scheduler_enabled": settings.scheduler_enabled,
@@ -167,6 +175,14 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "offers_received": r.offers_received,
                     "offers_imported": r.offers_imported,
                     "message": r.message,
+                    "phase": progress_by_run[r.id].phase if r.id in progress_by_run else None,
+                    "error_type": progress_by_run[r.id].error_type if r.id in progress_by_run else None,
+                    "pages_total": progress_by_run[r.id].pages_total if r.id in progress_by_run else None,
+                    "pages_structured": progress_by_run[r.id].pages_structured if r.id in progress_by_run else None,
+                    "pages_ocr": progress_by_run[r.id].pages_ocr if r.id in progress_by_run else None,
+                    "pages_done": progress_by_run[r.id].pages_done if r.id in progress_by_run else None,
+                    "assets_cached": progress_by_run[r.id].assets_cached if r.id in progress_by_run else None,
+                    "elapsed_seconds": progress_by_run[r.id].elapsed_seconds if r.id in progress_by_run else None,
                 }
                 for r in runs
             ],
@@ -190,6 +206,25 @@ def build_support_export(db: Session) -> tuple[str, bytes]:
                     "local_file": _file_info(p.local_path),
                 }
                 for p in prospects
+            ],
+        )
+        _write_json(
+            zf,
+            "collection_run_progress.json",
+            [
+                {
+                    "run_id": row.run_id,
+                    "phase": row.phase,
+                    "error_type": row.error_type,
+                    "pages_total": row.pages_total,
+                    "pages_structured": row.pages_structured,
+                    "pages_ocr": row.pages_ocr,
+                    "pages_done": row.pages_done,
+                    "assets_cached": row.assets_cached,
+                    "elapsed_seconds": row.elapsed_seconds,
+                    "updated_at": row.updated_at,
+                }
+                for row in progress_rows
             ],
         )
         _write_json(

@@ -55,6 +55,11 @@ def _finish_run(
     imported: int = 0,
     message: str | None = None,
 ):
+    db.refresh(run)
+    if run.status == "failed" and "error_type=timeout" in (run.message or ""):
+        # A watchdog may have closed a genuinely stuck collector from another
+        # DB session. Never let the late worker rewrite that terminal timeout.
+        return
     run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     run.status = status
     run.offers_received = received
@@ -133,6 +138,7 @@ def collect_structured_for_store(
     before_import_fn: Callable | None = None,
     artifact_handler: CollectionArtifactHandler | None = None,
     benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+    run_started_fn: Callable[[CollectionRun], None] | None = None,
 ):
     """Fetch one official source with the structured collector and import it.
 
@@ -157,6 +163,8 @@ def collect_structured_for_store(
 
     run = _start_run(db, store, source.key + ":web")
     try:
+        if run_started_fn:
+            run_started_fn(run)
         result = (collector_fn or collect_one)(source)
         result["_artifact_managed"] = artifact_handler is not None
         artifact_diagnostics: list[str] = []
@@ -174,6 +182,11 @@ def collect_structured_for_store(
                 )
         if before_import_fn:
             before_import_fn(result)
+        db.refresh(run)
+        if run.status != "running":
+            raise CollectionError(
+                f"Collector-Lauf wurde extern beendet: run_status={run.status} {run.message or ''}"
+            )
         rows = result.get("offers") or []
         summary = import_collected_offers(db, rows)
         images_saved = _persist_images_best_effort(db, rows)
@@ -188,7 +201,8 @@ def collect_structured_for_store(
                 artifact_diagnostics.append(
                     f"artifact_status=FAIL archive_created=true error={type(exc).__name__}: {exc}"
                 )
-        if artifact_failed:
+        collector_warning = str(result.get("technical_warning") or "").strip()
+        if artifact_failed or collector_warning:
             status = "warning" if summary.imported else "failed"
         else:
             status = "success" if summary.imported else "no_offers"
@@ -204,7 +218,13 @@ def collect_structured_for_store(
             benchmark_context=benchmark_context,
         )
         fetch = f"fetch={result.get('fetch_mode','?')} final={result.get('final_url') or source.url}"
-        parts = [fetch, *artifact_diagnostics, quality_diagnostic, _summary_message(summary, images_saved)]
+        parts = [
+            fetch,
+            collector_warning,
+            *artifact_diagnostics,
+            quality_diagnostic,
+            _summary_message(summary, images_saved),
+        ]
         message = " | ".join(part for part in parts if part)
         _finish_run(db, run, status, len(rows), summary.imported, message[:1800])
         return result, summary, run
