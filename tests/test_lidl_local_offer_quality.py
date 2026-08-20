@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,9 +16,12 @@ from app.engine_v140.lidl_semantics import LidlSourceKind, classify_lidl_link
 from app.engine_v140.lidl_schwarz_runtime import schwarz_manifest_offers
 from app.extractor_adapter import assess_collected_offer, import_collected_offers
 from app.models import MasterProduct, Store
+from app.models import Offer, OfferOccurrence
+from app.prospect_models import OfferProvenance, ProspectArchive
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lidl_kw34_pdf_manifest_excerpt.json"
+SPATIAL_FIXTURE = Path(__file__).parent / "fixtures" / "lidl_kw34_pages_3_12_spatial.json"
 
 
 def _source():
@@ -36,6 +40,40 @@ def _render_excerpt(target: Path):
     for block in fixture["blocks"]:
         rect = pymupdf.Rect(*block["bbox"])
         page.insert_textbox(rect, block["text"], fontsize=5.5, fontname="helv")
+    document.save(target)
+    document.close()
+    return fixture
+
+
+def _insert_fixture_text(page, bbox, text, *, bold=False, size=8):
+    rect = pymupdf.Rect(*bbox)
+    if bold:
+        for index, line in enumerate(text.splitlines()):
+            page.insert_text(
+                pymupdf.Point(rect.x0, rect.y0 + size + index * (size + 1)),
+                line,
+                fontsize=size,
+                fontname="hebo",
+            )
+    else:
+        page.insert_textbox(rect, text, fontsize=size, fontname="helv", lineheight=1.0)
+
+
+def _render_spatial_fixture(target: Path):
+    fixture = json.loads(SPATIAL_FIXTURE.read_text(encoding="utf-8"))
+    document = pymupdf.open()
+    for _ in range(12):
+        document.new_page(width=fixture["page_width"], height=fixture["page_height"])
+    for frozen_page in fixture["pages"]:
+        page = document[frozen_page["logical_page"] - 1]
+        for offer in frozen_page["offers"]:
+            _insert_fixture_text(page, offer["title_bbox"], offer["title"], bold=True, size=8)
+            _insert_fixture_text(page, offer["details_bbox"], offer["details"], size=5)
+            if offer.get("plus_label"):
+                _insert_fixture_text(page, offer["plus_label_bbox"], offer["plus_label"], bold=True, size=5)
+            _insert_fixture_text(page, offer["price_bbox"], offer["price"], size=6)
+            if offer.get("app_price"):
+                _insert_fixture_text(page, offer["app_price_bbox"], offer["app_price"], size=6)
     document.save(target)
     document.close()
     return fixture
@@ -190,3 +228,95 @@ def test_frozen_page_one_imports_six_local_offers_and_rejects_manifest_only(tmp_
     assert any("livarno" in name for name in names)
     assert any("parkside" in name for name in names)
     assert not any("online-regal" in name for name in names)
+
+
+def test_frozen_real_pages_three_and_twelve_reach_complete_spatial_recall(tmp_path):
+    pdf_path = tmp_path / "lidl-pages-3-12.pdf"
+    _render_spatial_fixture(pdf_path)
+
+    result = extract_lidl_pdf_offers(
+        pdf_path,
+        _source(),
+        valid_from="17.08.2026",
+        valid_to="22.08.2026",
+    )
+    by_page = {
+        page: [row for row in result.offers if f"PDF Seite {page}:" in row.source_text]
+        for page in (3, 12)
+    }
+    page_three = {row.product_name.lower(): row for row in by_page[3]}
+    page_twelve = {row.product_name.lower(): row for row in by_page[12]}
+
+    assert len(page_three) == 9
+    assert len(page_twelve) == 5
+    for expected in (
+        "galiamelone", "bio mini", "rote zwiebeln", "salat-mix",
+        "zuckermais", "phalaenopsis", "lilien", "heidekraut", "rosen-duo",
+    ):
+        assert any(expected in name for name in page_three)
+    for expected in ("granini", "arla", "alesto", "lenor", "pepsi"):
+        assert any(expected in name for name in page_twelve)
+
+    salad = next(row for name, row in page_three.items() if "salat-mix" in name)
+    onions = next(row for name, row in page_three.items() if "rote zwiebeln" in name)
+    lilies = next(row for name, row in page_three.items() if "lilien" in name)
+    alesto = next(row for name, row in page_twelve.items() if "alesto" in name)
+    assert (salad.price, salad.app_price) == (0.99, 0.79)
+    assert onions.unit_price == 1.19
+    assert (lilies.price, lilies.app_price) == (7.99, 6.99)
+    assert (alesto.price, alesto.app_price) == (2.99, 1.99)
+    assert result.price_anchors_detected == 14
+    assert result.price_anchors_matched == 14
+    assert result.price_anchors_ignored == 0
+    assert result.price_anchors_unmatched == 0
+    assert result.page_offer_recall == 100.0
+    assert result.pages_with_unmatched_prices == ()
+
+
+def test_repeated_lidl_pdf_offer_keeps_one_offer_with_two_page_occurrences(tmp_path):
+    pdf_path = tmp_path / "lidl-repeated-grapes.pdf"
+    document = pymupdf.open()
+    for _ in range(2):
+        page = document.new_page(width=459.2, height=793.7)
+        _insert_fixture_text(page, [20, 100, 160, 126], "Helle kernlose Trauben", bold=True, size=8)
+        _insert_fixture_text(page, [20, 128, 150, 175], "Ursprung: Spanien\nJe 500 g\n1 kg = 2.50", size=5)
+        _insert_fixture_text(page, [170, 120, 250, 170], "500 g\n1.25*", size=6)
+    document.save(pdf_path)
+    document.close()
+    extracted = extract_lidl_pdf_offers(
+        pdf_path,
+        _source(),
+        valid_from="17.08.2026",
+        valid_to="22.08.2026",
+    )
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    store = Store(
+        retailer="Lidl", name="Lidl Puderbach", postal_code="57610", city="Puderbach",
+        address="Teststraße 1", active=True,
+    )
+    db.add(store)
+    db.flush()
+    db.add(ProspectArchive(
+        store_id=store.id,
+        source_url=_source().url,
+        pdf_url=_source().url,
+        retailer="Lidl",
+        period_key="current",
+        valid_from=date(2026, 8, 17),
+        valid_to=date(2026, 8, 22),
+        fetched_at=datetime(2026, 8, 20),
+        pdf_sha256="f" * 64,
+        pdf_bytes=pdf_path.read_bytes(),
+        page_count=2,
+        local_path=str(pdf_path),
+    ))
+    db.commit()
+
+    summary = import_collected_offers(db, extracted.offers)
+    assert summary.imported == 2
+    assert db.query(Offer).count() == 1
+    assert [row.prospect_page for row in db.query(OfferOccurrence).order_by(OfferOccurrence.prospect_page)] == [1, 2]
+    assert [row.prospect_page for row in db.query(OfferProvenance).order_by(OfferProvenance.prospect_page)] == [1, 2]
