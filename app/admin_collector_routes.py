@@ -95,6 +95,82 @@ def _write_lidl_debug_failure(store: Store, exc: Exception) -> None:
         pass
 
 
+def _persist_background_failure(
+    db: Session,
+    *,
+    store_id: int,
+    job_started_at: datetime,
+    exc: Exception,
+) -> None:
+    """Make admin collection failures visible even before a collector run exists."""
+    db.rollback()
+    run = (
+        db.query(CollectionRun)
+        .filter(
+            CollectionRun.store_id == store_id,
+            CollectionRun.started_at >= job_started_at,
+        )
+        .order_by(CollectionRun.started_at.desc())
+        .first()
+    )
+    now = datetime.utcnow()
+    error_type = type(exc).__name__
+    error_text = str(exc).strip() or error_type
+    message = (
+        f"run_status=failed phase=preflight error_type={error_type} "
+        f"error={error_text}"
+    )[:1800]
+
+    if run is None:
+        store = db.get(Store, store_id)
+        if store is None:
+            return
+        run = CollectionRun(
+            store_id=store_id,
+            source_key=f"admin-preflight:{store.retailer}"[:80],
+            started_at=job_started_at,
+            finished_at=now,
+            status="failed",
+            offers_received=0,
+            offers_imported=0,
+            message=message,
+        )
+        db.add(run)
+        db.flush()
+    elif run.status == "running":
+        run.status = "failed"
+        run.finished_at = now
+        run.message = f"{run.message} | {message}"[:1800] if run.message else message
+    else:
+        # A collector that already persisted its own terminal run must not get a
+        # duplicate failure merely because the exception propagated outward.
+        return
+
+    progress = (
+        db.query(CollectionRunProgress)
+        .filter(CollectionRunProgress.run_id == run.id)
+        .first()
+    )
+    if progress is None:
+        progress = CollectionRunProgress(
+            run_id=run.id,
+            phase="preflight",
+            error_type=error_type,
+            elapsed_seconds=max(0.0, (now - job_started_at).total_seconds()),
+            updated_at=now,
+        )
+        db.add(progress)
+    else:
+        progress.phase = progress.phase or "preflight"
+        progress.error_type = error_type
+        progress.elapsed_seconds = max(
+            progress.elapsed_seconds or 0.0,
+            (now - job_started_at).total_seconds(),
+        )
+        progress.updated_at = now
+    db.commit()
+
+
 def _run_store_collection_background(store_id: int) -> None:
     """Run one market collection outside the HTTP request lifecycle.
 
@@ -104,6 +180,7 @@ def _run_store_collection_background(store_id: int) -> None:
     """
     db = SessionLocal()
     timeout_timer = None
+    job_started_at = datetime.utcnow()
     try:
         store = db.get(Store, store_id)
         if not store or not store.active:
@@ -118,10 +195,16 @@ def _run_store_collection_background(store_id: int) -> None:
             timeout_timer.start()
         context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
         collect_store_from_web(db, store.name, benchmark_context=context)
-    except Exception:
-        db.rollback()
-        # collect_store_from_web / collection_service persists a failed run with
-        # the concrete diagnostic whenever the collector itself was started.
+    except Exception as exc:
+        try:
+            _persist_background_failure(
+                db,
+                store_id=store_id,
+                job_started_at=job_started_at,
+                exc=exc,
+            )
+        except Exception:
+            db.rollback()
     finally:
         if timeout_timer is not None:
             timeout_timer.cancel()
