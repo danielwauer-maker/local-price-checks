@@ -9,12 +9,38 @@ def normalize_known_product_name(text:str)->str:
     if re.match(r"^ramont\s+weichkäse\b",t,re.I): t=re.sub(r"^ramont\b","Géramont",t,flags=re.I)
     return t
 
-BAD_EXACT={"filiale","filiale & shop","aktion","knaller","angebote","angebot","zu den angeboten","alle anzeigen","image","online-shop","onlineshop","tiefgefroren","gekühlt","original","classic","natur","versch. sorten","100% pflanzlich","schoko"}
+BAD_EXACT={
+    "filiale","filiale & shop","aktion","knaller","angebote","angebot","zu den angeboten","alle anzeigen","image","online-shop","onlineshop",
+    "tiefgefroren","gekühlt","original","classic","natur","versch. sorten","100% pflanzlich","schoko",
+    "peanut","gegart","trocken","halbtrocken","lieblich","je st","je st.","je z.b.","je z. b.","je pckg.","sb-verpackt",
+}
 PACK_ONLY=re.compile(r"^[,;:\-–\s]*(?:je\s+)?\d+(?:[.,]\d+)?\s*[-]?\s*(?:kg|g|l|ml|stück|stk\.?|pckg\.?|btl\.?|fl\.?|becher|dose|flasche)(?:\s*[-,;:].*)?$",re.I)
 SET_ONLY=re.compile(r"^\d+er[-\s]*set$",re.I)
 ALCOHOL_DESCRIPTOR=re.compile(r"^(?:\d{1,2}(?:[.,]\d+)?\s*[-–]\s*)?\d{1,2}(?:[.,]\d+)?\s*%\s*vol\.?\b.*$",re.I)
 PERCENT_DESCRIPTOR=re.compile(r"^\d{1,3}(?:[.,]\d+)?\s*%\s+(?:pflanzlich|fett|frucht|kakao|saft)\b.*$",re.I)
-ORIGIN_DESCRIPTOR=re.compile(r"^aus\s+(?:der\s+|dem\s+|fruchtsaft(?:-\s*)?konzentrat\b).*$",re.I)
+ORIGIN_DESCRIPTOR=re.compile(r"^aus\s+.+$",re.I)
+RELATIONAL_DESCRIPTOR=re.compile(
+    r"^(?:"
+    r"vom\s+|von\s+(?:der|dem)\s+|mit\s+|ohne\s+|im\s+|in\s+|"
+    r"auf\s+wunsch\s+|für\s+|nach\s+|reich\s+an\s+"
+    r").+$",
+    re.I,
+)
+ATTRIBUTE_DESCRIPTOR=re.compile(
+    r"^(?:"
+    r"cremiger\s+brotaufstrich|"
+    r"sorte:\s*siehe\s+etikett(?:,\s*kl\.?\s*[ivx]+)?|"
+    r"[\u201e\u201c\"']?aromatica[\u201e\u201c\"']?,?\s*kl\.?\s*[ivx]+|"
+    r"gebrüht(?:,.*)?|geräuchert|geschnitten(?:,.*)?|"
+    r"zart\s+und\s+mager|natur\s+oder\s+mariniert|luftgetrocknet|"
+    r"heiß\s+und\s+kalt\s+zu\s+genießen|italienische\s+salamispezialität|"
+    r"gefüllt\s+mit\s+frischkäse|nordische\s+art|mittelscharf|vorgekocht|"
+    r"koffeinhaltig|auch\s+alkoholfrei|extra\s+ananas|"
+    r"sb-verpackt(?:,.*)?|frz\.\s+weich-\s+oder\s+schnittkäse(?:,.*)?|"
+    r"(?:weich|schnitt|hart)käse,\s*(?:mind\.\s*)?\d+\s*%\s*fett\s+i\.?tr\."
+    r")$",
+    re.I,
+)
 QUALITY_CLASS_DESCRIPTOR=re.compile(r"^(?:kl\.?|klasse)\s*[ivx]+$",re.I)
 PREPARATION_DESCRIPTOR=re.compile(
     r"^(?:"
@@ -66,6 +92,8 @@ def product_name_issue(name:str|None)->str|None:
     if ALCOHOL_DESCRIPTOR.match(text):return "Alkoholangabe statt Produktname"
     if PERCENT_DESCRIPTOR.match(text):return "Prozent-/Eigenschaftsangabe statt Produktname"
     if ORIGIN_DESCRIPTOR.match(text):return "Herkunfts-/Beschreibungsfragment statt Produktname"
+    if RELATIONAL_DESCRIPTOR.match(text):return "Untertext/Beschreibungsfragment statt Produktname"
+    if ATTRIBUTE_DESCRIPTOR.match(text):return "Eigenschaft/Variante statt vollständigem Produktnamen"
     if QUALITY_CLASS_DESCRIPTOR.match(text):return "Qualitätsklasse statt Produktname"
     if PREPARATION_DESCRIPTOR.match(text):return "Zubereitungs-/Beschreibungsfragment statt Produktname"
     if SET_ONLY.match(text):return "Set-Angabe statt Produktname"

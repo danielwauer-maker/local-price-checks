@@ -183,6 +183,16 @@ def parse_prospect_text(source,text,imgs=None):
         if k not in seen: seen.add(k);res.append(r)
     return res
 
+def _exact_rewe_image(imgs,name):
+    normalized_name=' '.join((name or '').lower().split())
+    if not normalized_name:return None
+    for image in imgs or []:
+        alt=' '.join((image.get('alt') or '').lower().split())
+        if len(alt)>5 and (normalized_name in alt or alt in normalized_name):
+            return image
+    return None
+
+
 def parse_rewe_text(source,text,imgs=None):
     L=[x.strip() for x in text.splitlines() if x.strip()];imgs=imgs or [];out=[]
     rvf,rvt,_,_=infer_validity(text)

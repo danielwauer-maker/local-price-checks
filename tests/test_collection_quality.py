@@ -147,6 +147,37 @@ def test_complete_collection_can_pass_with_retailer_policy(monkeypatch):
     assert metrics["unit_price_rate"] == 100.0
 
 
+def test_single_known_invalid_name_remains_a_quality_warning(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    malformed = db.query(MasterProduct).order_by(MasterProduct.id).first()
+    malformed.name = "aus Rind- und Schweinefleisch, mit Käse"
+    db.commit()
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=2, min_image_rate=50.0),
+    )
+
+    quality_status, _benchmark_status, _score, metrics = evaluate_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=rows,
+        summary=ImportSummary(received=2, imported=2),
+        images_saved=2,
+    )
+
+    assert quality_status == "WARN"
+    assert metrics["suspicious_name_count"] == 1
+    assert metrics["suspicious_names"] == [{
+        "product_id": malformed.id,
+        "product_name": "aus Rind- und Schweinefleisch, mit Käse",
+        "reason": "Herkunfts-/Beschreibungsfragment statt Produktname",
+    }]
+    assert "suspicious_product_names" in metrics["quality_reasons"]
+
+
 def test_small_production_run_fails_benchmark_without_changing_quality_semantics(monkeypatch):
     db = _session()
     store = Store(

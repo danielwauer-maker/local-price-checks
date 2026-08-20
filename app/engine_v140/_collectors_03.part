@@ -22,10 +22,12 @@
         if package_idx is None:
             continue
 
-        product=None
+        product=None;product_image=None;fallback_product=None
         for j in range(package_idx-1,max(-1,package_idx-7),-1):
             cand=L[j].strip()
             low=cand.lower()
+            if fallback_product and _price_without_unit_prices(cand) and not re.search(r'[A-Za-zÄÖÜäöüß]',cand):
+                break
             if (
                 low in noise or
                 PRICE.search(cand) or
@@ -38,14 +40,20 @@
             cleaned=clean_product_name(cand)
             if not cleaned or product_name_issue(cleaned):
                 continue
-            product=cleaned
-            break
+            exact_image=_exact_rewe_image(imgs,cleaned)
+            if exact_image:
+                product=cleaned;product_image=exact_image
+                break
+            if fallback_product is None:
+                fallback_product=cleaned
+        if product is None:
+            product=fallback_product
         if not product:
             continue
 
         block=' '.join(L[max(0,package_idx-1):min(len(L),i+4)])
         q,u=size(L[package_idx])
-        im=best_img(imgs,product)
+        im=product_image or _exact_rewe_image(imgs,product)
         out.append(CollectedOffer(
             source.key,source.store_name,source.retailer,product,cat(product),price,
             unit_price=upr(block),unit_price_unit=upr_unit(block),quantity=q,unit=u,valid_from=vf,valid_to=vt,
