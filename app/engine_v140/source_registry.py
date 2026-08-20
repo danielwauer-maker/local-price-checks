@@ -13,6 +13,7 @@ class RetailSource:
     notes: str = ""
     supports_products: bool = True
     store_specific: bool = False
+    alternate_urls: tuple[str, ...] = ()
 
 
 EDEKA_MARKET_PATH_RE = re.compile(r"^(https://www\.edeka\.de/maerkte/\d{6}/)(?:angebote/|prospekte/)?$", re.I)
@@ -65,6 +66,7 @@ SOURCES = [
         "edeka_puderbach", "EDEKA", "EDEKA Fellenzer",
         "https://www.edeka.de/maerkte/071378/", "prospect_discovery", "store_specific",
         "Offizielle EDEKA-Marktseite zur Discovery des marktbezogenen PDF-Prospekts.", True, True,
+        ("https://edeka-fellenzer.de/angebote/",),
     ),
     RetailSource(
         "lidl_puderbach", "Lidl", "Lidl Puderbach",
@@ -110,6 +112,7 @@ def source_for_store_record(store) -> RetailSource | None:
                 notes=known.notes,
                 supports_products=known.supports_products,
                 store_specific=known.store_specific,
+                alternate_urls=known.alternate_urls,
             )
         return known
     url = (store.source_url or "").strip() or RETAILER_FALLBACK_URLS.get(store.retailer)
