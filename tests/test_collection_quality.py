@@ -217,3 +217,30 @@ def test_small_synthetic_run_does_not_apply_absolute_retailer_benchmark(monkeypa
     assert metrics["benchmark_status"] == "NOT_APPLICABLE"
     assert "run_status=success" in diagnostic
     assert "benchmark_status=NOT_APPLICABLE" in diagnostic
+
+
+def test_online_rejections_do_not_reduce_local_import_quality(monkeypatch):
+    db = _session()
+    store, run, rows = _seed_complete_rewe(db)
+    monkeypatch.setitem(
+        RETAILER_QUALITY_POLICIES,
+        "REWE",
+        RetailerQualityPolicy(expected_min_offers=2, min_image_rate=50.0),
+    )
+    summary = ImportSummary(received=202, imported=2, rejected_online=200)
+
+    quality_status, _benchmark_status, _score, metrics = evaluate_collection_quality(
+        db,
+        store=store,
+        run=run,
+        rows=[*rows, *[SimpleNamespace(product_name="Shop") for _ in range(200)]],
+        summary=summary,
+        images_saved=2,
+        benchmark_context=BenchmarkContext.PRODUCTION,
+    )
+
+    assert quality_status == "PASS"
+    assert metrics["offers_received"] == 202
+    assert metrics["eligible_offers_received"] == 2
+    assert metrics["online_rejected"] == 200
+    assert metrics["import_rate"] == 100.0

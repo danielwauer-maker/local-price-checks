@@ -11,11 +11,12 @@ from sqlalchemy.orm import Session
 from .models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, Store
 from .offer_text import OfferTextDetails, parse_offer_text
 from .prospect_models import OfferProvenance, ProspectArchive
-from .admin_learning import resolve_product_alias
+from .admin_learning import infer_learned_brand, learned_brand_candidates, resolve_product_alias
 from .category_classifier import ensure_auto_category
 from .engine_v140.collectors import CollectedOffer
 from .engine_v140.offer_quality import evaluate_offer
 from .engine_v140.product_cleaning import clean_product_name
+from .engine_v140.lidl_semantics import has_strong_shop_signal
 from .engine_v140.services import classify_offer
 
 
@@ -49,7 +50,11 @@ def _row_has_explicit_online_only_marker(row: CollectedOffer) -> bool:
 
 def _row_is_local_offer(row: CollectedOffer) -> bool:
     if (row.retailer or "").strip().lower() == "lidl":
-        return not _row_has_explicit_online_only_marker(row)
+        if _row_has_explicit_online_only_marker(row):
+            return False
+        if has_strong_shop_signal(row.source_text or "", row.source_url or ""):
+            return False
+        return bool(row.local_store_offer)
     return bool(row.local_store_offer)
 
 
@@ -245,6 +250,7 @@ def assess_collected_offer(row: CollectedOffer) -> CollectedOfferAssessment:
 
 def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
     counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
+    brand_candidates = learned_brand_candidates(db)
     for row in rows:
         assessment = assess_collected_offer(row)
         details = assessment.details
@@ -270,13 +276,16 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
         if not product:
             product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         package_label = details.package_label or package_size_label(row.quantity, row.unit)
+        learned_brand = infer_learned_brand(db, name, candidates=brand_candidates)
         if not product:
-            product = MasterProduct(brand=None, name=name, package_size=package_label, normalized_key=key)
+            product = MasterProduct(brand=learned_brand, name=name, package_size=package_label, normalized_key=key)
             db.add(product)
             db.flush()
             counts["created_products"] += 1
         elif not product.package_size and package_label:
             product.package_size = package_label
+        if product and not product.brand and learned_brand:
+            product.brand = learned_brand
         ensure_auto_category(db, product)
 
         offer = db.query(Offer).filter(
