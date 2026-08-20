@@ -45,7 +45,7 @@ def test_background_preflight_failure_is_persisted_as_visible_run(monkeypatch):
     def fail_before_collection_run(*args, **kwargs):
         raise RuntimeError("EDEKA prospect discovery failed")
 
-    monkeypatch.setattr(admin_collector_routes, "collect_store_from_web", fail_before_collection_run)
+    monkeypatch.setattr(admin_collector_routes, "collect_edeka_market_pdf", fail_before_collection_run)
 
     admin_collector_routes._run_store_collection_background(store_id)
 
@@ -72,7 +72,7 @@ def test_background_exception_does_not_duplicate_terminal_collector_run(monkeypa
     store_id = _store(SessionLocal)
     monkeypatch.setattr(admin_collector_routes, "SessionLocal", SessionLocal)
 
-    def collector_persists_failure(db, store_name, *, benchmark_context):
+    def collector_persists_failure(db, store, *, benchmark_context):
         run = CollectionRun(
             store_id=store_id,
             source_key="edeka-test",
@@ -83,7 +83,7 @@ def test_background_exception_does_not_duplicate_terminal_collector_run(monkeypa
         db.commit()
         raise RuntimeError("propagated after persisted run")
 
-    monkeypatch.setattr(admin_collector_routes, "collect_store_from_web", collector_persists_failure)
+    monkeypatch.setattr(admin_collector_routes, "collect_edeka_market_pdf", collector_persists_failure)
 
     admin_collector_routes._run_store_collection_background(store_id)
 
