@@ -8,11 +8,13 @@ from urllib.parse import urlparse
 
 
 class LidlSourceKind(str, Enum):
-    LOCAL_PROSPECT = "local_prospect"
-    SHOP_ONLINE = "shop_online"
-    NAVIGATION_RECIPE = "navigation_recipe"
-    LIDL_PLUS = "lidl_plus"
+    """Availability of one Lidl item after applying all source evidence."""
+
+    LOCAL_ONLY = "LOCAL_ONLY"
+    LOCAL_AND_ONLINE = "LOCAL_AND_ONLINE"
+    ONLINE_ONLY = "ONLINE_ONLY"
     EDITORIAL = "editorial"
+    NAVIGATION = "navigation"
 
 
 _EXPLICIT_LOCAL_KEYS = (
@@ -63,6 +65,11 @@ def has_strong_shop_signal(*objects: Any) -> bool:
 
 
 def classify_lidl_link(link: dict, product: dict | None = None) -> LidlSourceKind:
+    """Classify link evidence alone.
+
+    A shop identity only describes the link.  Stronger, price-bearing PDF
+    evidence promotes an item to ``LOCAL_AND_ONLINE`` at extraction time.
+    """
     url = str(link.get("url") or "").strip()
     low = " ".join(
         (
@@ -75,12 +82,10 @@ def classify_lidl_link(link: dict, product: dict | None = None) -> LidlSourceKin
     if has_explicit_local_evidence(link, product) and not any(
         marker in low for marker in ("nur online", "online only", "onlineshop")
     ):
-        return LidlSourceKind.LOCAL_PROSPECT
+        return LidlSourceKind.LOCAL_ONLY
     if has_strong_shop_signal(link, link.get("productDetails") or {}, product or {}):
-        return LidlSourceKind.SHOP_ONLINE
-    if "lidlplus" in low or "lidl plus" in low:
-        return LidlSourceKind.LIDL_PLUS
+        return LidlSourceKind.ONLINE_ONLY
     host = urlparse(url).netloc.lower()
-    if "rezepte.lidl" in host or "/alle-rezepte" in low:
-        return LidlSourceKind.NAVIGATION_RECIPE
+    if "rezepte.lidl" in host or "/alle-rezepte" in low or "lidlplus" in low or "lidl plus" in low:
+        return LidlSourceKind.NAVIGATION
     return LidlSourceKind.EDITORIAL

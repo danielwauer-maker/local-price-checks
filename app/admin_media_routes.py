@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .admin_learning import audit
 from .admin_routes import MEDIA_DIR, _admin
 from .db import get_db
-from .models import MediaAsset
+from .models import MediaAsset, MediaAssetMetadata
 
 router = APIRouter()
 
@@ -37,6 +37,9 @@ def delete_media(
         f"kind={row.kind}; retailer={row.retailer or '-'}; file={row.file_path or '-'}; url={row.source_url or '-'}",
         actor,
     )
+    db.query(MediaAssetMetadata).filter(
+        MediaAssetMetadata.media_asset_id == row.id
+    ).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
 

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .admin_routes import MEDIA_DIR, _admin
 from .db import get_db
-from .models import MediaAsset
+from .product_media import preferred_product_media
 
 router = APIRouter()
 
@@ -19,16 +19,7 @@ def admin_product_media(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    row = (
-        db.query(MediaAsset)
-        .filter(
-            MediaAsset.kind == "product",
-            MediaAsset.master_product_id == product_id,
-            MediaAsset.active.is_(True),
-        )
-        .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
-        .first()
-    )
+    row = preferred_product_media(db, product_id, purpose="audit")
     if not row:
         raise HTTPException(404, "Kein Produktbild hinterlegt")
 

@@ -226,6 +226,25 @@ class MediaAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class MediaAssetMetadata(Base):
+    """Additive source/identity metadata for ranked product media.
+
+    Kept in a separate table so existing SQLite installations gain the schema
+    through ``create_all`` without an unsafe in-place column migration.
+    """
+
+    __tablename__ = "media_asset_metadata"
+    __table_args__ = (UniqueConstraint("media_asset_id", name="uq_media_asset_metadata_asset"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    media_asset_id: Mapped[int] = mapped_column(ForeignKey("media_assets.id"), index=True)
+    media_source: Mapped[str] = mapped_column(String(40), index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    audit_relevant: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    external_product_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    canonical_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_asset: Mapped[MediaAsset] = relationship()
+
+
 class AdminSetting(Base):
     __tablename__ = "admin_settings"
     key: Mapped[str] = mapped_column(String(120), primary_key=True)

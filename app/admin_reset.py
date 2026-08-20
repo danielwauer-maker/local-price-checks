@@ -13,6 +13,7 @@ from .models import (
     FavoriteProduct,
     MasterProduct,
     MediaAsset,
+    MediaAssetMetadata,
     Offer,
     ProductAdminData,
     ProductAlias,
@@ -94,6 +95,9 @@ def _prune_orphan_products(db: Session, candidate_ids: set[int]) -> int:
         media_rows = db.query(MediaAsset).filter(MediaAsset.master_product_id == product_id).all()
         for row in media_rows:
             _remove_product_media_file(row)
+            db.query(MediaAssetMetadata).filter(
+                MediaAssetMetadata.media_asset_id == row.id
+            ).delete(synchronize_session=False)
             db.delete(row)
         db.query(ProductBarcode).filter(ProductBarcode.master_product_id == product_id).delete(synchronize_session=False)
         db.query(ProductAlias).filter(ProductAlias.master_product_id == product_id).delete(synchronize_session=False)
@@ -218,6 +222,9 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
     product_media = db.query(MediaAsset).filter(MediaAsset.master_product_id.is_not(None)).all()
     for row in product_media:
         _remove_product_media_file(row)
+        db.query(MediaAssetMetadata).filter(
+            MediaAssetMetadata.media_asset_id == row.id
+        ).delete(synchronize_session=False)
         db.delete(row)
     db.query(ProductBarcode).delete(synchronize_session=False)
     db.query(ProductAlias).delete(synchronize_session=False)

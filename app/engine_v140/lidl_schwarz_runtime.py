@@ -175,8 +175,8 @@ def _offers_from_product_links(flyer: dict, source, valid_from: str, valid_to: s
             package = str(product.get("packageSize") or product.get("content") or "").strip()
             name = " ".join(p for p in (brand, title, package) if p)
             source_kind = classify_lidl_link(link, product)
-            online = source_kind is not LidlSourceKind.LOCAL_PROSPECT and (
-                source_kind is LidlSourceKind.SHOP_ONLINE or _product_online_only(product, page)
+            online = source_kind is not LidlSourceKind.LOCAL_ONLY and (
+                source_kind is LidlSourceKind.ONLINE_ONLY or _product_online_only(product, page)
             )
             offer = _build_offer(
                 source,
@@ -192,6 +192,10 @@ def _offers_from_product_links(flyer: dict, source, valid_from: str, valid_to: s
             )
             if not offer:
                 continue
+            offer.lidl_availability = LidlSourceKind.ONLINE_ONLY.value if online else LidlSourceKind.LOCAL_ONLY.value
+            offer.lidl_product_id = ident
+            offer.canonical_url = str(product.get("canonicalUrl") or product.get("url") or link.get("url") or "")
+            offer.official_image_url = str(product.get("image") or product.get("imageUrl") or "")
             key = (offer.product_name.lower(), round(float(offer.price), 2), page_no, offer.local_store_offer)
             if key not in seen:
                 seen.add(key)
