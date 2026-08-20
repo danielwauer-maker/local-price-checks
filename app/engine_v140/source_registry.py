@@ -47,8 +47,8 @@ SOURCES = [
     ),
     RetailSource(
         "edeka_puderbach", "EDEKA", "EDEKA Fellenzer",
-        "https://edeka-fellenzer.de/angebote/", "store_page", "store_specific",
-        "Strukturierte Fellenzer-Angebotsseite; EDEKA parser benchmark remains paused.", True, True,
+        "https://www.edeka.de/maerkte/071378/angebote/", "prospect_discovery", "store_specific",
+        "Offizielle EDEKA-Marktseite zur Discovery des marktbezogenen PDF-Prospekts.", True, True,
     ),
     RetailSource(
         "lidl_puderbach", "Lidl", "Lidl Puderbach",

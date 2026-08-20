@@ -20,6 +20,7 @@ _CONTENT_EXTENSIONS = {
 }
 MEDIA_SOURCE_PRIORITY = {
     "prospect_crop": 100,
+    "pdf_embedded": 150,
     "retailer_cdn": 200,
     "official_product": 300,
     "admin_curated": 400,

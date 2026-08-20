@@ -173,7 +173,44 @@ def parse_pdf_bytes(source:RetailSource,pdf_bytes:bytes,filename:str|None=None,s
     if detected and detected!=retailer:
         notes.append(f"PDF-Händler erkannt als {detected}; Zielmarkt ist {retailer}.");return PdfParseResult(retailer,len(doc),len(full_text),[],vf_doc,vt_doc,_market_id(full_text,filename),notes)
     if retailer=="EDEKA":
-        notes.append("EDEKA-PDF bleibt Kontrollquelle: Bildprospekt benötigt häufig OCR; Markt-Webseite bleibt primär.");return PdfParseResult(retailer,len(doc),len(full_text),[],vf_doc,vt_doc,_market_id(full_text,filename),notes)
+        from .edeka_pdf import extract_edeka_pdf_offers
+        import tempfile
+        temporary = None
+        if filename and Path(filename).is_file():
+            edeka_path = Path(filename)
+        else:
+            temporary = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            temporary.write(pdf_bytes); temporary.close(); edeka_path = Path(temporary.name)
+        try:
+            extracted = extract_edeka_pdf_offers(source, edeka_path, source_url=source_url or source.url)
+        finally:
+            if temporary is not None:
+                try: Path(temporary.name).unlink()
+                except OSError: pass
+        rows = extracted.offers
+        for row in rows:
+            row.price_anchors_detected = extracted.price_anchors_detected
+            row.price_anchors_matched = extracted.price_anchors_matched
+            row.price_anchors_ignored = extracted.price_anchors_ignored
+            row.price_anchors_unmatched = extracted.price_anchors_unmatched
+            row.price_anchor_match_rate = extracted.price_anchor_match_rate
+            row.page_offer_recall = extracted.page_offer_recall
+            row.pages_with_unmatched_prices = tuple(extracted.pages_with_unmatched_prices)
+        row_dates = [(r.valid_from,r.valid_to) for r in rows if r.valid_from and r.valid_to]
+        if row_dates:
+            try: vf_doc=datetime.strptime(row_dates[0][0],"%d.%m.%Y").date()
+            except ValueError: pass
+            try: vt_doc=datetime.strptime(row_dates[0][1],"%d.%m.%Y").date()
+            except ValueError: pass
+        notes.extend(extracted.notes)
+        return PdfParseResult(
+            retailer,len(doc),len(full_text),rows,vf_doc,vt_doc,_market_id(full_text,filename),notes,
+            tuple(extracted.native_text_pages),tuple(extracted.ocr_pages),
+            extracted.price_anchors_detected,extracted.price_anchors_matched,
+            extracted.price_anchors_ignored,extracted.price_anchors_unmatched,
+            extracted.page_offer_recall,tuple(extracted.pages_with_unmatched_prices),
+            extracted.technical_warning,
+        )
     for page_no,page in enumerate(doc,1):
         page_text=page.get_text("text") or "";row_vf,row_vt=_row_validity(page_text,full_text)
         if row_vf and vf_doc:
@@ -222,4 +259,4 @@ def parse_pdf_bytes(source:RetailSource,pdf_bytes:bytes,filename:str|None=None,s
 
 def parse_pdf_file(source:RetailSource,path:str|Path)->PdfParseResult:
     p=Path(path)
-    return parse_pdf_bytes(source,p.read_bytes(),p.name,str(p))
+    return parse_pdf_bytes(source,p.read_bytes(),str(p),str(p))

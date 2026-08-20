@@ -81,6 +81,15 @@ class PdfParseResult:
     valid_to: date|None
     detected_market_id: str|None
     notes: list[str]
+    native_text_pages: tuple[int,...] = ()
+    ocr_pages: tuple[int,...] = ()
+    price_anchors_detected: int = 0
+    price_anchors_matched: int = 0
+    price_anchors_ignored: int = 0
+    price_anchors_unmatched: int = 0
+    page_offer_recall: float = 0.0
+    pages_with_unmatched_prices: tuple[int,...] = ()
+    technical_warning: str|None = None
 
 
 def _lines(text:str)->list[str]:

@@ -209,18 +209,29 @@ def evaluate_collection_quality(
     provenance_rate = _pct(len(provenance_offer_ids), len(offer_ids)) if archive else 0.0
     occurrence_rate = _pct(len(occurrence_offer_ids), len(offer_ids))
     suspicious_rate = _pct(suspicious_count, len(products))
-    lidl_diagnostic_row = next(
-        (row for row in rows if hasattr(row, "lidl_price_anchors_detected")),
+    diagnostic_row = next(
+        (
+            row for row in rows
+            if hasattr(row, "price_anchors_detected") or hasattr(row, "lidl_price_anchors_detected")
+        ),
         None,
     )
-    price_anchors_detected = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_detected", 0) or 0)
-    price_anchors_matched = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_matched", 0) or 0)
-    price_anchors_ignored = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_ignored", 0) or 0)
-    price_anchors_unmatched = int(getattr(lidl_diagnostic_row, "lidl_price_anchors_unmatched", 0) or 0)
-    price_anchor_match_rate = float(getattr(lidl_diagnostic_row, "lidl_price_anchor_match_rate", 0.0) or 0.0)
-    page_offer_recall = float(getattr(lidl_diagnostic_row, "lidl_page_offer_recall", 0.0) or 0.0)
+    def diagnostic_value(name: str, default=0):
+        if diagnostic_row is None:
+            return default
+        value = getattr(diagnostic_row, name, None)
+        if value is None:
+            value = getattr(diagnostic_row, f"lidl_{name}", default)
+        return value
+
+    price_anchors_detected = int(diagnostic_value("price_anchors_detected", 0) or 0)
+    price_anchors_matched = int(diagnostic_value("price_anchors_matched", 0) or 0)
+    price_anchors_ignored = int(diagnostic_value("price_anchors_ignored", 0) or 0)
+    price_anchors_unmatched = int(diagnostic_value("price_anchors_unmatched", 0) or 0)
+    price_anchor_match_rate = float(diagnostic_value("price_anchor_match_rate", 0.0) or 0.0)
+    page_offer_recall = float(diagnostic_value("page_offer_recall", 0.0) or 0.0)
     pages_with_unmatched_prices = list(
-        getattr(lidl_diagnostic_row, "lidl_pages_with_unmatched_prices", ()) or ()
+        diagnostic_value("pages_with_unmatched_prices", ()) or ()
     )
 
     quality_score = 0.0
@@ -251,6 +262,8 @@ def evaluate_collection_quality(
         quality_reasons.append("image_rate_low")
     if suspicious_count:
         quality_reasons.append("suspicious_product_names")
+    if store.retailer == "EDEKA" and price_anchors_unmatched:
+        quality_reasons.append("unmatched_local_price_anchors")
 
     if quality_fail:
         quality_status = "FAIL"
