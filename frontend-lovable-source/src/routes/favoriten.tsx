@@ -1,26 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Heart, ShoppingBasket } from "lucide-react";
+import { Heart, ShoppingBasket, Shuffle } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
-import { PRODUCTS, currentOffers, formatEuro } from "@/data/demo";
-import { useActiveMarketIds, useStore } from "@/lib/app-store";
+import { PRODUCTS } from "@/data/demo";
+import { useStore } from "@/lib/app-store";
+import { hasAlternativeFamily } from "@/lib/favorite-matching";
+import { useFavoriteAlternatives } from "@/lib/use-favorite-alternatives";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/favoriten")({ component: FavoritesPage });
 
 function FavoritesPage() {
-  const activeIds = useActiveMarketIds();
   const { productFavorites, toggleProductFavorite, basket, toggleBasket } = useStore();
+  const { preferences, setEnabled, removePreference } = useFavoriteAlternatives();
   const favorites = PRODUCTS.filter((p) => productFavorites.includes(p.id));
-  const offers = activeIds.length > 0 ? currentOffers(activeIds) : [];
 
   return (
     <div>
       <PageHeader title="Favoriten" subtitle={`${favorites.length} Lieblingsartikel`} />
       <section className="space-y-3 px-5">
         {favorites.map((product) => {
-          const best = offers.filter((o) => o.product.id === product.id).sort((a, b) => a.price.offer!.price - b.price.offer!.price)[0];
           const inBasket = (basket[product.id] ?? 0) > 0;
+          const alternativesAvailable = hasAlternativeFamily(product);
+          const alternativesEnabled = alternativesAvailable && Boolean(preferences[product.id]);
           return (
             <article key={product.id} className="surface-card flex items-center gap-3 p-3">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-2xl">
@@ -28,11 +30,30 @@ function FavoritesPage() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">{product.name}</p>
-                <p className="truncate text-xs text-muted-foreground">{product.brand}{product.unit ? ` · ${product.unit}` : ""}</p>
-                {best ? <p className="mt-1 text-xs text-muted-foreground">{best.market.name} · <span className="font-semibold text-deal">{formatEuro(best.price.offer!.price)}</span></p> : <p className="mt-1 text-xs text-muted-foreground">Aktuell kein Angebot in deinen Märkten</p>}
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => toggleProductFavorite(product.id)} className="rounded-full p-2 text-deal" aria-label="Favorit entfernen"><Heart className="h-5 w-5 fill-current" /></button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => alternativesAvailable && setEnabled(product.id, !alternativesEnabled)}
+                  disabled={!alternativesAvailable}
+                  className={cn(
+                    "rounded-full p-2.5 transition-colors",
+                    alternativesEnabled ? "bg-primary-soft text-primary" : "bg-secondary text-muted-foreground",
+                    !alternativesAvailable && "cursor-not-allowed opacity-35",
+                  )}
+                  aria-pressed={alternativesEnabled}
+                  aria-label={alternativesEnabled ? "Alternativen deaktivieren" : "Alternativen zulassen"}
+                  title={alternativesAvailable ? (alternativesEnabled ? "Nur dieses Produkt empfehlen" : "Auch passende Alternativen empfehlen") : "Für diesen Artikel ist noch keine Alternativgruppe hinterlegt"}
+                >
+                  <Shuffle className="h-5 w-5" />
+                </button>
+                <button
+                  onClick={() => {
+                    removePreference(product.id);
+                    toggleProductFavorite(product.id);
+                  }}
+                  className="rounded-full p-2 text-deal"
+                  aria-label="Favorit entfernen"
+                ><Heart className="h-5 w-5 fill-current" /></button>
                 <button
                   onClick={() => { toggleBasket(product.id); toast.success(inBasket ? `${product.name} von der Liste entfernt` : `${product.name} auf der Liste`); }}
                   className={cn("rounded-full p-2.5 transition-colors", inBasket ? "bg-primary-soft text-primary" : "bg-secondary text-muted-foreground")}
