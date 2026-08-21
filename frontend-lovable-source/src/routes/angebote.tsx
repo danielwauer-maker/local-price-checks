@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Eye, Heart, Search, ShoppingB
 import { PageHeader } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
-import { currentOffers, formatEuro } from "@/data/demo";
+import { currentOffers, formatEuro, type Market, type Price, type Product } from "@/data/demo";
 import { groupIdenticalOffers, marketSummary, type GroupedOffer } from "@/lib/offer-groups";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -27,6 +27,9 @@ type ReviewMeta = {
   reviewIssueType: string | null;
   reviewNotes: string | null;
   auditUrl?: string;
+  product: Product & { imageUrl?: string | null };
+  market: Market;
+  price: Price & { validFrom?: string; validTo?: string; unitPrice?: number | null; unitPriceUnit?: string | null };
 };
 
 function reviewKey(productId: string, marketId: string) {
@@ -35,7 +38,7 @@ function reviewKey(productId: string, marketId: string) {
 
 function OffersPage() {
   const activeIds = useActiveMarketIds();
-  const { basket, toggleBasket, productFavorites, toggleProductFavorite } = useStore();
+  const { selected, basket, toggleBasket, productFavorites, toggleProductFavorite } = useStore();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [reviewMode, setReviewMode] = useState(false);
@@ -51,25 +54,14 @@ function OffersPage() {
     );
   }, [activeIds, query]);
 
-  const offers = useMemo<GroupedOffer[]>(() => {
-    if (!reviewMode) return groupIdenticalOffers(rawOffers);
-    // QA must judge the exact market offer, not a cross-market display group.
-    return rawOffers.map((o) => ({
-      key: `qa:${o.product.id}:${o.market.id}:${o.price.offer?.price ?? o.price.price}`,
-      product: o.product,
-      price: o.price,
-      discount: o.discount,
-      markets: [o.market],
-    }));
-  }, [rawOffers, reviewMode]);
-
   useEffect(() => {
     let live = true;
-    if (activeIds.length === 0) {
+    const reviewIds = selected.length > 0 ? selected : activeIds;
+    if (reviewIds.length === 0) {
       setReviewMeta({});
       return () => { live = false; };
     }
-    fetch(`/api/offer-reviews?market_ids=${encodeURIComponent(activeIds.join(","))}`)
+    fetch(`/api/offer-reviews?market_ids=${encodeURIComponent(reviewIds.join(","))}`)
       .then((response) => response.ok ? response.json() : Promise.reject(new Error(`review metadata ${response.status}`)))
       .then((rows: ReviewMeta[]) => {
         if (!live) return;
@@ -77,7 +69,22 @@ function OffersPage() {
       })
       .catch((error) => console.error("Offer review metadata failed", error));
     return () => { live = false; };
-  }, [activeIds]);
+  }, [activeIds, selected]);
+
+  const offers = useMemo<GroupedOffer[]>(() => {
+    if (!reviewMode) return groupIdenticalOffers(rawOffers);
+    const q = query.trim().toLowerCase();
+    return Object.values(reviewMeta)
+      .filter((row) => q === "" || row.product.name.toLowerCase().includes(q) || row.product.brand.toLowerCase().includes(q))
+      .map((row) => ({
+        key: `qa:${row.offerId}:${row.provenanceId ?? "none"}`,
+        product: row.product,
+        price: row.price,
+        discount: 0,
+        markets: [row.market],
+      }))
+      .sort((a, b) => a.product.name.localeCompare(b.product.name, "de"));
+  }, [rawOffers, reviewMode, reviewMeta, query]);
 
   const groups = useMemo(() => {
     const grouped = new Map<string, GroupedOffer[]>();
@@ -160,7 +167,7 @@ function OffersPage() {
         </button>
         {reviewMode && (
           <div className="mt-2 rounded-2xl bg-primary-soft/60 px-4 py-3 text-xs text-primary">
-            Jedes Marktangebot wird einzeln gezeigt. Mit „Optimal“ bestätigst du die Erkennung; „Fehler“ legt den Artikel für den Prospekt-Abgleich vor.
+            Auch noch nicht freigegebene Lieblingsmärkte werden hier zur QA angezeigt. Jedes Marktangebot wird einzeln geprüft: „Optimal“ bestätigt die Erkennung, „Fehler“ legt es für den Prospekt-Abgleich vor.
           </div>
         )}
       </div>
@@ -215,7 +222,7 @@ function OffersPage() {
             </div>}
           </div>;
         })}
-        {offers.length === 0 && <p className="surface-card p-6 text-center text-sm text-muted-foreground">{activeIds.length === 0 ? "Wähle zuerst mindestens einen freigegebenen Markt für den Vergleich aus." : "Keine Angebote für diese Auswahl."}</p>}
+        {offers.length === 0 && <p className="surface-card p-6 text-center text-sm text-muted-foreground">{reviewMode ? "Für die ausgewählten Märkte sind aktuell keine prüfbaren Angebote vorhanden." : activeIds.length === 0 ? "Wähle zuerst mindestens einen freigegebenen Markt für den Vergleich aus." : "Keine Angebote für diese Auswahl."}</p>}
       </section>
 
       <Dialog open={Boolean(detail)} onOpenChange={(value) => !value && setDetail(null)}>
@@ -234,7 +241,7 @@ function OffersPage() {
               <div><p className="text-xs text-muted-foreground">Packung</p><p>{detail.product.unit || "–"}</p></div>
               <div><p className="text-xs text-muted-foreground">Gültig bis</p><p>{detail.price.offer!.until}</p></div>
             </div>
-            {detailMeta?.sourceText && <div><p className="mb-1 text-xs font-semibold text-muted-foreground">Erkannter Prospekttext</p><div className="whitespace-pre-wrap rounded-2xl bg-secondary/45 p-3 text-sm leading-relaxed">{detailMeta.sourceText}</div></div>}
+            {detailMeta?.sourceText && <div><p className="mb-1 text-xs font-semibold text-muted-foreground">Erkannter Prospekttext / Beschreibung</p><div className="whitespace-pre-wrap rounded-2xl bg-secondary/45 p-3 text-sm leading-relaxed">{detailMeta.sourceText}</div></div>}
             {detailMeta?.prospectPage && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>Prospektseite {detailMeta.prospectPages?.length ? detailMeta.prospectPages.join(", ") : detailMeta.prospectPage}</span>{detailMeta.prospectArchiveId && <a onClick={(event) => event.stopPropagation()} className="font-semibold text-primary underline" target="_blank" rel="noreferrer" href={`/admin/prospect-archive/${detailMeta.prospectArchiveId}/pdf#page=${detailMeta.prospectPage}`}>Originalseite öffnen</a>}</div>}
             {reviewMode && <div className="grid grid-cols-2 gap-2">
               <button disabled={!detailMeta?.provenanceId} onClick={() => void saveQuickReview(detail, "correct")} className={cn("flex items-center justify-center gap-2 rounded-2xl px-4 py-3 font-semibold", detailMeta?.reviewStatus === "correct" ? "bg-primary text-white" : "bg-primary-soft text-primary", !detailMeta?.provenanceId && "opacity-40")}><CheckCircle2 className="h-4 w-4" /> Optimal</button>
