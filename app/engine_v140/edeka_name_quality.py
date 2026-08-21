@@ -9,7 +9,7 @@ _NOISE_WORDS = {
     "aktion", "angebot", "angebote", "klasse", "klassell", "deutschland", "bund",
     "woche", "maerkten", "märkten", "teilnehmenden", "strasse", "straße", "haftung",
     "vorrat", "drokthler", "payback", "markt", "filiale", "internet", "qr", "deko",
-    "tiefgefroren", "versch", "sorten", "stueck", "stück", "packung", "beutel",
+    "tiefgefroren", "versch", "sorten", "stueck", "stück", "packung", "beutel", "statt",
 }
 _BAD_FRAGMENTS = (
     "er ein genuss",
@@ -21,6 +21,8 @@ _BAD_FRAGMENTS = (
     "strasse 35",
     "der woche",
     "thunfisch 99",
+    "feaa früchte creen",
+    "feaa fruchte creen",
 )
 _ALLOWED_SHORT = {"bio", "xxl", "rot", "mix", "mini", "pak", "choi"}
 
@@ -58,6 +60,11 @@ def strict_name_ok(value: str | None) -> bool:
     if not meaningful:
         return False
 
+    # A single opaque OCR token beside a noise word (e.g. "rASSO statt") is
+    # not enough evidence for a public product title.
+    if len(meaningful) == 1 and len(alpha) > 1:
+        return False
+
     # OCR fragments such as "Pr", "sta", "ie" at the end are a strong sign
     # that a neighbouring line or a clipped word was used as the title.
     tail = meaningful[-1]
@@ -89,20 +96,13 @@ def _agreement(a: str, b: str) -> float:
 
 
 def choose_consensus_name(candidates: list[str]) -> str | None:
-    """Return a title only when independent OCR passes substantially agree.
-
-    EDEKA image flyers are noisy enough that a plausible-looking single OCR
-    title is not sufficient. Requiring agreement between at least two passes
-    trades some recall for much higher public name precision.
-    """
+    """Return a title only when independent OCR passes substantially agree."""
     clean: list[str] = []
     for candidate in candidates:
         name = clean_product_name(candidate or "").strip(" -,:;.|/")
         if strict_name_ok(name) and name not in clean:
             clean.append(name)
-    if not clean:
-        return None
-    if len(clean) == 1:
+    if not clean or len(clean) == 1:
         return None
 
     scored: list[tuple[float, int, str]] = []
