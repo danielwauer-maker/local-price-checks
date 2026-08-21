@@ -14,6 +14,31 @@ export const Route = createFileRoute("/angebote")({
   component: OffersPage,
 });
 
+type PromotionPayload = {
+  kind: "free_item" | "fixed_bundle";
+  buyQuantity: number | null;
+  payQuantity: number | null;
+  bundlePrice: number | null;
+  regularBundlePrice: number | null;
+  effectiveUnitPrice: number | null;
+  savingsAmount: number | null;
+  discountPercent: number | null;
+  label: string | null;
+  confidence: number;
+};
+
+type EnrichedPrice = Price & {
+  validFrom?: string;
+  validTo?: string;
+  unitPrice?: number | null;
+  unitPriceUnit?: string | null;
+  referencePrice?: number | null;
+  referenceType?: string | null;
+  referencePriceEstimated?: boolean;
+  discountPercent?: number | null;
+  promotion?: PromotionPayload | null;
+};
+
 type ReviewMeta = {
   productId: string;
   marketId: string;
@@ -29,8 +54,33 @@ type ReviewMeta = {
   auditUrl?: string;
   product: Product & { imageUrl?: string | null };
   market: Market;
-  price: Price & { validFrom?: string; validTo?: string; unitPrice?: number | null; unitPriceUnit?: string | null };
+  price: EnrichedPrice;
 };
+
+function priceInfo(price: Price): EnrichedPrice {
+  return price as EnrichedPrice;
+}
+
+function PriceDisplay({ price, large = false }: { price: Price; large?: boolean }) {
+  const info = priceInfo(price);
+  const promotion = info.promotion;
+  const current = promotion?.bundlePrice ?? info.offer!.price;
+  const reference = promotion?.regularBundlePrice ?? info.referencePrice;
+  const discount = promotion?.discountPercent ?? info.discountPercent;
+  return <div>
+    <div className="flex flex-wrap items-center gap-2">
+      {promotion?.label && <span className="rounded-full bg-primary-soft px-2 py-0.5 text-[11px] font-bold text-primary">{promotion.label}</span>}
+      {discount != null && discount > 0 && <span className="rounded-full bg-deal/10 px-2 py-0.5 text-[11px] font-bold text-deal">-{Math.round(discount)}%</span>}
+    </div>
+    <div className="mt-1 flex flex-wrap items-baseline gap-2">
+      {reference != null && reference > current && <span className="tabular text-xs text-muted-foreground line-through">{formatEuro(reference)}</span>}
+      <span className={cn("tabular font-bold text-deal", large ? "text-xl" : "text-lg")}>{formatEuro(current)}</span>
+      {promotion?.buyQuantity && <span className="text-[11px] font-medium text-muted-foreground">für {promotion.buyQuantity} Stück</span>}
+    </div>
+    {promotion?.kind === "free_item" && promotion.payQuantity && promotion.buyQuantity && <p className="mt-0.5 text-[11px] font-medium text-primary">{promotion.buyQuantity - promotion.payQuantity} Stück gratis{promotion.savingsAmount ? ` · ${formatEuro(promotion.savingsAmount)} Ersparnis` : ""}</p>}
+    {!promotion && info.referencePriceEstimated && info.referencePrice != null && <p className="mt-0.5 text-[10px] text-muted-foreground">Normalpreis aus Rabattangabe errechnet</p>}
+  </div>;
+}
 
 function reviewKey(productId: string, marketId: string) {
   return `${productId}:${marketId}`;
@@ -80,7 +130,7 @@ function OffersPage() {
         key: `qa:${row.offerId}:${row.provenanceId ?? "none"}`,
         product: row.product,
         price: row.price,
-        discount: 0,
+        discount: row.price.discountPercent ?? 0,
         markets: [row.market],
       }))
       .sort((a, b) => a.product.name.localeCompare(b.product.name, "de"));
@@ -195,19 +245,11 @@ function OffersPage() {
                     <p className="text-xs text-muted-foreground">{o.product.brand}{o.product.brand && o.product.unit ? " · " : ""}{o.product.unit}</p>
                     <p className="mt-1 text-[11px] text-muted-foreground">{marketSummary(o.markets)} · bis {o.price.offer!.until}</p>
                     {o.markets.length > 1 && <p className="mt-0.5 text-[11px] font-medium text-primary">In {o.markets.length} ausgewählten Märkten identisch</p>}
-                    <div className="mt-1.5 flex items-baseline gap-2"><span className="tabular text-lg font-bold text-deal">{formatEuro(o.price.offer!.price)}</span></div>
+                    <div className="mt-1.5"><PriceDisplay price={o.price} /></div>
                     {reviewMode && (
                       <div className="mt-2 flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
-                        <button
-                          disabled={!meta?.provenanceId || savingReview === meta?.provenanceId}
-                          onClick={() => void saveQuickReview(o, "correct")}
-                          className={cn("flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold", meta?.reviewStatus === "correct" ? "bg-primary text-white" : "bg-primary-soft text-primary", !meta?.provenanceId && "opacity-40")}
-                        ><CheckCircle2 className="h-3.5 w-3.5" /> Optimal</button>
-                        <button
-                          disabled={!meta?.provenanceId || savingReview === meta?.provenanceId}
-                          onClick={() => void saveQuickReview(o, "incorrect")}
-                          className={cn("flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold", meta?.reviewStatus === "incorrect" ? "bg-deal text-white" : "bg-deal/10 text-deal", !meta?.provenanceId && "opacity-40")}
-                        ><AlertTriangle className="h-3.5 w-3.5" /> Fehler</button>
+                        <button disabled={!meta?.provenanceId || savingReview === meta?.provenanceId} onClick={() => void saveQuickReview(o, "correct")} className={cn("flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold", meta?.reviewStatus === "correct" ? "bg-primary text-white" : "bg-primary-soft text-primary", !meta?.provenanceId && "opacity-40")}><CheckCircle2 className="h-3.5 w-3.5" /> Optimal</button>
+                        <button disabled={!meta?.provenanceId || savingReview === meta?.provenanceId} onClick={() => void saveQuickReview(o, "incorrect")} className={cn("flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold", meta?.reviewStatus === "incorrect" ? "bg-deal text-white" : "bg-deal/10 text-deal", !meta?.provenanceId && "opacity-40")}><AlertTriangle className="h-3.5 w-3.5" /> Fehler</button>
                         {!meta?.provenanceId && <span className="text-[10px] text-muted-foreground">keine Seiten-Provenance</span>}
                         {meta?.prospectPage && <span className="text-[10px] text-muted-foreground">Prospekt S. {meta.prospectPage}</span>}
                       </div>
@@ -236,7 +278,7 @@ function OffersPage() {
               {productImage ? <img src={productImage} alt={detail.product.name} className="mx-auto max-h-[48vh] w-full object-contain" /> : <div className="flex h-56 items-center justify-center text-7xl">{detail.product.emoji}</div>}
             </div>
             <div className="grid grid-cols-2 gap-3 rounded-2xl bg-secondary/45 p-4 text-sm">
-              <div><p className="text-xs text-muted-foreground">Preis</p><p className="text-lg font-bold text-deal">{formatEuro(detail.price.offer!.price)}</p></div>
+              <div><p className="text-xs text-muted-foreground">Angebot</p><PriceDisplay price={detail.price} large /></div>
               <div><p className="text-xs text-muted-foreground">Markt</p><p className="font-semibold">{marketSummary(detail.markets)}</p></div>
               <div><p className="text-xs text-muted-foreground">Packung</p><p>{detail.product.unit || "–"}</p></div>
               <div><p className="text-xs text-muted-foreground">Gültig bis</p><p>{detail.price.offer!.until}</p></div>

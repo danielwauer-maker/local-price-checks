@@ -33,3 +33,24 @@ def _extract_current_price(text: str, retailer: str):
         cleaned,
     )
     return _extract_current_price_v140(cleaned, retailer)
+
+
+# Public/detail images should show one complete offer card, not the broad
+# neighbourhood crop that is useful only for parser debugging. Keep the
+# immutable original PDF as the audit source and tighten generated fallbacks
+# after the retailer parser has attached them to rows.
+_parse_pdf_file_v140 = parse_pdf_file
+
+
+def parse_pdf_file(source, pdf_path):
+    parsed = _parse_pdf_file_v140(source, pdf_path)
+    try:
+        from .crop_refinement import refine_pdf_offer_crops
+
+        refined = refine_pdf_offer_crops(getattr(parsed, "rows", []))
+        if refined and hasattr(parsed, "notes"):
+            parsed.notes.append(f"refined_product_crops={refined}")
+    except Exception as exc:
+        if hasattr(parsed, "notes"):
+            parsed.notes.append(f"crop_refinement_warning={type(exc).__name__}: {exc}")
+    return parsed

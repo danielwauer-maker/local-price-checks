@@ -18,6 +18,12 @@ from .engine_v140.offer_quality import evaluate_offer
 from .engine_v140.product_cleaning import clean_product_name
 from .engine_v140.lidl_semantics import has_strong_shop_signal
 from .engine_v140.services import classify_offer
+from .promotion_rules import (
+    extract_discount_percent,
+    has_multibuy_signal,
+    infer_reference_price,
+    parse_multibuy,
+)
 
 
 @dataclass(frozen=True)
@@ -194,14 +200,27 @@ def _save_price_reference(db: Session, offer: Offer, row: CollectedOffer) -> Non
         reference = float(row.regular_price) if row.regular_price is not None else None
     except (TypeError, ValueError):
         reference = None
+
+    source_text = row.source_text or ""
+    explicit_discount = extract_discount_percent(source_text)
+    reference_type = "regular"
+    if reference is not None:
+        raw = source_text.lower()
+        reference_type = "uvp" if any(token in raw for token in ('"uvp"', 'recommendedretailprice', '"rrp"', " uvp ")) else "regular"
+    elif explicit_discount is not None:
+        reference = infer_reference_price(float(offer.price), explicit_discount)
+        if reference is not None:
+            reference_type = "inferred_discount"
+
     if reference is None or reference <= float(offer.price):
         existing = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
         if existing:
             db.delete(existing)
         return
-    raw = (row.source_text or "").lower()
-    reference_type = "uvp" if any(token in raw for token in ('"uvp"', 'recommendedretailprice', '"rrp"')) else "regular"
-    discount = round((1.0 - float(offer.price) / reference) * 100.0, 1)
+
+    discount = explicit_discount
+    if discount is None:
+        discount = round((1.0 - float(offer.price) / reference) * 100.0, 1)
     existing = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
     if existing:
         existing.reference_price = reference
@@ -237,7 +256,7 @@ class CollectedOfferAssessment:
 
 
 def assess_collected_offer(row: CollectedOffer) -> CollectedOfferAssessment:
-    """Apply the canonical online/local and product-quality admission rules."""
+    """Apply canonical admission rules, including strict complex-promotion QA."""
     details = _enrich_from_detail_text(row)
     local, _reason = classify_offer(row.source_text, row.source_url)
     if not _row_is_local_offer(row) or not local:
@@ -245,6 +264,18 @@ def assess_collected_offer(row: CollectedOffer) -> CollectedOfferAssessment:
     quality = evaluate_offer(row)
     if not quality.accepted:
         return CollectedOfferAssessment(False, "quality", details)
+
+    # Multi-buy/free-item offers are intentionally stricter than simple price
+    # reductions. If the source signals such a mechanic but quantity/payment
+    # semantics cannot be resolved unambiguously, keep it out of public offers.
+    if has_multibuy_signal(row.source_text):
+        promotion = parse_multibuy(
+            row.source_text,
+            offer_price=float(row.price) if row.price is not None else None,
+            regular_price=float(row.regular_price) if row.regular_price is not None else None,
+        )
+        if promotion is None or not promotion.valid or promotion.confidence < 0.98:
+            return CollectedOfferAssessment(False, "quality", details)
     return CollectedOfferAssessment(True, None, details)
 
 

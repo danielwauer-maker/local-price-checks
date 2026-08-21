@@ -14,6 +14,16 @@ function groupKey(offer: OfferItem) {
     validTo?: string;
     unitPrice?: number | null;
     unitPriceUnit?: string | null;
+    referencePrice?: number | null;
+    referenceType?: string | null;
+    discountPercent?: number | null;
+    promotion?: {
+      kind?: string;
+      buyQuantity?: number | null;
+      payQuantity?: number | null;
+      bundlePrice?: number | null;
+      regularBundlePrice?: number | null;
+    } | null;
   };
   return [
     offer.product.id,
@@ -21,6 +31,14 @@ function groupKey(offer: OfferItem) {
     price.offer?.price ?? price.price,
     price.unitPrice ?? "",
     price.unitPriceUnit ?? "",
+    price.referencePrice ?? "",
+    price.referenceType ?? "",
+    price.discountPercent ?? "",
+    price.promotion?.kind ?? "",
+    price.promotion?.buyQuantity ?? "",
+    price.promotion?.payQuantity ?? "",
+    price.promotion?.bundlePrice ?? "",
+    price.promotion?.regularBundlePrice ?? "",
     price.validFrom ?? "",
     price.validTo ?? price.offer?.until ?? "",
   ].join("|");

@@ -10,9 +10,22 @@ from .clock import app_today
 from .config import settings
 from .db import SessionLocal, get_db
 from .geo import haversine_km
-from .models import CollectionRun, FavoriteStore, MasterProduct, MediaAsset, Offer, ProductAdminData, ProductBarcode, ShoppingItem, Store
+from .models import (
+    CollectionRun,
+    FavoriteStore,
+    MasterProduct,
+    MediaAsset,
+    Offer,
+    OfferOccurrence,
+    OfferPriceReference,
+    ProductAdminData,
+    ProductBarcode,
+    ShoppingItem,
+    Store,
+)
 from .optimizer import optimize_shopping
 from .product_media import preferred_product_media
+from .promotion_rules import parse_multibuy, promotion_payload
 from .services import current_user, favorite_store_ids, selected_store_ids
 
 router = APIRouter(prefix="/api")
@@ -152,8 +165,8 @@ def _current_offer_rows(db: Session, store_ids: list[int]) -> list[Offer]:
     )
 
 
-def _price_payload(offer: Offer) -> dict:
-    return {
+def _price_payload(offer: Offer, db: Session | None = None) -> dict:
+    payload = {
         "productId": str(offer.master_product_id),
         "marketId": str(offer.store_id),
         "price": float(offer.price),
@@ -162,7 +175,40 @@ def _price_payload(offer: Offer) -> dict:
         "validTo": offer.valid_to.isoformat(),
         "unitPrice": float(offer.unit_price) if offer.unit_price is not None else None,
         "unitPriceUnit": offer.unit_price_unit,
+        "referencePrice": None,
+        "referenceType": None,
+        "referencePriceEstimated": False,
+        "discountPercent": None,
+        "promotion": None,
     }
+    if db is None:
+        return payload
+
+    reference = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
+    if reference:
+        payload["referencePrice"] = float(reference.reference_price)
+        payload["referenceType"] = reference.reference_type
+        payload["referencePriceEstimated"] = reference.reference_type == "inferred_discount"
+        payload["discountPercent"] = (
+            float(reference.discount_percent) if reference.discount_percent is not None else None
+        )
+
+    occurrence = (
+        db.query(OfferOccurrence)
+        .filter(OfferOccurrence.offer_id == offer.id)
+        .order_by(OfferOccurrence.collected_at.desc(), OfferOccurrence.id.desc())
+        .first()
+    )
+    source_text = occurrence.source_text if occurrence else None
+    promotion = parse_multibuy(
+        source_text,
+        offer_price=float(offer.price),
+        regular_price=float(reference.reference_price) if reference else None,
+    )
+    payload["promotion"] = promotion_payload(promotion)
+    if promotion and promotion.valid and promotion.discount_percent is not None:
+        payload["discountPercent"] = promotion.discount_percent
+    return payload
 
 
 def _latest_collection(db: Session, store_id: int) -> CollectionRun | None:
@@ -246,7 +292,7 @@ def bootstrap(db: Session = Depends(get_db)):
     barcode_by_product: dict[int, str] = {}
     for row in db.query(ProductBarcode).all():
         barcode_by_product.setdefault(row.master_product_id, row.barcode)
-    prices = [_price_payload(o) for o in _current_offer_rows(db, active_ids)]
+    prices = [_price_payload(o, db) for o in _current_offer_rows(db, active_ids)]
     basket_rows = db.query(ShoppingItem).filter(ShoppingItem.user_id == user.id).all()
     basket = {str(row.master_product_id): float(row.quantity) for row in basket_rows}
     persistent = [str(store_id) for store_id in favorite_ids]
@@ -287,7 +333,7 @@ def store_offers(store_id: int, db: Session = Depends(get_db)):
     return {
         "marketId": str(store_id),
         "status": (latest.status if latest else "never_collected") if released else "qa_pending",
-        "prices": [_price_payload(o) for o in _current_offer_rows(db, [store_id])] if released else [],
+        "prices": [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])] if released else [],
     }
 
 
@@ -308,7 +354,7 @@ def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session =
     db.commit()
 
     released = bool(store.benchmark_verified)
-    prices = [_price_payload(o) for o in _current_offer_rows(db, [store_id])] if selected and released else []
+    prices = [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])] if selected and released else []
     if selected and not _market_data_fresh(db, store_id):
         background_tasks.add_task(_collect_store_background, store_id)
         refresh_started = True

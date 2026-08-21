@@ -1,0 +1,109 @@
+from datetime import timedelta
+
+from app.api_routes import _price_payload
+from app.clock import app_today
+from app.db import Base, SessionLocal, engine
+from app.models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, Store
+
+
+def _setup_offer(*, price=0.49):
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    store = db.query(Store).filter_by(name="Promotion API Testmarkt").first()
+    if not store:
+        store = Store(
+            retailer="Lidl",
+            name="Promotion API Testmarkt",
+            postal_code="00000",
+            city="Test",
+            address="Test 1",
+            active=True,
+            benchmark_verified=True,
+        )
+        db.add(store)
+        db.flush()
+    product = db.query(MasterProduct).filter_by(normalized_key="promotion-api-test-product").first()
+    if not product:
+        product = MasterProduct(name="Croissants", normalized_key="promotion-api-test-product")
+        db.add(product)
+        db.flush()
+    today = app_today()
+    offer = (
+        db.query(Offer)
+        .filter_by(store_id=store.id, master_product_id=product.id, valid_from=today, price=price)
+        .first()
+    )
+    if not offer:
+        offer = Offer(
+            store_id=store.id,
+            master_product_id=product.id,
+            price=price,
+            valid_from=today,
+            valid_to=today + timedelta(days=6),
+            local_store_offer=True,
+        )
+        db.add(offer)
+        db.flush()
+    db.query(OfferOccurrence).filter(OfferOccurrence.offer_id == offer.id).delete()
+    db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).delete()
+    db.commit()
+    return db, offer
+
+
+def test_price_payload_exposes_explicit_reference_and_discount():
+    db, offer = _setup_offer(price=1.49)
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type="regular",
+        discount_percent=25.1,
+    ))
+    db.commit()
+
+    payload = _price_payload(offer, db)
+
+    assert payload["referencePrice"] == 1.99
+    assert payload["referenceType"] == "regular"
+    assert payload["referencePriceEstimated"] is False
+    assert payload["discountPercent"] == 25.1
+    db.close()
+
+
+def test_price_payload_marks_inferred_reference_price():
+    db, offer = _setup_offer(price=1.49)
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type="inferred_discount",
+        discount_percent=25.0,
+    ))
+    db.commit()
+
+    payload = _price_payload(offer, db)
+
+    assert payload["referencePrice"] == 1.99
+    assert payload["referencePriceEstimated"] is True
+    db.close()
+
+
+def test_price_payload_exposes_three_for_two_bundle_semantics():
+    db, offer = _setup_offer(price=0.49)
+    db.add(OfferOccurrence(
+        offer_id=offer.id,
+        prospect_page=3,
+        occurrence_fingerprint="promotion-api-three-for-two",
+        source_text="PDF Seite 3: Croissants 3 für 2, je 0,49 €",
+    ))
+    db.commit()
+
+    payload = _price_payload(offer, db)
+
+    promotion = payload["promotion"]
+    assert promotion["kind"] == "free_item"
+    assert promotion["buyQuantity"] == 3
+    assert promotion["payQuantity"] == 2
+    assert promotion["bundlePrice"] == 0.98
+    assert promotion["regularBundlePrice"] == 1.47
+    assert promotion["savingsAmount"] == 0.49
+    assert payload["discountPercent"] == 33.3
+    db.close()
