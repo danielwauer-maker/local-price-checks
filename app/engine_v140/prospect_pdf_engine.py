@@ -15,10 +15,6 @@ if len(_parts) != 4:
 _source = "".join(p.read_text(encoding="utf-8") for p in _parts)
 exec(compile(_source, str(_here / "prospect_pdf_engine_v140.py"), "exec"), globals(), globals())
 
-# Harden the migrated low-level helper: the original 1.4.0 card-level parser
-# already rejected deposit values through surrounding layout logic. The Web-MVP
-# also calls this helper independently, so remove explicit Pfand amounts before
-# choosing a sale price.
 _extract_current_price_v140 = _extract_current_price
 
 def _extract_current_price(text: str, retailer: str):
@@ -36,17 +32,12 @@ def _extract_current_price(text: str, retailer: str):
     return _extract_current_price_v140(cleaned, retailer)
 
 
-# Public/detail images should show one complete offer card, not the broad
-# neighbourhood crop that is useful only for parser debugging. Product/price
-# assignment is reconciled first so media is generated for the corrected card.
 _parse_pdf_file_v140 = parse_pdf_file
 
 
 def parse_pdf_file(source, pdf_path):
     parsed = _parse_pdf_file_v140(source, pdf_path)
 
-    # Preserve conditional/app prices as explicit provenance. Offer.price stays
-    # the normal public offer; the WebApp can render Lidl Plus separately.
     for row in getattr(parsed, "rows", []):
         try:
             app_price = float(getattr(row, "app_price", 0) or 0)
@@ -57,10 +48,11 @@ def parse_pdf_file(source, pdf_path):
             marker = f"SPECIAL_PRICE kind=lidl_plus label=Lidl Plus price={app_price:.2f}"
             source_text = (getattr(row, "source_text", "") or "").strip()
             if marker not in source_text:
-                row.source_text = f"{source_text}\n{marker}".strip()[:4000]
+                room = max(0, 3999 - len(marker))
+                row.source_text = f"{source_text[:room]}\n{marker}".strip()
 
     try:
-        from .assignment_runtime import reconcile_pdf_assignments
+        from .assignment_dispatch import reconcile_pdf_assignments
 
         reconciled, assignment = reconcile_pdf_assignments(
             source,
