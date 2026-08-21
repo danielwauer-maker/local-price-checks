@@ -1,12 +1,23 @@
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.admin_routes import _admin
 from app.api_main import app
 from app.clock import app_today
 from app.db import Base, SessionLocal, engine
 from app.models import MasterProduct, Offer, Store
 from app.prospect_models import OfferProvenance, ProspectArchive, ProspectOfferReview
+
+
+@pytest.fixture
+def admin_client():
+    app.dependency_overrides[_admin] = lambda: "test-admin"
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(_admin, None)
 
 
 def _setup_review_offer():
@@ -99,11 +110,19 @@ def _setup_review_offer():
     return ids
 
 
-def test_review_metadata_includes_unreleased_market_offer_and_provenance():
-    store_id, product_id, provenance_id = _setup_review_offer()
+def test_review_metadata_requires_admin_auth():
+    store_id, _, _ = _setup_review_offer()
     client = TestClient(app)
 
     response = client.get(f"/api/offer-reviews?market_ids={store_id}")
+
+    assert response.status_code in {401, 503}
+
+
+def test_review_metadata_includes_unreleased_market_offer_and_provenance(admin_client):
+    store_id, product_id, provenance_id = _setup_review_offer()
+
+    response = admin_client.get(f"/api/offer-reviews?market_ids={store_id}")
 
     assert response.status_code == 200
     rows = response.json()
@@ -117,11 +136,10 @@ def test_review_metadata_includes_unreleased_market_offer_and_provenance():
     assert row["reviewStatus"] is None
 
 
-def test_quick_error_review_is_persisted_for_prospect_audit():
+def test_quick_error_review_is_persisted_for_prospect_audit(admin_client):
     _, _, provenance_id = _setup_review_offer()
-    client = TestClient(app)
 
-    response = client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "incorrect"})
+    response = admin_client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "incorrect"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -133,16 +151,15 @@ def test_quick_error_review_is_persisted_for_prospect_audit():
     review = db.query(ProspectOfferReview).filter_by(offer_provenance_id=provenance_id).one()
     assert review.status == "incorrect"
     assert review.issue_type == "webapp_flagged"
-    assert review.reviewed_by == "webapp-test"
+    assert review.reviewed_by == "test-admin"
     db.close()
 
 
-def test_quick_correct_can_clear_only_transient_webapp_error_marker():
+def test_quick_correct_can_clear_only_transient_webapp_error_marker(admin_client):
     _, _, provenance_id = _setup_review_offer()
-    client = TestClient(app)
-    client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "incorrect"})
+    admin_client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "incorrect"})
 
-    response = client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "correct"})
+    response = admin_client.put(f"/api/offer-reviews/{provenance_id}", json={"status": "correct"})
 
     assert response.status_code == 200
     assert response.json()["reviewStatus"] == "correct"
