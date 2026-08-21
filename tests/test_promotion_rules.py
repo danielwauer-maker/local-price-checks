@@ -36,13 +36,17 @@ def test_three_for_two_is_resolved_as_bundle_not_single_item_price():
     assert payload["label"] == "3 für 2"
 
 
-def test_two_plus_one_free_is_resolved_identically():
-    promo = parse_multibuy("2 + 1 gratis", offer_price=1.20)
+def test_two_plus_one_free_is_resolved_identically_when_unit_price_is_explicit():
+    promo = parse_multibuy("2 + 1 gratis, je Stück 1,20 €", offer_price=1.20)
     assert promo is not None and promo.valid
     assert promo.buy_quantity == 3
     assert promo.pay_quantity == 2
     assert promo.bundle_price == 2.40
     assert promo.regular_bundle_price == 3.60
+
+
+def test_free_item_without_independent_unit_price_is_rejected_as_ambiguous():
+    assert parse_multibuy("2 + 1 gratis", offer_price=1.20) is None
 
 
 def test_fixed_bundle_is_supported_without_inventing_regular_price():
@@ -52,6 +56,13 @@ def test_fixed_bundle_is_supported_without_inventing_regular_price():
     assert promo.buy_quantity == 2
     assert promo.bundle_price == 3.00
     assert promo.regular_bundle_price is None
+
+
+def test_fixed_bundle_does_not_get_misread_as_three_for_two_mechanic():
+    promo = parse_multibuy("2 für 3,00 €", offer_price=1.50)
+    assert promo is not None and promo.kind == "fixed_bundle"
+    assert promo.buy_quantity == 2
+    assert promo.bundle_price == 3.00
 
 
 def test_ambiguous_complex_promotion_signal_is_not_claimed_as_valid():
