@@ -118,9 +118,16 @@ def _lidl_refined_box(image: Image.Image) -> tuple[int, int, int, int]:
     return x0, y0, x0 + width, y0 + height
 
 
-def _reject_wrong_crop(row) -> None:
-    # Keep the immutable PDF/provenance as the audit truth but tell media
-    # persistence to retire an older wrong prospect crop for this product.
+def _reject_wrong_crop(row, source: Path) -> None:
+    # Keep the immutable PDF/provenance as the audit truth, but retire only the
+    # exact previously-persisted crop that failed identity validation. A master
+    # product can have crops from several stores/pages; one bad EDEKA crop must
+    # never deactivate unrelated good media.
+    try:
+        digest = sha256(source.read_bytes()).hexdigest()
+        row.rejected_crop_source_url = f"prospect-crop:{digest}"
+    except OSError:
+        row.rejected_crop_source_url = None
     row.crop_quality_rejected = True
     row.audit_image_path = None
     row.image_path = None
@@ -153,7 +160,7 @@ def refine_pdf_offer_crops(rows) -> int:
         if retailer == "edeka":
             identity_ok = _crop_contains_product(source, getattr(row, "product_name", "") or "")
             if identity_ok is False:
-                _reject_wrong_crop(row)
+                _reject_wrong_crop(row, source)
                 changed += 1
                 continue
 
@@ -183,11 +190,12 @@ def refine_pdf_offer_crops(rows) -> int:
                     refined.unlink(missing_ok=True)
                 except OSError:
                     pass
-                _reject_wrong_crop(row)
+                _reject_wrong_crop(row, source)
                 changed += 1
                 continue
 
         row.crop_quality_rejected = False
+        row.rejected_crop_source_url = None
         row.audit_image_path = str(refined)
         row.image_path = str(refined)
         row.image_media_source = "prospect_crop"
