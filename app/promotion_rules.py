@@ -47,6 +47,7 @@ class PromotionInfo:
     discount_percent: float | None = None
     label: str | None = None
     confidence: float = 1.0
+    special_price: float | None = None
 
     @property
     def valid(self) -> bool:
@@ -65,8 +66,8 @@ class PromotionInfo:
         if self.kind in {"member_price", "lidl_plus", "app_price", "loyalty_price"}:
             return bool(
                 self.bundle_price is not None
-                and self.regular_bundle_price is not None
-                and 0 < self.bundle_price < self.regular_bundle_price
+                and self.special_price is not None
+                and 0 < self.special_price < self.bundle_price
             )
         return False
 
@@ -169,15 +170,19 @@ def _special_price_info(text: str, offer_price: float | None) -> PromotionInfo |
     if not 0 < special < float(offer_price):
         return None
     raw_kind = match.group(1).lower()
-    label = re.sub(r"\s+", " ", match.group(2)).strip()
+    base_label = re.sub(r"\s+", " ", match.group(2)).strip()
     kind = "lidl_plus" if raw_kind == "lidl_plus" else "member_price"
+    label = base_label or ("Lidl Plus" if kind == "lidl_plus" else "Vorteilspreis")
+    # bundle_price deliberately remains the normal offer price. Existing clients
+    # therefore keep that price prominent; the conditional price is a separate
+    # field and is also present in the label until every client renders it.
     return PromotionInfo(
         kind=kind,
-        bundle_price=round(special, 2),
-        regular_bundle_price=round(float(offer_price), 2),
+        bundle_price=round(float(offer_price), 2),
+        special_price=round(special, 2),
         savings_amount=round(float(offer_price) - special, 2),
-        discount_percent=round((1 - special / float(offer_price)) * 100.0, 1),
-        label=label or ("Lidl Plus" if kind == "lidl_plus" else "Vorteilspreis"),
+        discount_percent=None,
+        label=f"{label} · {special:.2f} €".replace(".", ","),
         confidence=1.0,
     )
 
@@ -189,10 +194,6 @@ def parse_multibuy(
     regular_price: float | None = None,
 ) -> PromotionInfo | None:
     value = text or ""
-
-    # Loyalty/app prices are a separate price role. They are deliberately
-    # returned before multibuy parsing so the normal offer remains the public
-    # base price while clients can render the conditional price separately.
     special = _special_price_info(value, offer_price)
     if special is not None:
         return special
@@ -257,4 +258,5 @@ def promotion_payload(info: PromotionInfo | None) -> dict | None:
         "discountPercent": info.discount_percent,
         "label": info.label,
         "confidence": info.confidence,
+        "specialPrice": info.special_price,
     }
