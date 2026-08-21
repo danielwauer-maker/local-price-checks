@@ -26,11 +26,13 @@ def test_lidl_plus_is_conditional_and_does_not_replace_normal_offer():
     )
     assert promo is not None and promo.valid
     assert promo.kind == "lidl_plus"
-    assert promo.bundle_price == 3.79
-    assert promo.regular_bundle_price == 3.99
+    assert promo.bundle_price == 3.99
+    assert promo.special_price == 3.79
+    assert promo.regular_bundle_price is None
     payload = promotion_payload(promo)
-    assert payload["label"] == "Lidl Plus"
-    assert payload["bundlePrice"] == 3.79
+    assert payload["label"] == "Lidl Plus · 3,79 €"
+    assert payload["bundlePrice"] == 3.99
+    assert payload["specialPrice"] == 3.79
 
 
 def test_frozen_manual_assignment_fixture_has_expected_problem_pages():
