@@ -54,7 +54,7 @@ def _offer_payload(db: Session, offer: Offer) -> dict:
     return {
         "product": _product(db, offer.product),
         "market": _market(db, offer.store),
-        "price": _price_payload(offer),
+        "price": _price_payload(offer, db),
     }
 
 
@@ -101,9 +101,6 @@ def offer_review_metadata(
         .all()
     )
 
-    # One public Offer can occur repeatedly in a prospect. Select the newest
-    # provenance as quick-review target and expose only pages from that same
-    # immutable archive in the detail view.
     primary_by_offer: dict[int, OfferProvenance] = {}
     for provenance in provenances:
         primary_by_offer.setdefault(provenance.offer_id, provenance)
@@ -193,8 +190,6 @@ def quick_review_offer(
         if review.issue_type in {None, "webapp_flagged"}:
             review.issue_type = "webapp_flagged"
     elif was_quick_only:
-        # A later detailed admin correction wins. Only transient quick-review
-        # metadata may be cleared from the WebApp.
         review.issue_type = None
 
     if was_quick_only or review.reviewed_by == "webapp-test":
