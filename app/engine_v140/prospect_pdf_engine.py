@@ -4,6 +4,7 @@ The benchmarked parser source is kept in ordered source parts during the
 migration into the Web-MVP repository. They are concatenated at import time so
 the public API remains compatible with the 1.4.0 engine.
 """
+from dataclasses import replace
 from pathlib import Path
 import re
 
@@ -76,6 +77,16 @@ def parse_pdf_file(source, pdf_path):
                 f"rejected={assignment.rejected} "
                 f"recovered={assignment.recovered} "
                 f"accuracy={assignment.accuracy:.1f}"
+            )
+        if assignment.rejected:
+            warning = (
+                f"product_price_assignment_unresolved={assignment.rejected} "
+                f"product_price_assignment_accuracy={assignment.accuracy:.1f}"
+            )
+            existing = (getattr(parsed, "technical_warning", None) or "").strip()
+            parsed = replace(
+                parsed,
+                technical_warning=" | ".join(part for part in (existing, warning) if part),
             )
     except Exception as exc:
         if hasattr(parsed, "notes"):
