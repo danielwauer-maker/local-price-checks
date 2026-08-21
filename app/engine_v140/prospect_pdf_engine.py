@@ -43,6 +43,21 @@ _parse_pdf_file_v140 = parse_pdf_file
 
 def parse_pdf_file(source, pdf_path):
     parsed = _parse_pdf_file_v140(source, pdf_path)
+
+    # Preserve conditional/app prices as explicit provenance. Offer.price stays
+    # the normal public offer; the WebApp can render Lidl Plus separately.
+    for row in getattr(parsed, "rows", []):
+        try:
+            app_price = float(getattr(row, "app_price", 0) or 0)
+            offer_price = float(getattr(row, "price", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if app_price > 0 and offer_price > app_price:
+            marker = f"SPECIAL_PRICE kind=lidl_plus label=Lidl Plus price={app_price:.2f}"
+            source_text = (getattr(row, "source_text", "") or "").strip()
+            if marker not in source_text:
+                row.source_text = f"{source_text}\n{marker}".strip()[:4000]
+
     try:
         from .assignment_runtime import reconcile_pdf_assignments
 
