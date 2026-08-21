@@ -59,9 +59,7 @@ def test_price_payload_exposes_explicit_reference_and_discount():
         discount_percent=25.1,
     ))
     db.commit()
-
     payload = _price_payload(offer, db)
-
     assert payload["referencePrice"] == 1.99
     assert payload["referenceType"] == "regular"
     assert payload["referencePriceEstimated"] is False
@@ -78,9 +76,7 @@ def test_price_payload_marks_inferred_reference_price():
         discount_percent=25.0,
     ))
     db.commit()
-
     payload = _price_payload(offer, db)
-
     assert payload["referencePrice"] == 1.99
     assert payload["referencePriceEstimated"] is True
     db.close()
@@ -95,9 +91,7 @@ def test_price_payload_exposes_three_for_two_bundle_semantics():
         source_text="PDF Seite 3: Croissants 3 für 2, je 0,49 €",
     ))
     db.commit()
-
     payload = _price_payload(offer, db)
-
     promotion = payload["promotion"]
     assert promotion["kind"] == "free_item"
     assert promotion["buyQuantity"] == 3
@@ -106,4 +100,44 @@ def test_price_payload_exposes_three_for_two_bundle_semantics():
     assert promotion["regularBundlePrice"] == 1.47
     assert promotion["savingsAmount"] == 0.49
     assert payload["discountPercent"] == 33.3
+    db.close()
+
+
+def test_price_payload_exposes_lidl_plus_without_replacing_normal_offer():
+    db, offer = _setup_offer(price=3.99)
+    db.add(OfferOccurrence(
+        offer_id=offer.id,
+        prospect_page=13,
+        occurrence_fingerprint="promotion-api-lidl-plus",
+        source_text=(
+            "PDF Seite 13: Dr. Oetker Ristorante Pizza 3,99 € "
+            "SPECIAL_PRICE kind=lidl_plus label=Lidl Plus price=3.79"
+        ),
+    ))
+    db.commit()
+    payload = _price_payload(offer, db)
+    promotion = payload["promotion"]
+    assert payload["offer"]["price"] == 3.99
+    assert promotion["kind"] == "lidl_plus"
+    assert promotion["bundlePrice"] == 3.99
+    assert promotion["specialPrice"] == 3.79
+    assert "3,79" in promotion["label"]
+    db.close()
+
+
+def test_price_payload_exposes_minimum_quantity_tier_separately():
+    db, offer = _setup_offer(price=1.99)
+    db.add(OfferOccurrence(
+        offer_id=offer.id,
+        prospect_page=1,
+        occurrence_fingerprint="promotion-api-tier",
+        source_text="PDF Seite 1: Original Wagner 1,99 € AB 3 STÜCK 1,66 €",
+    ))
+    db.commit()
+    payload = _price_payload(offer, db)
+    promotion = payload["promotion"]
+    assert payload["offer"]["price"] == 1.99
+    assert promotion["kind"] == "tier_price"
+    assert promotion["specialPrice"] == 1.66
+    assert promotion["minimumQuantity"] == 3
     db.close()

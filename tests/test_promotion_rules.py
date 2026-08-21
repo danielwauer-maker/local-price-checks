@@ -9,7 +9,6 @@ from app.promotion_rules import (
 
 def test_discount_percent_and_plausible_reference_price_are_inferred():
     assert extract_discount_percent("Aktion 0,89 € -41%") == 41.0
-    # 0.89 / 0.59 = 1.508...; retail rounding prefers a nearby x,x9 price.
     assert infer_reference_price(0.89, 41.0) == 1.49
 
 
@@ -63,6 +62,19 @@ def test_fixed_bundle_does_not_get_misread_as_three_for_two_mechanic():
     assert promo is not None and promo.kind == "fixed_bundle"
     assert promo.buy_quantity == 2
     assert promo.bundle_price == 3.00
+
+
+def test_minimum_quantity_tier_price_stays_separate_from_normal_offer():
+    promo = parse_multibuy("Original Wagner 1,99 € AB 3 STÜCK 1,66 €", offer_price=1.99)
+    assert promo is not None and promo.valid
+    assert promo.kind == "tier_price"
+    assert promo.bundle_price == 1.99
+    assert promo.special_price == 1.66
+    assert promo.minimum_quantity == 3
+    payload = promotion_payload(promo)
+    assert payload["specialPrice"] == 1.66
+    assert payload["minimumQuantity"] == 3
+    assert payload["label"] == "ab 3 Stück · 1,66 €"
 
 
 def test_ambiguous_complex_promotion_signal_is_not_claimed_as_valid():
