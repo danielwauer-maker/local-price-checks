@@ -18,6 +18,10 @@ _FIXED_BUNDLE_RE = re.compile(
     r"\b(\d{1,2})\s*(?:stück\s*)?(?:für|nur)\s*(?:€\s*)?(\d{1,3}[,.]\d{2})\s*€?\b",
     re.I,
 )
+_TIER_PRICE_RE = re.compile(
+    r"\b(?:ab|ar)\s*(\d{1,2})\s*(?:stück|stk\.?)\b[^\d€]{0,24}(\d{1,3}[,.]\d{2})\s*€?",
+    re.I,
+)
 _EXPLICIT_UNIT_PRICE_RE = re.compile(
     r"(?:\bje(?:\s+(?:stück|stk\.?|packung|croissant|brötchen|artikel))?\s*|\beinzelpreis\s*)"
     r"(?:€\s*)?(\d{1,3}[,.]\d{2})\s*€?",
@@ -26,7 +30,8 @@ _EXPLICIT_UNIT_PRICE_RE = re.compile(
 _MULTIBUY_SIGNAL_RE = re.compile(
     r"(?:\b\d{1,2}\s*\+\s*\d{1,2}\s*(?:gratis|kostenlos)\b|"
     r"\b\d{1,2}\s*(?:für|zum\s+preis\s+von|zahlen\s+nur)\s*\d{1,2}(?![.,]\d)\b|"
-    r"\b\d{1,2}\s*(?:stück\s*)?(?:für|nur)\s*€?\s*\d{1,3}[,.]\d{2}\b)",
+    r"\b\d{1,2}\s*(?:stück\s*)?(?:für|nur)\s*€?\s*\d{1,3}[,.]\d{2}\b|"
+    r"\b(?:ab|ar)\s*\d{1,2}\s*(?:stück|stk\.?)\b)",
     re.I,
 )
 _SPECIAL_PRICE_RE = re.compile(
@@ -48,6 +53,7 @@ class PromotionInfo:
     label: str | None = None
     confidence: float = 1.0
     special_price: float | None = None
+    minimum_quantity: int | None = None
 
     @property
     def valid(self) -> bool:
@@ -63,11 +69,12 @@ class PromotionInfo:
             )
         if self.kind == "fixed_bundle":
             return bool(self.buy_quantity and self.buy_quantity > 1 and self.bundle_price and self.bundle_price > 0)
-        if self.kind in {"member_price", "lidl_plus", "app_price", "loyalty_price"}:
+        if self.kind in {"member_price", "lidl_plus", "app_price", "loyalty_price", "tier_price"}:
             return bool(
                 self.bundle_price is not None
                 and self.special_price is not None
                 and 0 < self.special_price < self.bundle_price
+                and (self.kind != "tier_price" or (self.minimum_quantity or 0) >= 2)
             )
         return False
 
@@ -88,7 +95,6 @@ def extract_discount_percent(text: str | None) -> float | None:
 
 
 def _psychological_price(raw: float) -> float:
-    """Round an inferred shelf price to a plausible retail price ending in 9."""
     if raw <= 0:
         return raw
     euro = math.floor(raw)
@@ -173,9 +179,6 @@ def _special_price_info(text: str, offer_price: float | None) -> PromotionInfo |
     base_label = re.sub(r"\s+", " ", match.group(2)).strip()
     kind = "lidl_plus" if raw_kind == "lidl_plus" else "member_price"
     label = base_label or ("Lidl Plus" if kind == "lidl_plus" else "Vorteilspreis")
-    # bundle_price deliberately remains the normal offer price. Existing clients
-    # therefore keep that price prominent; the conditional price is a separate
-    # field and is also present in the label until every client renders it.
     return PromotionInfo(
         kind=kind,
         bundle_price=round(float(offer_price), 2),
@@ -184,6 +187,27 @@ def _special_price_info(text: str, offer_price: float | None) -> PromotionInfo |
         discount_percent=None,
         label=f"{label} · {special:.2f} €".replace(".", ","),
         confidence=1.0,
+    )
+
+
+def _tier_price_info(text: str, offer_price: float | None) -> PromotionInfo | None:
+    if offer_price is None or offer_price <= 0:
+        return None
+    match = _TIER_PRICE_RE.search(text or "")
+    if not match:
+        return None
+    minimum = int(match.group(1))
+    special = float(match.group(2).replace(",", "."))
+    if not 2 <= minimum <= 24 or not 0 < special < float(offer_price):
+        return None
+    return PromotionInfo(
+        kind="tier_price",
+        bundle_price=round(float(offer_price), 2),
+        special_price=round(special, 2),
+        minimum_quantity=minimum,
+        savings_amount=round(float(offer_price) - special, 2),
+        label=f"ab {minimum} Stück · {special:.2f} €".replace(".", ","),
+        confidence=0.99,
     )
 
 
@@ -197,6 +221,9 @@ def parse_multibuy(
     special = _special_price_info(value, offer_price)
     if special is not None:
         return special
+    tier = _tier_price_info(value, offer_price)
+    if tier is not None:
+        return tier
 
     if not has_multibuy_signal(value):
         return None
@@ -259,4 +286,5 @@ def promotion_payload(info: PromotionInfo | None) -> dict | None:
         "label": info.label,
         "confidence": info.confidence,
         "specialPrice": info.special_price,
+        "minimumQuantity": info.minimum_quantity,
     }
