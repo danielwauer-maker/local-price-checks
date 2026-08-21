@@ -102,11 +102,14 @@ def _refresh_product_primary(db: Session, product_id: int) -> None:
         asset.is_primary = preferred is not None and asset.id == preferred.id
 
 
-def _retire_prospect_crops(db: Session, product_id: int) -> int:
-    """Deactivate misleading crop fallbacks while preserving better media."""
+def _retire_rejected_prospect_crop(db: Session, product_id: int, source_url: str | None) -> int:
+    """Deactivate only the exact crop that failed identity validation."""
+    if not source_url or not source_url.startswith("prospect-crop:"):
+        return 0
     assets = db.query(MediaAsset).filter(
         MediaAsset.kind == "product",
         MediaAsset.master_product_id == product_id,
+        MediaAsset.source_url == source_url,
         MediaAsset.active.is_(True),
     ).all()
     retired = 0
@@ -296,6 +299,8 @@ def persist_product_image_file(
     )
     if existing:
         existing.active = True
+        if media_source == "prospect_crop":
+            existing.is_primary = True
         _set_media_metadata(db, existing, media_source=media_source, audit_relevant=True)
         _refresh_product_primary(db, product.id)
         return existing
@@ -328,7 +333,7 @@ def persist_product_image_file(
         source_url=source_url,
         alt_text=(alt_text or product.name)[:240],
         mime_type=mime_type,
-        is_primary=not has_primary,
+        is_primary=True if media_source == "prospect_crop" else not has_primary,
         active=True,
     )
     db.add(asset)
@@ -339,7 +344,7 @@ def persist_product_image_file(
 
 
 def persist_collected_product_images(db: Session, rows) -> int:
-    """Attach collector media and retire crop fallbacks rejected by QA."""
+    """Attach collector media and retire only the exact crop rejected by QA."""
     from .extractor_adapter import normalize_master_key
 
     saved = 0
@@ -352,6 +357,7 @@ def persist_collected_product_images(db: Session, rows) -> int:
             or ""
         ).strip()
         crop_rejected = bool(getattr(row, "crop_quality_rejected", False))
+        rejected_crop_source_url = getattr(row, "rejected_crop_source_url", None)
         if not image_url and not image_path and not crop_rejected:
             continue
         try:
@@ -367,7 +373,7 @@ def persist_collected_product_images(db: Session, rows) -> int:
             continue
 
         if crop_rejected:
-            _retire_prospect_crops(db, product.id)
+            _retire_rejected_prospect_crop(db, product.id, rejected_crop_source_url)
 
         if image_url:
             marker = (product.id, image_url)
