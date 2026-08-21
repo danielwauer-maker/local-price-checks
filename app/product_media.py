@@ -94,14 +94,31 @@ def preferred_product_media(db: Session, product_id: int, *, purpose: str = "pub
 
 def _refresh_product_primary(db: Session, product_id: int) -> None:
     preferred = preferred_product_media(db, product_id, purpose="public")
-    if preferred is None:
-        return
     for asset in db.query(MediaAsset).filter(
         MediaAsset.kind == "product",
         MediaAsset.master_product_id == product_id,
         MediaAsset.active.is_(True),
     ):
-        asset.is_primary = asset.id == preferred.id
+        asset.is_primary = preferred is not None and asset.id == preferred.id
+
+
+def _retire_prospect_crops(db: Session, product_id: int) -> int:
+    """Deactivate misleading crop fallbacks while preserving better media."""
+    assets = db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product_id,
+        MediaAsset.active.is_(True),
+    ).all()
+    retired = 0
+    for asset in assets:
+        if media_source_for_asset(db, asset) != "prospect_crop":
+            continue
+        asset.active = False
+        asset.is_primary = False
+        retired += 1
+    if retired:
+        _refresh_product_primary(db, product_id)
+    return retired
 
 
 def _image_extension(content_type: str, url: str) -> str | None:
@@ -322,7 +339,7 @@ def persist_product_image_file(
 
 
 def persist_collected_product_images(db: Session, rows) -> int:
-    """Attach collector image URLs to the already-imported master products."""
+    """Attach collector media and retire crop fallbacks rejected by QA."""
     from .extractor_adapter import normalize_master_key
 
     saved = 0
@@ -334,7 +351,8 @@ def persist_collected_product_images(db: Session, rows) -> int:
             or getattr(row, "image_path", None)
             or ""
         ).strip()
-        if not image_url and not image_path:
+        crop_rejected = bool(getattr(row, "crop_quality_rejected", False))
+        if not image_url and not image_path and not crop_rejected:
             continue
         try:
             key = normalize_master_key(
@@ -347,6 +365,10 @@ def persist_collected_product_images(db: Session, rows) -> int:
         product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         if not product:
             continue
+
+        if crop_rejected:
+            _retire_prospect_crops(db, product.id)
+
         if image_url:
             marker = (product.id, image_url)
             if marker not in handled:
