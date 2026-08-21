@@ -36,14 +36,36 @@ def _extract_current_price(text: str, retailer: str):
 
 
 # Public/detail images should show one complete offer card, not the broad
-# neighbourhood crop that is useful only for parser debugging. Keep the
-# immutable original PDF as the audit source and tighten generated fallbacks
-# after the retailer parser has attached them to rows.
+# neighbourhood crop that is useful only for parser debugging. Product/price
+# assignment is reconciled first so media is generated for the corrected card.
 _parse_pdf_file_v140 = parse_pdf_file
 
 
 def parse_pdf_file(source, pdf_path):
     parsed = _parse_pdf_file_v140(source, pdf_path)
+    try:
+        from .assignment_runtime import reconcile_pdf_assignments
+
+        reconciled, assignment = reconcile_pdf_assignments(
+            source,
+            Path(pdf_path),
+            getattr(parsed, "rows", []),
+        )
+        parsed.rows[:] = reconciled
+        if hasattr(parsed, "notes"):
+            parsed.notes.append(
+                "product_price_assignment_"
+                f"checked={assignment.checked} "
+                f"correct={assignment.correct} "
+                f"corrected={assignment.corrected} "
+                f"rejected={assignment.rejected} "
+                f"recovered={assignment.recovered} "
+                f"accuracy={assignment.accuracy:.1f}"
+            )
+    except Exception as exc:
+        if hasattr(parsed, "notes"):
+            parsed.notes.append(f"assignment_reconciliation_warning={type(exc).__name__}: {exc}")
+
     try:
         from .crop_refinement import refine_pdf_offer_crops
 
