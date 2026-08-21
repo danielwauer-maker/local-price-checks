@@ -10,17 +10,22 @@ _PERCENT_PATTERNS = (
     re.compile(r"\b(\d{1,2}(?:[.,]\d+)?)\s*%\s*(?:rabatt|günstiger|guenstiger|sparen|ersparnis)\b", re.I),
 )
 _FREE_ITEM_PATTERNS = (
-    re.compile(r"\b(\d{1,2})\s*für\s*(\d{1,2})\b", re.I),
-    re.compile(r"\b(\d{1,2})\s*(?:zum\s+preis\s+von|zahlen\s+nur)\s*(\d{1,2})\b", re.I),
+    re.compile(r"\b(\d{1,2})\s*für\s*(\d{1,2})(?![.,]\d)\b", re.I),
+    re.compile(r"\b(\d{1,2})\s*(?:zum\s+preis\s+von|zahlen\s+nur)\s*(\d{1,2})(?![.,]\d)\b", re.I),
 )
 _PLUS_FREE_RE = re.compile(r"\b(\d{1,2})\s*\+\s*(\d{1,2})\s*(?:gratis|kostenlos)\b", re.I)
 _FIXED_BUNDLE_RE = re.compile(
     r"\b(\d{1,2})\s*(?:stück\s*)?(?:für|nur)\s*(?:€\s*)?(\d{1,3}[,.]\d{2})\s*€?\b",
     re.I,
 )
+_EXPLICIT_UNIT_PRICE_RE = re.compile(
+    r"(?:\bje(?:\s+(?:stück|stk\.?|packung|croissant|brötchen|artikel))?\s*|\beinzelpreis\s*)"
+    r"(?:€\s*)?(\d{1,3}[,.]\d{2})\s*€?",
+    re.I,
+)
 _MULTIBUY_SIGNAL_RE = re.compile(
     r"(?:\b\d{1,2}\s*\+\s*\d{1,2}\s*(?:gratis|kostenlos)\b|"
-    r"\b\d{1,2}\s*(?:für|zum\s+preis\s+von|zahlen\s+nur)\s*\d{1,2}\b|"
+    r"\b\d{1,2}\s*(?:für|zum\s+preis\s+von|zahlen\s+nur)\s*\d{1,2}(?![.,]\d)\b|"
     r"\b\d{1,2}\s*(?:stück\s*)?(?:für|nur)\s*€?\s*\d{1,3}[,.]\d{2}\b)",
     re.I,
 )
@@ -72,12 +77,7 @@ def extract_discount_percent(text: str | None) -> float | None:
 
 
 def _psychological_price(raw: float) -> float:
-    """Round an inferred shelf price to a plausible retail price ending in 9.
-
-    German food retail very often uses cent endings 09/19/.../99.  We only
-    snap to such an ending when it stays close to the mathematically inferred
-    value; otherwise the exact two-decimal estimate is safer.
-    """
+    """Round an inferred shelf price to a plausible retail price ending in 9."""
     if raw <= 0:
         return raw
     euro = math.floor(raw)
@@ -102,6 +102,52 @@ def has_multibuy_signal(text: str | None) -> bool:
     return bool(_MULTIBUY_SIGNAL_RE.search(text or ""))
 
 
+def _explicit_unit_price(text: str) -> float | None:
+    match = _EXPLICIT_UNIT_PRICE_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        value = float(match.group(1).replace(",", "."))
+    except ValueError:
+        return None
+    return value if 0.01 <= value <= 500 else None
+
+
+def _free_item_unit_price(text: str, regular_price: float | None) -> float | None:
+    # A free-item mechanic is only unambiguous when the source explicitly gives
+    # a per-item/einzel price or the collector has an independently read normal
+    # price. Never guess that an arbitrary parsed offer price is a unit price.
+    explicit = _explicit_unit_price(text)
+    if explicit is not None:
+        return explicit
+    if regular_price is not None and regular_price > 0:
+        return regular_price
+    return None
+
+
+def _free_item_info(text: str, buy: int, paid: int, regular_price: float | None) -> PromotionInfo | None:
+    if not (1 <= paid < buy <= 24):
+        return None
+    unit = _free_item_unit_price(text, regular_price)
+    if unit is None:
+        return None
+    regular_total = round(unit * buy, 2)
+    bundle = round(unit * paid, 2)
+    savings = round(regular_total - bundle, 2)
+    return PromotionInfo(
+        kind="free_item",
+        buy_quantity=buy,
+        pay_quantity=paid,
+        bundle_price=bundle,
+        regular_bundle_price=regular_total,
+        effective_unit_price=round(bundle / buy, 4),
+        savings_amount=savings,
+        discount_percent=round((1 - bundle / regular_total) * 100, 1),
+        label=f"{buy} für {paid}",
+        confidence=0.99,
+    )
+
+
 def parse_multibuy(
     text: str | None,
     *,
@@ -116,27 +162,8 @@ def parse_multibuy(
     if plus:
         paid = int(plus.group(1))
         free = int(plus.group(2))
-        buy = paid + free
-        if not (1 <= paid < buy <= 24):
-            return None
-        unit = regular_price if regular_price and regular_price > 0 else offer_price
-        if unit is None or unit <= 0:
-            return None
-        regular_total = round(unit * buy, 2)
-        bundle = round(unit * paid, 2)
-        savings = round(regular_total - bundle, 2)
-        return PromotionInfo(
-            kind="free_item",
-            buy_quantity=buy,
-            pay_quantity=paid,
-            bundle_price=bundle,
-            regular_bundle_price=regular_total,
-            effective_unit_price=round(bundle / buy, 4),
-            savings_amount=savings,
-            discount_percent=round((1 - bundle / regular_total) * 100, 1),
-            label=f"{buy} für {paid}",
-            confidence=0.99,
-        )
+        info = _free_item_info(value, paid + free, paid, regular_price)
+        return info if info and info.valid else None
 
     for pattern in _FREE_ITEM_PATTERNS:
         match = pattern.search(value)
@@ -144,26 +171,10 @@ def parse_multibuy(
             continue
         buy = int(match.group(1))
         paid = int(match.group(2))
-        if not (1 <= paid < buy <= 24):
-            continue
-        unit = regular_price if regular_price and regular_price > 0 else offer_price
-        if unit is None or unit <= 0:
-            return None
-        regular_total = round(unit * buy, 2)
-        bundle = round(unit * paid, 2)
-        savings = round(regular_total - bundle, 2)
-        return PromotionInfo(
-            kind="free_item",
-            buy_quantity=buy,
-            pay_quantity=paid,
-            bundle_price=bundle,
-            regular_bundle_price=regular_total,
-            effective_unit_price=round(bundle / buy, 4),
-            savings_amount=savings,
-            discount_percent=round((1 - bundle / regular_total) * 100, 1),
-            label=f"{buy} für {paid}",
-            confidence=0.99,
-        )
+        info = _free_item_info(value, buy, paid, regular_price)
+        if info and info.valid:
+            return info
+        return None
 
     fixed = _FIXED_BUNDLE_RE.search(value)
     if fixed:
