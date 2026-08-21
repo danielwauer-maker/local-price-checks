@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .admin_routes import _admin
 from .api_routes import _market, _price_payload, _product
 from .clock import app_today
 from .db import get_db
@@ -58,12 +59,16 @@ def _offer_payload(db: Session, offer: Offer) -> dict:
 
 
 @router.get("")
-def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
+def offer_review_metadata(
+    market_ids: str = "",
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
     """Return current concrete offers with provenance and QA state.
 
-    Unlike the public bootstrap this endpoint intentionally accepts selected
-    QA-only markets too. That lets an admin validate a freshly scraped market
-    before releasing its prices to normal users.
+    This is an admin-only QA endpoint. Unlike the public bootstrap it
+    intentionally accepts selected QA-only markets too, so a freshly scraped
+    market can be validated before its prices are released to normal users.
     """
     store_ids = _parse_market_ids(market_ids)
     if not store_ids:
@@ -152,6 +157,7 @@ def quick_review_offer(
     provenance_id: int,
     payload: QuickReviewPayload,
     db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
 ):
     if payload.status not in {"correct", "incorrect"}:
         raise HTTPException(status_code=400, detail="status must be correct or incorrect")
@@ -168,7 +174,7 @@ def quick_review_offer(
     if not review:
         review = ProspectOfferReview(
             offer_provenance_id=provenance_id,
-            reviewed_by="webapp-test",
+            reviewed_by=actor,
         )
         db.add(review)
 
@@ -192,7 +198,7 @@ def quick_review_offer(
         review.issue_type = None
 
     if was_quick_only or review.reviewed_by == "webapp-test":
-        review.reviewed_by = "webapp-test"
+        review.reviewed_by = actor
     review.reviewed_at = datetime.utcnow()
     db.commit()
     db.refresh(review)
