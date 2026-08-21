@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .api_routes import _market, _price_payload, _product
 from .clock import app_today
 from .db import get_db
 from .models import Offer
@@ -48,12 +49,21 @@ def _review_payload(provenance: OfferProvenance, review: ProspectOfferReview | N
     }
 
 
+def _offer_payload(db: Session, offer: Offer) -> dict:
+    return {
+        "product": _product(db, offer.product),
+        "market": _market(db, offer.store),
+        "price": _price_payload(offer),
+    }
+
+
 @router.get("")
 def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
-    """Return page provenance and review state for current concrete offers.
+    """Return current concrete offers with provenance and QA state.
 
-    The WebApp uses this only in its optional QA mode. Normal offer rendering
-    remains driven by the existing bootstrap payload.
+    Unlike the public bootstrap this endpoint intentionally accepts selected
+    QA-only markets too. That lets an admin validate a freshly scraped market
+    before releasing its prices to normal users.
     """
     store_ids = _parse_market_ids(market_ids)
     if not store_ids:
@@ -68,6 +78,7 @@ def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
             Offer.valid_from <= today,
             Offer.valid_to >= today,
         )
+        .order_by(Offer.store_id.asc(), Offer.master_product_id.asc(), Offer.price.asc())
         .all()
     )
     offer_ids = [row.id for row in offers]
@@ -85,13 +96,18 @@ def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
         .all()
     )
 
-    # One concrete offer can occur on several prospect pages. The quick review
-    # uses the newest archive occurrence as its primary target, while returning
-    # all page numbers for the detail view.
+    # One public Offer can occur repeatedly in a prospect. Select the newest
+    # provenance as quick-review target and expose only pages from that same
+    # immutable archive in the detail view.
     primary_by_offer: dict[int, OfferProvenance] = {}
-    pages_by_offer: dict[int, list[int]] = {}
     for provenance in provenances:
         primary_by_offer.setdefault(provenance.offer_id, provenance)
+
+    pages_by_offer: dict[int, list[int]] = {}
+    for provenance in provenances:
+        primary = primary_by_offer.get(provenance.offer_id)
+        if not primary or provenance.prospect_archive_id != primary.prospect_archive_id:
+            continue
         pages = pages_by_offer.setdefault(provenance.offer_id, [])
         if provenance.prospect_page not in pages:
             pages.append(provenance.prospect_page)
@@ -106,9 +122,11 @@ def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
 
     result = []
     for offer in offers:
+        base = _offer_payload(db, offer)
         provenance = primary_by_offer.get(offer.id)
         if not provenance:
             result.append({
+                **base,
                 "productId": str(offer.master_product_id),
                 "marketId": str(offer.store_id),
                 "offerId": str(offer.id),
@@ -123,6 +141,7 @@ def offer_review_metadata(market_ids: str = "", db: Session = Depends(get_db)):
             })
             continue
         payload = _review_payload(provenance, reviews.get(provenance.id))
+        payload.update(base)
         payload["prospectPages"] = sorted(pages_by_offer.get(offer.id, []))
         result.append(payload)
     return result
@@ -168,8 +187,8 @@ def quick_review_offer(
         if review.issue_type in {None, "webapp_flagged"}:
             review.issue_type = "webapp_flagged"
     elif was_quick_only:
-        # Do not destroy a detailed correction that was already entered later
-        # in Prospekt-Abgleich. Only clear the transient WebApp marker.
+        # A later detailed admin correction wins. Only transient quick-review
+        # metadata may be cleared from the WebApp.
         review.issue_type = None
 
     if was_quick_only or review.reviewed_by == "webapp-test":
@@ -179,6 +198,7 @@ def quick_review_offer(
     db.refresh(review)
 
     result = _review_payload(provenance, review)
+    result.update(_offer_payload(db, provenance.offer))
     result["prospectPages"] = [provenance.prospect_page]
     result["auditUrl"] = (
         f"/admin/articles/prospect-audit?store_id={provenance.offer.store_id}"
