@@ -1,0 +1,39 @@
+{
+  "source": "manual prospect QA 2026-08-21",
+  "edeka": {
+    "market": "EDEKA Fellenzer",
+    "pages": {
+      "1": [
+        {"name": "Himbeeren, rot", "package": "125 g", "price": 1.49},
+        {"name": "Hähnchenschenkel", "package": "100 g", "price": 0.29},
+        {"name": "Delverde Classica Pasta", "package": "500 g", "price": 0.79, "reference_price": 1.89},
+        {"name": "Doppio Passo", "package": "0,75 l", "price": 4.99, "reference_price": 7.99},
+        {"name": "Storck Toffifee", "package": "125 g", "price": 1.11, "reference_price": 1.49},
+        {"name": "Original Wagner Steinofenpizza / Flammkuchen", "package": "300 g/380 g", "price": 1.99, "reference_price": 3.49}
+      ]
+    }
+  },
+  "lidl": {
+    "market": "Lidl Puderbach",
+    "pages": {
+      "13": [
+        {"name": "Jägermeister", "package": "0,7 l", "price": 11.99},
+        {"name": "Jack Daniel's Mixgetränk", "package": "0,33 l", "price": 1.99},
+        {"name": "Milka Tafelschokolade", "package": "87 g", "price": 1.29, "special_price": 0.88, "special_kind": "lidl_plus"},
+        {"name": "Heinz Tomaten Ketchup/Mayonnaise", "package": "1,17 l/800 ml", "price": 3.49, "special_price": 2.99, "special_kind": "lidl_plus"},
+        {"name": "Jameson Irish Whiskey", "package": "0,7 l", "price": 14.99},
+        {"name": "Müllermilch Matcha", "package": "400 ml", "price": 1.49},
+        {"name": "Pringles", "package": "185 g", "price": 2.79, "special_price": 1.99, "special_kind": "lidl_plus", "note": "conditional Lidl Plus price is shown separately"},
+        {"name": "Coppenrath & Wiese Cafeteria", "package": "530 g", "price": 3.99},
+        {"name": "Dr. Oetker Ristorante Pizza/Bistro Flammkuchen", "package": "720 g", "price": 3.99, "special_price": 3.79, "special_kind": "lidl_plus"},
+        {"name": "NORDSEE Backfisch", "package": "310 g", "price": 3.79},
+        {"name": "Grünländer Käsescheiben XXL", "package": "240 g", "price": 2.99},
+        {"name": "Langnese Magnum Classic", "package": "800 ml", "price": 3.79}
+      ],
+      "14": [
+        {"name": "Iglo Fischstäbchen/Filegro XXL", "price": 4.99},
+        {"name": "Duplo", "package": "200 g", "price": 3.29, "promotion": "+1 gratis"}
+      ]
+    }
+  }
+}
