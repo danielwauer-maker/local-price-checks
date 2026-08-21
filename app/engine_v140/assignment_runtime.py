@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 import pymupdf
 
@@ -9,12 +8,12 @@ from .assignment_reconciliation import (
     AssignmentMetrics,
     _page_number,
     _set_assignment_metrics,
-    _suspicious_name,
     expected_price_from_unit,
     _price_close,
     _reconcile_lidl,
 )
 from .collectors import CollectedOffer, cat
+from .edeka_name_quality import choose_consensus_name, strict_name_ok
 from .product_cleaning import clean_product_name
 
 
@@ -44,18 +43,16 @@ def _cell(anchor, anchors, width: int, height: int) -> tuple[int, int, int, int]
             else:
                 bottom = min(bottom, midpoint)
 
-    # Sparse pages otherwise yield enormous cells. Product information is
-    # normally above and around the red EDEKA selling-price tag.
-    max_w = min(float(width), 520.0)
-    max_h = min(float(height), 620.0)
+    max_w = min(float(width), 500.0)
+    max_h = min(float(height), 580.0)
     if right - left > max_w:
         left = max(0.0, cx - max_w * 0.58)
         right = min(float(width), cx + max_w * 0.42)
     if bottom - top > max_h:
-        top = max(0.0, cy - max_h * 0.82)
-        bottom = min(float(height), cy + max_h * 0.18)
-    top = max(0.0, min(top, ay0 - 70))
-    bottom = min(float(height), max(bottom, ay1 + 45))
+        top = max(0.0, cy - max_h * 0.84)
+        bottom = min(float(height), cy + max_h * 0.16)
+    top = max(0.0, min(top, ay0 - 55))
+    bottom = min(float(height), max(bottom, ay1 + 30))
     return int(left), int(top), int(right), int(bottom)
 
 
@@ -64,10 +61,10 @@ def _bad_page(rows: list) -> bool:
         return False
     suspicious = sum(
         1 for row in rows
-        if _suspicious_name(getattr(row, "product_name", ""))
+        if not strict_name_ok(getattr(row, "product_name", ""))
         or bool(getattr(row, "crop_quality_rejected", False))
     )
-    return suspicious >= 2 and suspicious / len(rows) >= 0.28
+    return suspicious >= 1 and suspicious / len(rows) >= 0.12
 
 
 def _crop_target(page_rows: list) -> Path | None:
@@ -92,6 +89,21 @@ def _save_crop(image, bbox, target_dir: Path | None, identity: str) -> str | Non
         return None
 
 
+def _ocr_name_candidates(ep, image, card, lines, anchor_top: int) -> tuple[list[str], list[str]]:
+    candidates: list[str] = []
+    context: list[str] = []
+    structured = ep._product_name(lines, anchor_top)
+    if structured:
+        candidates.append(structured)
+    for psm in (6, 11, 12):
+        dense_lines = ep._dense_ocr_lines(image, card, psm=psm)
+        context.extend(dense_lines)
+        dense_name = ep._dense_product_name(dense_lines)
+        if dense_name:
+            candidates.append(dense_name)
+    return candidates, context
+
+
 def _rebuild_page(source, pdf_path: Path, page_no: int, page_rows: list) -> list:
     from . import edeka_pdf as ep
 
@@ -113,24 +125,17 @@ def _rebuild_page(source, pdf_path: Path, page_no: int, page_rows: list) -> list
             card = _cell(anchor, anchors, image.width, image.height)
             x0, y0, x1, y1 = card
             lines = ep._line_groups(words, x0=x0, y0=y0, x1=x1, y1=y1)
-            name = ep._product_name(lines, anchor.bbox[1])
-            dense_lines: list[str] = []
-            if not name or _suspicious_name(name):
-                dense_lines = ep._dense_ocr_lines(image, card, psm=6)
-                dense_name = ep._dense_product_name(dense_lines)
-                if dense_name and not _suspicious_name(dense_name):
-                    name = dense_name
-            if not name or _suspicious_name(name):
+            candidates, dense_context = _ocr_name_candidates(ep, image, card, lines, anchor.bbox[1])
+            name = choose_consensus_name(candidates)
+            if not name:
                 continue
 
             context_lines = [line["text"] for line in lines]
-            combined = ep._normalize_context("\n".join([*context_lines, *dense_lines]))
+            combined = ep._normalize_context("\n".join([*context_lines, *dense_context]))
             quantity, unit = ep._quantity(combined)
             unit_price, unit_price_unit = ep._unit_price(combined)
             expected = expected_price_from_unit(quantity, unit, unit_price, unit_price_unit)
             if expected is not None and not _price_close(expected, anchor.price):
-                # A card whose package economics contradict its own price tag is
-                # still ambiguous; never publish it merely to increase recall.
                 continue
 
             key = (clean_product_name(name).lower(), round(float(anchor.price), 2))
@@ -153,15 +158,16 @@ def _rebuild_page(source, pdf_path: Path, page_no: int, page_rows: list) -> list
                 valid_from=getattr(template, "valid_from", None),
                 valid_to=getattr(template, "valid_to", None),
                 source_text=(
-                    f"PDF Seite {page_no}: EDEKA OCR CARD_CELL bbox={card} "
-                    f"price_bbox={anchor.bbox} {combined}"
+                    f"PDF Seite {page_no}: EDEKA OCR CARD_CELL_STRICT bbox={card} "
+                    f"price_bbox={anchor.bbox} OCR_CONSENSUS name={name} {combined}"
                 )[:4000],
                 source_url=getattr(template, "source_url", None) or getattr(source, "url", ""),
                 local_store_offer=True,
-                confidence=.995,
+                confidence=.998,
             )
             row.card_bbox = card
             row.assignment_cell_verified = True
+            row.edeka_name_consensus_verified = True
             if crop:
                 row.image_path = crop
                 row.audit_image_path = crop
@@ -185,6 +191,12 @@ def _reconcile_edeka(source, pdf_path: Path, rows: list) -> tuple[list, Assignme
     checked = correct = corrected = rejected = recovered = 0
     for page_no, page_rows in by_page.items():
         for row in page_rows:
+            # Names that are visibly OCR fragments are never allowed into the
+            # public offer list, even when their price happens to be plausible.
+            if not strict_name_ok(getattr(row, "product_name", "")):
+                row.assignment_quality_rejected = True
+                rejected += 1
+                continue
             expected = expected_price_from_unit(
                 getattr(row, "quantity", None),
                 getattr(row, "unit", None),
@@ -203,9 +215,17 @@ def _reconcile_edeka(source, pdf_path: Path, rows: list) -> tuple[list, Assignme
         if not _bad_page(page_rows):
             continue
         rebuilt = _rebuild_page(source, pdf_path, page_no, page_rows)
-        good_existing = sum(not _suspicious_name(getattr(row, "product_name", "")) for row in page_rows)
-        good_rebuilt = sum(not _suspicious_name(getattr(row, "product_name", "")) for row in rebuilt)
-        if good_rebuilt >= 3 and good_rebuilt > good_existing:
+        good_existing = sum(
+            strict_name_ok(getattr(row, "product_name", ""))
+            and not getattr(row, "assignment_quality_rejected", False)
+            for row in page_rows
+        )
+        good_rebuilt = len(rebuilt)
+        # A strict rebuild may intentionally return fewer offers. Precision is
+        # more important here than retaining OCR garbage, so replace the page
+        # whenever it yields at least two consensus-verified cards and is not
+        # catastrophically sparse relative to the original page.
+        if good_rebuilt >= 2 and good_rebuilt >= max(2, good_existing // 2):
             output = [row for row in output if _page_number(row) != page_no]
             output.extend(rebuilt)
             recovered += len(rebuilt)
@@ -215,6 +235,9 @@ def _reconcile_edeka(source, pdf_path: Path, rows: list) -> tuple[list, Assignme
     output = [row for row in output if not getattr(row, "assignment_quality_rejected", False)]
     metrics = AssignmentMetrics(checked, correct, corrected, rejected, recovered)
     _set_assignment_metrics(output, metrics)
+    for row in output:
+        if str(getattr(row, "retailer", "")).upper() == "EDEKA":
+            row.edeka_strict_names_rejected = rejected
     return output, metrics
 
 
