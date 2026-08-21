@@ -29,6 +29,10 @@ _MULTIBUY_SIGNAL_RE = re.compile(
     r"\b\d{1,2}\s*(?:stück\s*)?(?:für|nur)\s*€?\s*\d{1,3}[,.]\d{2}\b)",
     re.I,
 )
+_SPECIAL_PRICE_RE = re.compile(
+    r"SPECIAL_PRICE\s+kind=([a-z0-9_+-]+)\s+label=(.+?)\s+price=(\d{1,3}[.,]\d{2})(?:\s|$)",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,12 @@ class PromotionInfo:
             )
         if self.kind == "fixed_bundle":
             return bool(self.buy_quantity and self.buy_quantity > 1 and self.bundle_price and self.bundle_price > 0)
+        if self.kind in {"member_price", "lidl_plus", "app_price", "loyalty_price"}:
+            return bool(
+                self.bundle_price is not None
+                and self.regular_bundle_price is not None
+                and 0 < self.bundle_price < self.regular_bundle_price
+            )
         return False
 
 
@@ -114,9 +124,6 @@ def _explicit_unit_price(text: str) -> float | None:
 
 
 def _free_item_unit_price(text: str, regular_price: float | None) -> float | None:
-    # A free-item mechanic is only unambiguous when the source explicitly gives
-    # a per-item/einzel price or the collector has an independently read normal
-    # price. Never guess that an arbitrary parsed offer price is a unit price.
     explicit = _explicit_unit_price(text)
     if explicit is not None:
         return explicit
@@ -148,6 +155,33 @@ def _free_item_info(text: str, buy: int, paid: int, regular_price: float | None)
     )
 
 
+def _special_price_info(text: str, offer_price: float | None) -> PromotionInfo | None:
+    if offer_price is None or offer_price <= 0:
+        return None
+    matches = list(_SPECIAL_PRICE_RE.finditer(text or ""))
+    if not matches:
+        return None
+    match = matches[-1]
+    try:
+        special = float(match.group(3).replace(",", "."))
+    except ValueError:
+        return None
+    if not 0 < special < float(offer_price):
+        return None
+    raw_kind = match.group(1).lower()
+    label = re.sub(r"\s+", " ", match.group(2)).strip()
+    kind = "lidl_plus" if raw_kind == "lidl_plus" else "member_price"
+    return PromotionInfo(
+        kind=kind,
+        bundle_price=round(special, 2),
+        regular_bundle_price=round(float(offer_price), 2),
+        savings_amount=round(float(offer_price) - special, 2),
+        discount_percent=round((1 - special / float(offer_price)) * 100.0, 1),
+        label=label or ("Lidl Plus" if kind == "lidl_plus" else "Vorteilspreis"),
+        confidence=1.0,
+    )
+
+
 def parse_multibuy(
     text: str | None,
     *,
@@ -155,6 +189,14 @@ def parse_multibuy(
     regular_price: float | None = None,
 ) -> PromotionInfo | None:
     value = text or ""
+
+    # Loyalty/app prices are a separate price role. They are deliberately
+    # returned before multibuy parsing so the normal offer remains the public
+    # base price while clients can render the conditional price separately.
+    special = _special_price_info(value, offer_price)
+    if special is not None:
+        return special
+
     if not has_multibuy_signal(value):
         return None
 
