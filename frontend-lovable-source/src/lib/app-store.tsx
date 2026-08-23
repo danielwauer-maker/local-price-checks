@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { DEFAULT_LOCATION, MARKETS, PRODUCTS, PRICES, distanceKm, type Market, type Price, type Product } from "@/data/demo";
+import { withDeviceIdentity } from "./device-identity";
 
 type Location = { lat: number; lng: number; label: string };
 type Profile = { displayName: string; postalCode: string; city: string };
@@ -89,7 +90,8 @@ const Ctx = createContext<StoreContext | null>(null);
 function api(path: string, init?: RequestInit) {
   return fetch(path, {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    credentials: init?.credentials ?? "include",
+    headers: withDeviceIdentity({ "content-type": "application/json", ...(init?.headers ?? {}) }),
   });
 }
 
