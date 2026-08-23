@@ -43,13 +43,14 @@ def _state_counts(db: Session, user_id: int) -> tuple[int, int, int]:
     return favorites, stores, shopping
 
 
-def _daily_row(db: Session, client_id: int, now: datetime) -> ClientActivityDay:
+def _daily_row(db: Session, client_id: int, now: datetime) -> tuple[ClientActivityDay, bool]:
     day = now.date()
     row = (
         db.query(ClientActivityDay)
         .filter(ClientActivityDay.client_id == client_id, ClientActivityDay.activity_date == day)
         .first()
     )
+    created = row is None
     if row is None:
         row = ClientActivityDay(
             client_id=client_id,
@@ -59,7 +60,7 @@ def _daily_row(db: Session, client_id: int, now: datetime) -> ClientActivityDay:
         )
         db.add(row)
         db.flush()
-    return row
+    return row, created
 
 
 def _session(db: Session, client: UserClient, now: datetime, page: str | None) -> tuple[ClientUsageSession, bool]:
@@ -110,9 +111,9 @@ def record_client_activity(
     if normalized_page:
         session.last_page = normalized_page
 
-    day = _daily_row(db, client.id, now)
+    day, new_day = _daily_row(db, client.id, now)
     day.last_seen_at = now
-    if new_session:
+    if new_session or new_day:
         day.session_count += 1
 
     if kind == "page_view":
