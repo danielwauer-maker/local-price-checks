@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 
 export function useFavoriteAlternatives() {
   const [preferences, setPreferences] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let live = true;
-    fetch("/api/ux/favorite-alternatives")
+    apiFetch("/api/ux/favorite-alternatives")
       .then((response) => response.ok ? response.json() : {})
       .then((payload) => live && setPreferences(payload as Record<string, boolean>))
       .catch(() => live && setPreferences({}));
@@ -14,7 +15,7 @@ export function useFavoriteAlternatives() {
 
   const setEnabled = useCallback((productId: string, enabled: boolean) => {
     setPreferences((current) => ({ ...current, [productId]: enabled }));
-    void fetch(`/api/ux/favorites/${productId}/alternatives`, {
+    void apiFetch(`/api/ux/favorites/${productId}/alternatives`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled }),
