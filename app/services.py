@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
-from .client_context import get_client_key
+from .client_context import get_client_key, get_legacy_client_key
 from .client_models import UserClient
 from .clock import app_today
 from .geo import haversine_km
@@ -34,6 +34,11 @@ def current_user(db: Session) -> UserProfile:
     for every request. A newly seen browser first claims an existing unclaimed
     profile so legacy location/favorites and seeded test data remain intact.
     Later browsers receive isolated profiles.
+
+    During the 0A.1 rollout an existing browser may already have a valid
+    ``lp_client_id`` cookie while the new frontend creates its first localStorage
+    device key. If the new key is not known yet, migrate the existing UserClient
+    mapping to that key instead of creating a second anonymous profile.
     """
     client_key = get_client_key()
     if client_key:
@@ -42,6 +47,19 @@ def current_user(db: Session) -> UserProfile:
             client.last_seen_at = datetime.utcnow()
             db.flush()
             return client.user
+
+        legacy_key = get_legacy_client_key()
+        if legacy_key and legacy_key != client_key:
+            legacy_client = db.query(UserClient).filter(UserClient.client_key == legacy_key).first()
+            if legacy_client:
+                legacy_client.client_key = client_key
+                legacy_client.last_seen_at = datetime.utcnow()
+                if legacy_client.device is not None:
+                    legacy_client.device.device_key = client_key
+                    legacy_client.device.last_seen_at = legacy_client.last_seen_at
+                db.commit()
+                db.refresh(legacy_client)
+                return legacy_client.user
 
         user = _unclaimed_profile(db)
         if user is None:
