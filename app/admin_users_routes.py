@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .admin_routes import _admin
-from .client_models import UserClient
+from .client_models import ClientDevice, UserClient
 from .db import get_db
 from .models import FavoriteStore, Store
 
@@ -28,15 +28,22 @@ def admin_users(request: Request, db: Session = Depends(get_db), actor: str = De
         favorites = [store_by_id[row.store_id] for row in fav_rows if row.store_id in store_by_id]
         rows.append({
             "client": client,
+            "device": client.device,
             "user": user,
             "favorites": favorites,
         })
 
+    devices = db.query(ClientDevice).all()
     cutoff = datetime.utcnow() - timedelta(days=7)
     stats = {
         "users": len(clients),
+        "devices": len(devices),
         "installed": sum(1 for c in clients if c.pwa_installed),
         "active7": sum(1 for c in clients if c.last_seen_at and c.last_seen_at >= cutoff),
+        "mobile": sum(1 for d in devices if d.device_type == "mobile"),
+        "desktop": sum(1 for d in devices if d.device_type == "desktop"),
+        "ios": sum(1 for d in devices if d.os_name in {"iOS", "iPadOS"}),
+        "android": sum(1 for d in devices if d.os_name == "Android"),
         "with_location": sum(1 for c in clients if c.user and c.user.latitude is not None and c.user.longitude is not None),
     }
     return templates.TemplateResponse("admin_users.html", {
