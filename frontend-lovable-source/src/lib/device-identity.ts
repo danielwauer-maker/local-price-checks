@@ -1,4 +1,5 @@
 const STORAGE_KEY = "lp_device_id";
+const PATCH_FLAG = "__localPricesDeviceFetchPatched";
 
 function createDeviceId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -29,3 +30,25 @@ export function withDeviceIdentity(headers?: HeadersInit): Headers {
   if (deviceId) result.set("x-localprices-client", deviceId);
   return result;
 }
+
+export function installDeviceAwareFetch(): void {
+  if (typeof window === "undefined") return;
+  const target = window as typeof window & { [PATCH_FLAG]?: boolean };
+  if (target[PATCH_FLAG]) return;
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const rawUrl = input instanceof Request ? input.url : String(input);
+    const url = new URL(rawUrl, window.location.href);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/")) {
+      return originalFetch(input, init);
+    }
+
+    const baseHeaders = input instanceof Request ? input.headers : undefined;
+    const headers = withDeviceIdentity(init?.headers ?? baseHeaders);
+    return originalFetch(input, { ...init, headers, credentials: init?.credentials ?? "include" });
+  };
+  target[PATCH_FLAG] = true;
+}
+
+installDeviceAwareFetch();
