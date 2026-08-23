@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppShell } from "@/components/AppShell";
+import { UsageTracker } from "@/components/UsageTracker";
 import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -139,28 +140,20 @@ export const Route = createRootRouteWithContext<{
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap",
       },
-
-      // PWA Manifest
       {
         rel: "manifest",
         href: "/manifest.webmanifest",
       },
-
-      // Standard favicon
       {
         rel: "icon",
         href: "/favicon.ico",
         type: "image/x-icon",
       },
-
-      // PNG favicon
       {
         rel: "icon",
         href: "/favicon.png",
         type: "image/png",
       },
-
-      // iPhone / iPad Home Screen
       {
         rel: "apple-touch-icon",
         href: "/apple-touch-icon.png",
@@ -199,19 +192,10 @@ function RootComponent() {
 
   const bare = pathname.startsWith("/auth");
 
-  // PWA Service Worker nur im Browser registrieren.
-  // Der dynamische Import verhindert Probleme beim SSR.
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      import("../pwa").catch((error) => {
-        console.error("[PWA] Could not load Service Worker registration:", error);
-      });
-    }
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <AppStoreProvider>
+        <UsageTracker />
         {bare ? (
           <div className="app-frame">
             <Outlet />
