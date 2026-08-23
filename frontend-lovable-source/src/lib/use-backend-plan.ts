@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
+import { apiFetch } from "@/lib/api-client";
 
 export type BackendPlan = {
   stops: Array<{
@@ -53,7 +54,7 @@ export function useBackendPlan(maxStops: number) {
     let live = true;
     const timer = window.setTimeout(() => {
       setLoading(true);
-      fetch(`/api/plan?max_stores=${maxStops}`)
+      apiFetch(`/api/plan?max_stores=${maxStops}`)
         .then((r) => {
           if (!r.ok) throw new Error(`plan ${r.status}`);
           return r.json() as Promise<BackendPlan>;
