@@ -5,6 +5,7 @@ from .main import app
 from .api_routes import router
 from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
+from .activity_routes import router as activity_router
 from .admin_routes import router as admin_router
 from .admin_users_routes import router as admin_users_router
 from .admin_data_status_routes import router as admin_data_status_router
@@ -17,6 +18,7 @@ from .admin_coverage_routes import router as admin_coverage_router
 from .coverage_routes import router as coverage_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
 from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
+from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
@@ -75,6 +77,7 @@ async def persistent_client_identity(request, call_next):
 app.include_router(router)
 app.include_router(product_detail_router)
 app.include_router(client_router)
+app.include_router(activity_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
 app.include_router(admin_data_status_router)
