@@ -1,4 +1,3 @@
-import "./lib/device-identity";
 import "./pwa";
 
 import { StartClient } from "@tanstack/react-start/client";
