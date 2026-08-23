@@ -1,22 +1,22 @@
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1] / "frontend-lovable-source" / "src"
-DIRECT_API_FETCH = re.compile(r"\bfetch\s*\(\s*([`\"])/api/")
 
 
-def test_frontend_api_calls_use_device_aware_client():
-    offenders = []
-    for path in ROOT.rglob("*"):
-        if path.suffix not in {".ts", ".tsx"}:
-            continue
-        if path.name == "api-client.ts":
-            continue
-        text = path.read_text(encoding="utf-8")
-        if DIRECT_API_FETCH.search(text):
-            offenders.append(str(path.relative_to(ROOT)))
+def test_client_entry_installs_device_aware_api_fetch_before_pwa():
+    client = (ROOT / "client.tsx").read_text(encoding="utf-8")
+    api_import = 'import "./lib/api-client";'
+    pwa_import = 'import "./pwa";'
 
-    assert offenders == [], (
-        "Direct /api fetch() calls bypass stable device identity. "
-        "Use apiFetch() instead: " + ", ".join(offenders)
-    )
+    assert api_import in client
+    assert pwa_import in client
+    assert client.index(api_import) < client.index(pwa_import)
+
+
+def test_api_client_protects_all_same_origin_api_fetches():
+    api_client = (ROOT / "lib" / "api-client.ts").read_text(encoding="utf-8")
+
+    assert 'url.pathname.startsWith("/api/")' in api_client
+    assert "withDeviceIdentity" in api_client
+    assert "window.fetch =" in api_client
+    assert "installDeviceAwareApiFetch();" in api_client
