@@ -1,3 +1,4 @@
+import "./lib/api-client";
 import "./pwa";
 
 import { StartClient } from "@tanstack/react-start/client";
