@@ -1,5 +1,5 @@
 import { registerSW } from "virtual:pwa-register";
-import { withDeviceIdentity } from "./lib/device-identity";
+import { apiFetch } from "./lib/api-client";
 
 function isStandalonePwa(): boolean {
   const nav = navigator as Navigator & { standalone?: boolean };
@@ -19,11 +19,10 @@ function clientPlatform(): string {
 
 function sendHeartbeat(forceInstalled = false) {
   const standalone = isStandalonePwa();
-  fetch("/api/client/heartbeat", {
+  apiFetch("/api/client/heartbeat", {
     method: "POST",
-    credentials: "include",
     keepalive: true,
-    headers: withDeviceIdentity({ "content-type": "application/json" }),
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       pwaInstalled: forceInstalled || standalone,
       standalone,
@@ -51,8 +50,6 @@ registerSW({
   },
 });
 
-// Record every launch immediately. Chromium/Android also reports appinstalled;
-// iOS is detected through navigator.standalone / display-mode: standalone.
 sendHeartbeat();
 window.addEventListener("appinstalled", () => sendHeartbeat(true));
 window.addEventListener("pageshow", () => sendHeartbeat());
