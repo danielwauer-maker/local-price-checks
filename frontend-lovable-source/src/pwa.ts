@@ -1,4 +1,5 @@
 import { registerSW } from "virtual:pwa-register";
+import { withDeviceIdentity } from "./lib/device-identity";
 
 function isStandalonePwa(): boolean {
   const nav = navigator as Navigator & { standalone?: boolean };
@@ -22,7 +23,7 @@ function sendHeartbeat(forceInstalled = false) {
     method: "POST",
     credentials: "include",
     keepalive: true,
-    headers: { "content-type": "application/json" },
+    headers: withDeviceIdentity({ "content-type": "application/json" }),
     body: JSON.stringify({
       pwaInstalled: forceInstalled || standalone,
       standalone,
