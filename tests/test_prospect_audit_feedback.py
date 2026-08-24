@@ -1,5 +1,6 @@
 from datetime import date
 
+from app.admin_prospect_audit_routes import _archive_golden_stats, quick_correct_offer
 from app.db import Base, SessionLocal, engine
 from app.models import MasterProduct, Offer, Store
 from app.prospect_models import (
@@ -75,6 +76,12 @@ def _fixture_rows(db):
     return store, product, archive, offer, provenance
 
 
+def _clean_feedback(db, archive, provenance):
+    db.query(ProspectMissingItem).filter_by(prospect_archive_id=archive.id).delete()
+    db.query(ProspectOfferReview).filter_by(offer_provenance_id=provenance.id).delete()
+    db.commit()
+
+
 def test_prospect_offer_review_persists_structured_learning_signal():
     Base.metadata.create_all(engine)
     db = SessionLocal()
@@ -119,4 +126,80 @@ def test_missing_pdf_item_can_be_recorded_per_page():
     assert row.prospect_page == 3
     assert row.expected_price == 2.49
     assert row.resolved is False
+    db.close()
+
+
+def test_golden_dataset_gate_requires_full_review_and_no_unresolved_missing_items():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    _, _, archive, _, provenance = _fixture_rows(db)
+    _clean_feedback(db, archive, provenance)
+
+    initial = _archive_golden_stats(db, archive.id)
+    assert initial["total"] == 1
+    assert initial["open"] == 1
+    assert initial["golden_ready"] is False
+
+    db.add(
+        ProspectOfferReview(
+            offer_provenance_id=provenance.id,
+            status="incorrect",
+            issue_type="wrong_price",
+            expected_price=1.49,
+        )
+    )
+    db.commit()
+    reviewed = _archive_golden_stats(db, archive.id)
+    assert reviewed["reviewed"] == 1
+    assert reviewed["incorrect"] == 1
+    assert reviewed["completeness"] == 100.0
+    assert reviewed["golden_ready"] is True
+
+    missing = ProspectMissingItem(
+        prospect_archive_id=archive.id,
+        prospect_page=3,
+        expected_name="Golden missing product",
+    )
+    db.add(missing)
+    db.commit()
+    blocked = _archive_golden_stats(db, archive.id)
+    assert blocked["unresolved_missing"] == 1
+    assert blocked["golden_ready"] is False
+
+    missing.resolved = True
+    db.commit()
+    resolved = _archive_golden_stats(db, archive.id)
+    assert resolved["unresolved_missing"] == 0
+    assert resolved["golden_ready"] is True
+    _clean_feedback(db, archive, provenance)
+    db.close()
+
+
+def test_quick_correct_turns_existing_error_into_clean_positive_example():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    _, _, archive, _, provenance = _fixture_rows(db)
+    _clean_feedback(db, archive, provenance)
+    db.add(
+        ProspectOfferReview(
+            offer_provenance_id=provenance.id,
+            status="incorrect",
+            issue_type="wrong_price",
+            expected_price=1.49,
+            notes="old correction",
+        )
+    )
+    db.commit()
+
+    response = quick_correct_offer(provenance.id, db=db, actor="qa-test")
+    assert response.status_code == 303
+    row = db.query(ProspectOfferReview).filter_by(offer_provenance_id=provenance.id).one()
+    assert row.status == "correct"
+    assert row.issue_type is None
+    assert row.expected_price is None
+    assert row.notes is None
+    assert row.reviewed_by == "qa-test"
+    stats = _archive_golden_stats(db, archive.id)
+    assert stats["golden_ready"] is True
+    _clean_feedback(db, archive, provenance)
     db.close()
