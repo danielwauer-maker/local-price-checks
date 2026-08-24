@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
   Car,
   Download,
   Info,
+  LogIn,
   LogOut,
   MapPin,
   Navigation,
@@ -111,9 +112,32 @@ function Toggle({
 function SettingsPage() {
   const store = useStore();
   const navigate = useNavigate();
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [installed] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches,
   );
+
+  useEffect(() => {
+    let active = true;
+
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setAccountEmail(data.session?.user.email ?? null);
+      setAuthReady(true);
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      setAccountEmail(session?.user.email ?? null);
+      setAuthReady(true);
+    });
+
+    return () => {
+      active = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -231,19 +255,35 @@ function SettingsPage() {
         </Section>
 
         <Section icon={User} title="Account">
-          <Row label="Profil" hint="Anmeldung & Konto" action={<span />} />
-          <Row
-            label="Lokero Premium"
-            hint="Erweiterte Optimierung"
-            action={<Sparkles className="h-4 w-4 text-primary" />}
-          />
-          <button
-            type="button"
-            onClick={signOut}
-            className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy"
-          >
-            <LogOut className="h-4 w-4" /> Abmelden
-          </button>
+          {!authReady ? (
+            <div className="h-16 animate-pulse rounded-xl bg-muted-surface" />
+          ) : accountEmail ? (
+            <>
+              <Row label="Angemeldet als" hint={accountEmail} action={<span className="rounded-full bg-primary-soft px-2 py-1 text-[10px] font-semibold text-primary-deep">Registriert</span>} />
+              <Row
+                label="Lokero Premium"
+                hint="Erweiterte Optimierung"
+                action={<Sparkles className="h-4 w-4 text-primary" />}
+              />
+              <button
+                type="button"
+                onClick={signOut}
+                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy"
+              >
+                <LogOut className="h-4 w-4" /> Abmelden
+              </button>
+            </>
+          ) : (
+            <>
+              <Row label="Noch nicht angemeldet" hint="Mit Konto kannst du deine Daten geräteübergreifend nutzen." action={<span />} />
+              <Link
+                to="/auth"
+                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground"
+              >
+                <LogIn className="h-4 w-4" /> Anmelden oder registrieren
+              </Link>
+            </>
+          )}
         </Section>
 
         <Section icon={Download} title="App">
