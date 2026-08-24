@@ -6,6 +6,7 @@ from .api_routes import router
 from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
 from .activity_routes import router as activity_router
+from .account_routes import router as account_router
 from .admin_routes import router as admin_router
 from .admin_users_routes import router as admin_users_router
 from .admin_data_status_routes import router as admin_data_status_router
@@ -21,7 +22,12 @@ from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
 from .lokero_media_routes import router as lokero_media_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
-from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
+from .client_models import (  # noqa: F401 - registers additive tables before startup create_all
+    AccountClientLink,
+    AccountIdentity,
+    ClientDevice,
+    UserClient,
+)
 from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
 from .lokero_models import (  # noqa: F401 - registers additive Lokero tables
     FavoriteProductFamily,
@@ -91,6 +97,7 @@ app.include_router(router)
 app.include_router(product_detail_router)
 app.include_router(client_router)
 app.include_router(activity_router)
+app.include_router(account_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
 app.include_router(admin_data_status_router)
