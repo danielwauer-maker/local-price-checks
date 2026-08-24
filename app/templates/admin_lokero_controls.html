@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lokero Steuerung</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#b42318}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1180px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:center}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.flag,.store{display:flex;justify-content:space-between;gap:16px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:12px}.small{font-size:12px;color:var(--muted)}.btn{border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer;background:var(--green);color:#fff}.btn.off{background:#eef1ed;color:#425148}.btn.warn{background:#fff0df;color:#8f4d00}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.released{color:#087b4f}.blocked{color:var(--danger)}a{color:var(--green);font-weight:700;text-decoration:none}input,select{padding:9px;border:1px solid var(--line);border-radius:10px}form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}@media(max-width:760px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.wrap{padding:12px}}
+  </style>
+</head>
+<body><div class="wrap">
+  <div class="top">
+    <div><h1 style="margin:0">Lokero Produktsteuerung</h1><div class="small">Feature-Flags, öffentliche Märkte und Normalpreise</div></div>
+    <div><a href="/admin">← Admin</a> · <span class="small">{{ actor }}</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Feature-Flags</h2>
+    <p class="small">Optimierung und Sparberechnung bleiben für die Pilotphase standardmäßig aus. Änderungen wirken serverseitig für alle normalen Nutzer.</p>
+    <div class="grid">
+    {% for name,enabled in flags.items() %}
+      <div class="flag"><div><b>{{ name }}</b><div class="small">Default: {{ 'an' if defaults[name] else 'aus' }}</div></div>
+        <form method="post" action="/admin/lokero-controls/feature/{{ name }}">
+          <input type="hidden" name="enabled" value="{{ '0' if enabled else '1' }}">
+          <button class="btn {{ 'off' if enabled else '' }}">{{ 'AN' if enabled else 'AUS' }}</button>
+        </form>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Öffentliche Märkte</h2>
+    <p class="small"><code>benchmark_verified</code> ist die öffentliche Freigabe. Interne Prüfgeräte können QA-Märkte trotzdem sehen.</p>
+    <div class="grid">
+    {% for s in stores %}
+      <div class="store"><div><b>{{ s.retailer }}</b><br>{{ s.name }}<div class="small">{{ s.postal_code }} {{ s.city }}</div></div>
+        <form method="post" action="/admin/lokero-controls/store/{{ s.id }}/release">
+          <input type="hidden" name="released" value="{{ '0' if s.benchmark_verified else '1' }}">
+          <button class="btn {{ 'off' if s.benchmark_verified else 'warn' }}">{{ 'öffentlich' if s.benchmark_verified else 'intern' }}</button>
+        </form>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Normalpreis erfassen</h2>
+    <p class="small">Nur bestätigte Normalpreise eintragen. Beworbene Angebotspreise werden nie automatisch als Normalpreis behandelt.</p>
+    <form class="inline" method="post" action="/admin/lokero-controls/normal-price">
+      <input name="product_id" type="number" min="1" placeholder="Produkt-ID" required>
+      <select name="store_id" required>{% for s in stores %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+      <input name="price" type="number" min="0.01" step="0.01" placeholder="Normalpreis €" required>
+      <input name="notes" placeholder="Notiz (optional)">
+      <button class="btn">Speichern</button>
+    </form>
+    <form method="post" action="/admin/lokero-controls/normal-price/backfill" style="margin-top:12px"><button class="btn off">Explizite Referenzpreise in Historie übernehmen</button></form>
+  </div>
+
+  <div class="card">
+    <h2>Pilot-Empfehlung</h2>
+    <div class="small">Aktiv: Region, Märkte, Angebote, Favoriten, Einkaufsliste. Aus: Optimierung, Sparberechnung, Normalpreis-Badges, bis genügend Märkte und verlässliche Normalpreise vorhanden sind.</div>
+  </div>
+</div></body></html>

@@ -16,9 +16,13 @@ from .admin_provenance_routes import router as admin_provenance_router
 from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .coverage_routes import router as coverage_router
+from .lokero_routes import router as lokero_router
+from .lokero_state_routes import router as lokero_state_router
+from .lokero_admin_routes import router as lokero_admin_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
 from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
 from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
+from .lokero_models import NormalPriceObservation, ReviewerDeviceGrant, RegionInterest  # noqa: F401 - registers additive Lokero tables
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
@@ -34,6 +38,7 @@ from .offer_review_routes import router as offer_review_router
 from .upcoming_routes import router as upcoming_router
 from .admin_seed import seed_admin_catalog
 from .category_classifier import backfill_auto_categories
+from .normal_prices import backfill_explicit_references
 from .db import SessionLocal
 
 _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
@@ -89,6 +94,9 @@ app.include_router(admin_provenance_router)
 app.include_router(admin_prospect_audit_router)
 app.include_router(admin_coverage_router)
 app.include_router(coverage_router)
+app.include_router(lokero_router)
+app.include_router(lokero_state_router)
+app.include_router(lokero_admin_router)
 app.include_router(media_router)
 app.include_router(ux_router)
 app.include_router(prospect_router)
@@ -103,5 +111,6 @@ def startup_admin_catalog():
         seed_admin_catalog(db)
         backfill_auto_categories(db)
         seed_initial_coverage(db)
+        backfill_explicit_references(db)
     finally:
         db.close()
