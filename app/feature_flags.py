@@ -16,7 +16,7 @@ DEFAULT_FEATURE_FLAGS: dict[str, bool] = {
     "savings": False,
     "normal_price_badges": False,
     "price_alerts": False,
-    "product_alternatives": True,
+    "product_alternatives": False,
     "reviewer_mode": True,
 }
 
