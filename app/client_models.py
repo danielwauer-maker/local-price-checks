@@ -65,3 +65,20 @@ class ClientPricingFeedback(Base):
     savings_value: Mapped[str] = mapped_column(String(24), index=True)
     monthly_price: Mapped[str] = mapped_column(String(12), index=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ClientAppRating(Base):
+    """One star rating and optional improvement comment per anonymous client.
+
+    Kept in a separate additive table so existing SQLite installations receive
+    the feature through ``Base.metadata.create_all`` without ALTER TABLE work.
+    """
+
+    __tablename__ = "client_app_ratings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("user_clients.id"), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), index=True)
+    rating: Mapped[int] = mapped_column(Integer, index=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
