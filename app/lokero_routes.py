@@ -77,9 +77,9 @@ def _category_slug(db: Session, product: MasterProduct) -> str:
         .filter(ProductAdminData.master_product_id == product.id)
         .first()
     )
-    if meta and meta.category:
+    if meta and meta.category and meta.category.active:
         return meta.category.slug
-    return "vorrat"
+    return "sonstiges"
 
 
 def _product_payload(db: Session, product: MasterProduct) -> dict:
@@ -518,5 +518,6 @@ def review_normal_price(payload: ManualNormalPricePayload, db: Session = Depends
         confidence=1.0,
         notes=payload.notes,
     )
+    db.flush()
     db.commit()
-    return {"ok": True, "id": row.id, "productId": str(product.id), "storeId": str(store.id) if store else None, "price": row.price, "reviewedBy": actor}
+    return {"ok": True, "id": row.id}
