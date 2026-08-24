@@ -8,17 +8,13 @@ import {
   LogOut,
   MapPin,
   Navigation,
-  Salad,
   ShieldCheck,
   Sparkles,
-  Store,
   User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
-import { MarketLogo } from "@/components/lokero/MarketLogo";
 import { ReviewerSettings } from "@/components/lokero/ReviewerSettings";
-import { RETAILER_OPTIONS, type Chain, type DietTag } from "@/data/lokero";
 import { useStore } from "@/lib/app-store";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -29,13 +25,12 @@ export const Route = createFileRoute("/einstellungen")({
       { title: "Einstellungen – Lokero" },
       {
         name: "description",
-        content:
-          "Standort, Suchradius, bevorzugte Märkte, Fahrtkosten, Benachrichtigungen und Ernährungsfilter in Lokero anpassen.",
+        content: "Standort, Suchradius, Fahrtkosten, Benachrichtigungen und Account in Lokero anpassen.",
       },
       { property: "og:title", content: "Einstellungen – Lokero" },
       {
         property: "og:description",
-        content: "Standort, Radius, Märkte, Fahrtkosten und Benachrichtigungen anpassen.",
+        content: "Standort, Radius, Fahrtkosten und Benachrichtigungen anpassen.",
       },
     ],
   }),
@@ -113,13 +108,6 @@ function Toggle({
   );
 }
 
-const DIETS: Array<{ id: DietTag; label: string }> = [
-  { id: "vegan", label: "Vegan" },
-  { id: "vegetarisch", label: "Vegetarisch" },
-  { id: "glutenfrei", label: "Glutenfrei" },
-  { id: "bio", label: "Bio" },
-];
-
 function SettingsPage() {
   const store = useStore();
   const navigate = useNavigate();
@@ -188,32 +176,10 @@ function SettingsPage() {
           </div>
         </Section>
 
-        <Section icon={Store} title="Bevorzugte Märkte">
-          <ul className="space-y-2">
-            {RETAILER_OPTIONS.map((chain) => {
-              const active = store.preferredChains.includes(chain);
-              const known = ["REWE", "Lidl", "ALDI SÜD", "Netto", "EDEKA"].includes(chain);
-              return (
-                <li key={chain} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {known && <MarketLogo chain={chain as Chain} size="xs" />}
-                    <span className="truncate text-[13px] font-medium text-navy">{chain}</span>
-                  </span>
-                  <Toggle
-                    checked={active}
-                    onChange={() => store.togglePreferredChain(chain)}
-                    label={`${chain} bevorzugen`}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        </Section>
-
         <Section icon={Car} title="Fahrtkosten">
           <Row
             label="Kosten pro Kilometer"
-            hint="Fließt in die Einkaufsoptimierung ein"
+            hint="Wird erst mit der Einkaufsoptimierung verwendet"
             action={
               <label className="flex items-center gap-1 rounded-lg bg-muted-surface px-2 py-1">
                 <span className="sr-only">Kosten pro Kilometer in Euro</span>
@@ -252,30 +218,6 @@ function SettingsPage() {
               }
             />
           ))}
-        </Section>
-
-        <Section icon={Salad} title="Ernährungsfilter">
-          <div className="flex flex-wrap gap-2">
-            {DIETS.map((d) => {
-              const active = store.diet.includes(d.id);
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => store.toggleDiet(d.id)}
-                  aria-pressed={active}
-                  className={cn(
-                    "h-9 rounded-full border px-3.5 text-[13px] font-medium transition-colors duration-150",
-                    active
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-surface text-muted-foreground",
-                  )}
-                >
-                  {d.label}
-                </button>
-              );
-            })}
-          </div>
         </Section>
 
         <Section icon={ShieldCheck} title="Datenschutz">
