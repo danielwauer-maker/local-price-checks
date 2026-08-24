@@ -27,6 +27,8 @@ rsync -a --delete \
   --exclude='.lovable/' \
   --exclude='node_modules/' \
   --exclude='dist/' \
+  --exclude='.dockerignore' \
+  --exclude='Dockerfile.server' \
   "$TEMP/source/" "$TARGET/"
 
 cat > "$TARGET/SOURCE.md" <<EOF
@@ -41,6 +43,7 @@ This folder is design/frontend source only. The production backend, collectors,
 database and Sparplan remain in the Local Price Checks application.
 
 Excluded from the snapshot: \`.git/\`, \`.env*\`, \`.lovable/\`, \`node_modules/\`, \`dist/\`.
+Production overlays preserved by the sync: \`.dockerignore\`, \`Dockerfile.server\`.
 EOF
 
 echo
