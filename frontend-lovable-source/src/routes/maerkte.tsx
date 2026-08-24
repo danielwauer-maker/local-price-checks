@@ -63,7 +63,7 @@ function MarketsScreen() {
       </div>
 
       <div className="px-4 pt-3">
-        <div className="relative h-[190px] overflow-hidden rounded-2xl border border-border">
+        <div className="relative h-[260px] overflow-hidden rounded-2xl border border-border sm:h-[280px]">
           <MapPanel
             center={location}
             radiusKm={radius}
