@@ -21,8 +21,17 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
         "frikadelle", "cevapcici", "gyros",
     )),
     ("fertiggerichte", (
-        "fertiggericht", "fertigmenü", "fix ", " fix", "instant", "topfgericht", "eintopf", "air fryer", "pfannengericht",
+        "fertiggericht", "fertigmenü", " fix ", "instant", "topfgericht", "eintopf", "air fryer", "pfannengericht",
         "lasagne", "ravioli", "maultaschen", "dosenravioli", "currywurst mit", "menü", "ready to eat",
+    )),
+    ("suesswaren", (
+        "schokolade", "schoko", "keks", "kekse", "waffel", "bonbon", "gummi", "chips", "cracker", "nüsse", "nuss",
+        "snack", "riegel", "praline", "lakritz", "popcorn", "fruchtgummi", "nachos", "salzstangen", "gebäck",
+    )),
+    ("getraenke", (
+        "wasser", "quelle", "cola", "limonade", "limo", "saft", "nektar", "smoothie", "bier", "pils", "radler",
+        "wein", "sekt", "prosecco", "vodka", "wodka", "whisky", " gin ", " rum ", "likör", "getränk", "energy",
+        "eistee", "schorle", "sirup", "tonic", "orangeade", "helles", " hell ", "0,0%", "0.0%",
     )),
     ("obst-gemuese", (
         "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine",
@@ -42,15 +51,6 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("fruehstueck", (
         "müsli", "haferflocken", "cornflakes", "cerealien", "marmelade", "konfitüre", "honig", "nuss-nougat",
         "frühstück", "kaffee", "espresso", "cappuccino", "kaffeebohnen", "filterkaffee", "tee ", "teebeutel",
-    )),
-    ("getraenke", (
-        "wasser", "quelle", "cola", "limonade", "limo", "saft", "nektar", "smoothie", "bier", "pils", "radler",
-        "wein", "sekt", "prosecco", "vodka", "wodka", "whisky", " gin ", " rum ", "likör", "getränk", "energy",
-        "eistee", "schorle", "sirup", "tonic", "orangeade", "helles", "0,0%", "0.0%",
-    )),
-    ("suesswaren", (
-        "schokolade", "schoko", "keks", "kekse", "waffel", "bonbon", "gummi", "chips", "cracker", "nüsse", "nuss",
-        "snack", "riegel", "praline", "lakritz", "popcorn", "fruchtgummi", "nachos", "salzstangen", "gebäck",
     )),
     ("tiefkuehl", (
         "tiefkühl", "tiefgekühlt", " tk ", "pizza", "pommes", "eiscreme", "speiseeis", "stieleis", "eis am stiel",
