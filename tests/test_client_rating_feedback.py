@@ -30,8 +30,7 @@ def test_rating_feedback_is_persisted_per_client():
             ),
             db,
         )
-        assert result["ok"] is True
-        assert result["ratingSubmitted"] is True
+        assert result == {"ok": True, "submitted": True}
         pricing = db.query(ClientPricingFeedback).filter_by(client_id=client_id).one()
         rating = db.query(ClientAppRating).filter_by(client_id=client_id).one()
         assert pricing.monthly_price == "4.99"
