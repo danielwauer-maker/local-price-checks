@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .admin_routes import _admin
-from .client_models import ClientDevice, ClientPricingFeedback, UserClient
+from .client_models import ClientAppRating, ClientDevice, ClientPricingFeedback, UserClient
 from .db import get_db
 from .models import FavoriteStore, Store
 
@@ -23,7 +23,9 @@ def admin_users(request: Request, db: Session = Depends(get_db), actor: str = De
     clients = db.query(UserClient).order_by(UserClient.last_seen_at.desc()).all()
     store_by_id = {s.id: s for s in db.query(Store).all()}
     feedback_rows = db.query(ClientPricingFeedback).order_by(ClientPricingFeedback.submitted_at.desc()).all()
+    rating_rows = db.query(ClientAppRating).order_by(ClientAppRating.submitted_at.desc()).all()
     feedback_by_client = {row.client_id: row for row in feedback_rows}
+    rating_by_client = {row.client_id: row for row in rating_rows}
     rows = []
     for client in clients:
         user = client.user
@@ -35,12 +37,15 @@ def admin_users(request: Request, db: Session = Depends(get_db), actor: str = De
             "user": user,
             "favorites": favorites,
             "feedback": feedback_by_client.get(client.id),
+            "rating": rating_by_client.get(client.id),
         })
 
     devices = db.query(ClientDevice).all()
     cutoff = datetime.utcnow() - timedelta(days=7)
     price_counts = Counter(row.monthly_price for row in feedback_rows)
     savings_counts = Counter(row.savings_value for row in feedback_rows)
+    rating_counts = Counter(row.rating for row in rating_rows)
+    rating_average = round(sum(row.rating for row in rating_rows) / len(rating_rows), 2) if rating_rows else None
     stats = {
         "users": len(clients),
         "devices": len(devices),
@@ -52,6 +57,9 @@ def admin_users(request: Request, db: Session = Depends(get_db), actor: str = De
         "android": sum(1 for d in devices if d.os_name == "Android"),
         "with_location": sum(1 for c in clients if c.user and c.user.latitude is not None and c.user.longitude is not None),
         "feedback_total": len(feedback_rows),
+        "rating_total": len(rating_rows),
+        "rating_average": rating_average,
+        "comments_total": sum(1 for row in rating_rows if row.comment),
     }
     return templates.TemplateResponse("admin_users.html", {
         "request": request,
@@ -61,4 +69,6 @@ def admin_users(request: Request, db: Session = Depends(get_db), actor: str = De
         "stats": stats,
         "price_counts": price_counts,
         "savings_counts": savings_counts,
+        "rating_counts": rating_counts,
+        "rating_rows": rating_rows,
     })
