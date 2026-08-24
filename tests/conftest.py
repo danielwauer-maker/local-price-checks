@@ -8,11 +8,13 @@ from app.client_models import (
     UserClient,
 )
 from app.db import SessionLocal, engine
+from app.models import UserProfile
 
 
 @pytest.fixture(autouse=True)
 def isolate_user_client_mappings():
     """Keep anonymous browser identities, account links and feedback isolated between tests."""
+    UserProfile.__table__.create(bind=engine, checkfirst=True)
     UserClient.__table__.create(bind=engine, checkfirst=True)
     AccountIdentity.__table__.create(bind=engine, checkfirst=True)
     AccountClientLink.__table__.create(bind=engine, checkfirst=True)
