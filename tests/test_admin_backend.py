@@ -29,7 +29,8 @@ def test_product_correction_creates_learning_alias_and_locked_metadata():
         db.commit()
         db.refresh(product)
 
-    category = db.query(ProductCategory).filter(ProductCategory.slug == "molkerei-kuehlung").first()
+    category = db.query(ProductCategory).filter(ProductCategory.slug == "molkerei").first()
+    assert category is not None
     apply_product_correction(
         db,
         product,
