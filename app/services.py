@@ -16,9 +16,9 @@ _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 def _unclaimed_profile(db: Session) -> UserProfile | None:
     """Return an existing profile that is not yet attached to any browser client.
 
-    This keeps backwards compatibility with the pre-multi-user LocalPrices data
-    model and with server-side/tests that seed a UserProfile before issuing the
-    first personal write. Read-only traffic never claims such a profile.
+    This preserves compatibility with pre-multi-user installations and tests
+    that seed a UserProfile before the first browser request. Read-only traffic
+    may read such a profile, but never claims it or creates a UserClient.
     """
     claimed_ids = db.query(UserClient.user_id)
     return (
@@ -45,11 +45,10 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
     """Resolve the profile for the current browser/PWA client.
 
     Existing anonymous clients and verified accounts always resolve normally.
-    A previously unseen client is *not* persisted for safe/read-only HTTP
-    methods. It receives a transient guest profile instead. The profile and
-    UserClient are materialized only on a real personal write, preventing
-    health checks, crawlers, smoke tests and anonymous GET requests from
-    polluting the admin user list.
+    A previously unseen client is not persisted for safe/read-only HTTP
+    methods. If a legacy unclaimed profile already exists, it may be read
+    without claiming it; otherwise a transient guest profile is returned.
+    UserProfile + UserClient are materialized only on a real personal write.
 
     ``persist`` can explicitly override the HTTP-method decision. Direct
     server-side/test calls without request context retain the historical
@@ -81,8 +80,9 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
         if persist is None:
             method = get_request_method()
             persist = False if method in _SAFE_METHODS else True
+
         if not persist:
-            return _guest_profile()
+            return _unclaimed_profile(db) or _guest_profile()
 
         user = _unclaimed_profile(db)
         if user is None:
