@@ -20,20 +20,28 @@ export const Route = createFileRoute("/")({
 
 function StartScreen() {
   const { radius, regionStatusOverride, favoriteMarkets } = useStore();
+  const hasFavoriteMarkets = favoriteMarkets.length > 0;
+  const favoriteMarketKey = [...favoriteMarkets].sort().join(",");
   const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures });
   const savings = useQuery({ queryKey: ["weekly-savings"], queryFn: fetchWeeklySavings });
-  const matchedOffers = useQuery({ queryKey: ["favorite-matched-offers"], queryFn: fetchMatchedFavoriteOffers });
+  const matchedOffers = useQuery({
+    queryKey: ["favorite-matched-offers", favoriteMarketKey],
+    queryFn: fetchMatchedFavoriteOffers,
+    enabled: hasFavoriteMarkets,
+  });
   const markets = useQuery({ queryKey: ["markets", radius], queryFn: () => fetchMarkets(radius) });
   const region = useQuery({ queryKey: ["region-status", regionStatusOverride], queryFn: () => fetchRegionStatus(regionStatusOverride === "auto" ? undefined : regionStatusOverride) });
 
   const flags = features.data?.features;
   const showRegion = flags?.region_availability !== false;
   const showSavings = flags?.savings !== false && flags?.optimization !== false && savings.data?.enabled !== false;
-  const prioritizedMatchedOffers = [...(matchedOffers.data ?? [])].sort((a, b) => {
-    const aFavorite = favoriteMarkets.includes(a.marketId) ? 1 : 0;
-    const bFavorite = favoriteMarkets.includes(b.marketId) ? 1 : 0;
-    return bFavorite - aFavorite;
-  });
+  const prioritizedMatchedOffers = hasFavoriteMarkets
+    ? [...(matchedOffers.data ?? [])].sort((a, b) => {
+        const aFavorite = favoriteMarkets.includes(a.marketId) ? 1 : 0;
+        const bFavorite = favoriteMarkets.includes(b.marketId) ? 1 : 0;
+        return bFavorite - aFavorite;
+      })
+    : [];
 
   return (
     <div className="pb-4">
@@ -49,11 +57,17 @@ function StartScreen() {
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/12"><Store className="h-5 w-5" /></span>
               <div className="min-w-0">
                 <p className="text-[12px] font-medium text-white/75">Aktuell in deiner Region</p>
-                <h2 className="mt-0.5 text-[20px] font-bold leading-tight">Alle Angebote entdecken</h2>
-                <p className="mt-1 text-[12px] leading-relaxed text-white/80">{region.data?.activeMarkets ? `${region.data.activeMarkets} freigegebene ${region.data.activeMarkets === 1 ? "Markt" : "Märkte"} · ${region.data.currentOffers ?? 0} aktuelle Angebote` : "Aktuelle lokale Angebote ansehen"}</p>
+                <h2 className="mt-0.5 text-[20px] font-bold leading-tight">{hasFavoriteMarkets ? "Alle Angebote entdecken" : "Deine Märkte auswählen"}</h2>
+                <p className="mt-1 text-[12px] leading-relaxed text-white/80">
+                  {hasFavoriteMarkets
+                    ? (region.data?.activeMarkets ? `${region.data.activeMarkets} freigegebene ${region.data.activeMarkets === 1 ? "Markt" : "Märkte"} · ${region.data.currentOffers ?? 0} aktuelle Angebote` : "Aktuelle lokale Angebote ansehen")
+                    : "Wähle die Märkte aus, deren Angebote Lokero für dich anzeigen soll."}
+                </p>
               </div>
             </div>
-            <Link to="/angebote" className="mt-4 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-white text-[13px] font-semibold text-primary-deep">Angebote ansehen <ArrowRight className="h-4 w-4" /></Link>
+            <Link to={hasFavoriteMarkets ? "/angebote" : "/maerkte"} className="mt-4 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-white text-[13px] font-semibold text-primary-deep">
+              {hasFavoriteMarkets ? "Angebote ansehen" : "Märkte auswählen"} <ArrowRight className="h-4 w-4" />
+            </Link>
           </section>
         )}
 
@@ -66,21 +80,23 @@ function StartScreen() {
             <Link to="/favoriten" className="shrink-0 text-[12px] font-semibold text-primary">Favoriten</Link>
           </div>
 
-          {favoriteMarkets.length === 0 && (
-            <div className="mt-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
-              Du hast noch keine Märkte ausgewählt – aktuell berücksichtigen wir alle freigegebenen Märkte in deinem Umkreis. Sobald du Märkte favorisierst, werden deren passende Angebote zuerst gezeigt.
+          {!hasFavoriteMarkets && (
+            <div className="mt-2 rounded-xl border border-border bg-surface px-3 py-3">
+              <p className="text-[12px] font-semibold text-navy">Noch keine Märkte ausgewählt</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Wähle mindestens einen Markt aus. Danach zeigt Lokero passende Angebote aus deiner persönlichen Marktauswahl.</p>
+              <Link to="/maerkte" className="mt-3 inline-flex h-9 items-center rounded-xl bg-primary px-3 text-[11px] font-semibold text-primary-foreground">Märkte auswählen</Link>
             </div>
           )}
 
-          {matchedOffers.isLoading && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>}
-          {!matchedOffers.isLoading && prioritizedMatchedOffers.length === 0 && (
+          {hasFavoriteMarkets && matchedOffers.isLoading && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>}
+          {hasFavoriteMarkets && !matchedOffers.isLoading && prioritizedMatchedOffers.length === 0 && (
             <div className="mt-3 rounded-2xl border border-border bg-surface p-4 text-center">
               <Heart className="mx-auto h-5 w-5 text-discount" />
               <p className="mt-2 text-[12px] font-semibold text-navy">Noch keine passenden Angebote</p>
               <p className="mt-1 text-[11px] text-muted-foreground">Merke dir Produkte oder Produktfamilien wie Bier, Cola oder Fisch.</p>
             </div>
           )}
-          {prioritizedMatchedOffers.length > 0 && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{prioritizedMatchedOffers.map((offer) => <OfferTile key={`${offer.productId}-${offer.marketId}`} offer={offer} />)}</div>}
+          {hasFavoriteMarkets && prioritizedMatchedOffers.length > 0 && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{prioritizedMatchedOffers.map((offer) => <OfferTile key={`${offer.productId}-${offer.marketId}`} offer={offer} />)}</div>}
         </section>
       </div>
     </div>
