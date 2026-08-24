@@ -4,11 +4,13 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from .account_linking import account_profile_for_client
-from .client_context import get_client_key, get_legacy_client_key
+from .client_context import get_client_key, get_legacy_client_key, get_request_method
 from .client_models import UserClient
 from .clock import app_today
 from .geo import haversine_km
 from .models import FavoriteStore, Offer, UserProfile
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _unclaimed_profile(db: Session) -> UserProfile | None:
@@ -16,8 +18,7 @@ def _unclaimed_profile(db: Session) -> UserProfile | None:
 
     This keeps backwards compatibility with the pre-multi-user LocalPrices data
     model and with server-side/tests that seed a UserProfile before issuing the
-    first HTTP request. A newly seen browser claims that existing profile before
-    a fresh anonymous profile is created.
+    first personal write. Read-only traffic never claims such a profile.
     """
     claimed_ids = db.query(UserClient.user_id)
     return (
@@ -28,12 +29,31 @@ def _unclaimed_profile(db: Session) -> UserProfile | None:
     )
 
 
-def current_user(db: Session) -> UserProfile:
-    """Return the persistent profile for the current browser/PWA client.
+def _guest_profile() -> UserProfile:
+    """Return a transient, non-persisted profile for public read-only traffic."""
+    return UserProfile(
+        display_name="Gast",
+        postal_code=None,
+        city=None,
+        latitude=None,
+        longitude=None,
+        radius_km=15.0,
+    )
 
-    Anonymous clients keep their original profile. Once a client has been
-    linked to a verified external account, requests resolve to that account's
-    canonical UserProfile so the same account can be used across devices.
+
+def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
+    """Resolve the profile for the current browser/PWA client.
+
+    Existing anonymous clients and verified accounts always resolve normally.
+    A previously unseen client is *not* persisted for safe/read-only HTTP
+    methods. It receives a transient guest profile instead. The profile and
+    UserClient are materialized only on a real personal write, preventing
+    health checks, crawlers, smoke tests and anonymous GET requests from
+    polluting the admin user list.
+
+    ``persist`` can explicitly override the HTTP-method decision. Direct
+    server-side/test calls without request context retain the historical
+    materializing behavior for backwards compatibility.
     """
     client_key = get_client_key()
     if client_key:
@@ -58,12 +78,24 @@ def current_user(db: Session) -> UserProfile:
                 account_user = account_profile_for_client(db, legacy_client)
                 return account_user or legacy_client.user
 
+        if persist is None:
+            method = get_request_method()
+            persist = False if method in _SAFE_METHODS else True
+        if not persist:
+            return _guest_profile()
+
         user = _unclaimed_profile(db)
         if user is None:
-            user = UserProfile(display_name=f"Nutzer {db.query(UserProfile).count() + 1}", radius_km=15)
+            user = UserProfile(display_name="Anonym", radius_km=15)
             db.add(user)
             db.flush()
-        client = UserClient(client_key=client_key, user_id=user.id, first_seen_at=datetime.utcnow(), last_seen_at=datetime.utcnow())
+            user.display_name = f"Anonym #{user.id}"
+        client = UserClient(
+            client_key=client_key,
+            user_id=user.id,
+            first_seen_at=datetime.utcnow(),
+            last_seen_at=datetime.utcnow(),
+        )
         db.add(client)
         db.commit()
         db.refresh(user)
