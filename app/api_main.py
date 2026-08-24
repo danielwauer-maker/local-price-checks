@@ -20,10 +20,11 @@ from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
 from .lokero_media_routes import router as lokero_media_router
+from .lokero_favorite_routes import router as lokero_favorite_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
 from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
 from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
-from .lokero_models import NormalPriceObservation, ReviewerDeviceGrant, RegionInterest  # noqa: F401 - registers additive Lokero tables
+from .lokero_models import NormalPriceObservation, ReviewerDeviceGrant, RegionInterest, FavoriteProductPreference  # noqa: F401 - registers additive Lokero tables
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
@@ -96,6 +97,7 @@ app.include_router(admin_prospect_audit_router)
 app.include_router(admin_coverage_router)
 app.include_router(coverage_router)
 app.include_router(lokero_router)
+app.include_router(lokero_favorite_router)
 app.include_router(lokero_state_router)
 app.include_router(lokero_admin_router)
 app.include_router(lokero_media_router)
