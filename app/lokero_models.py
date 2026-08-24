@@ -92,3 +92,18 @@ class FavoriteProductPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user: Mapped[UserProfile] = relationship()
     product: Mapped[MasterProduct] = relationship()
+
+
+class FavoriteProductFamily(Base):
+    """A broad product-family interest such as beer, cola or fish."""
+
+    __tablename__ = "favorite_product_families"
+    __table_args__ = (
+        UniqueConstraint("user_id", "family_slug", name="uq_favorite_product_family"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), index=True)
+    family_slug: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    user: Mapped[UserProfile] = relationship()
