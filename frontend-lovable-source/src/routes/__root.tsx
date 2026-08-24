@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppShell } from "@/components/AppShell";
+import { FirstStartOnboarding } from "@/components/FirstStartOnboarding";
 import { UsageTracker } from "@/components/UsageTracker";
 import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
@@ -196,6 +197,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AppStoreProvider>
         <UsageTracker />
+        {!bare && <FirstStartOnboarding />}
         {bare ? (
           <div className="app-frame">
             <Outlet />
