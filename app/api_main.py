@@ -23,7 +23,13 @@ from .lokero_media_routes import router as lokero_media_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
 from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
 from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
-from .lokero_models import NormalPriceObservation, ReviewerDeviceGrant, RegionInterest  # noqa: F401 - registers additive Lokero tables
+from .lokero_models import (  # noqa: F401 - registers additive Lokero tables
+    FavoriteProductFamily,
+    FavoriteProductPreference,
+    NormalPriceObservation,
+    RegionInterest,
+    ReviewerDeviceGrant,
+)
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
