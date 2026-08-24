@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,6 +19,45 @@ router = APIRouter(prefix="/api/lokero/favorites", tags=["lokero-favorites"])
 
 class FavoritePreferencePayload(BaseModel):
     allowAlternatives: bool
+
+
+FAMILY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cola", ("cola", "coca-cola", "coca cola", "pepsi", "freeway")),
+    ("wasser", ("mineralwasser", "wasser", "quelle", "classic", "medium", "naturell")),
+    ("bier", ("bier", "pils", "pilsener", "radler", "helles", "weizenbier")),
+    ("wein", ("wein", "riesling", "grauburgunder", "rotwein", "weißwein", "rose", "rosé")),
+    ("saft", ("saft", "nektar", "fruchtsaft", "orangensaft", "apfelsaft")),
+    ("energy", ("energy", "red bull", "monster", "effect")),
+    ("kaffee", ("kaffee", "espresso", "kaffeebohnen", "filterkaffee", "cappuccino")),
+    ("joghurt", ("joghurt", "jogurt", "almighurt", "froop")),
+    ("milch", ("vollmilch", "milch", "h-milch", "frischmilch")),
+    ("butter", ("butter", "margarine")),
+    ("gouda", ("gouda",)),
+    ("mozzarella", ("mozzarella",)),
+    ("frischkaese", ("frischkäse", "frischkaese")),
+    ("pizza", ("pizza",)),
+    ("pommes", ("pommes",)),
+    ("eis", ("eiscreme", "speiseeis", "stieleis", "eis am stiel")),
+    ("lachs", ("lachs", "räucherlachs", "raeucherlachs")),
+    ("thunfisch", ("thunfisch",)),
+    ("fischstaebchen", ("fischstäbchen", "fischstaebchen")),
+    ("hackfleisch", ("hackfleisch", "hack gemischt", "rinderhack", "schweinehack")),
+    ("haehnchen", ("hähnchen", "haehnchen", "huhn", "hühner")),
+    ("salami", ("salami",)),
+    ("schinken", ("schinken",)),
+    ("nudeln", ("nudel", "pasta", "spaghetti", "penne", "fusilli")),
+    ("reis", ("reis",)),
+    ("chips", ("chips", "kartoffelchips")),
+    ("schokolade", ("schokolade", "schoko", "tafel")),
+    ("katzenfutter", ("katzenfutter", "katze", "sheba", "whiskas", "felix")),
+    ("hundefutter", ("hundefutter", "hund ", "pedigree")),
+)
+
+STOP_WORDS = {
+    "der", "die", "das", "und", "mit", "ohne", "von", "aus", "für", "fur", "im", "in",
+    "g", "kg", "ml", "l", "stk", "stück", "stueck", "pack", "original", "classic", "natur",
+    "frisch", "frische", "neu", "sorten", "verschiedene", "versch", "je", "ca",
+}
 
 
 def _category_slug(db: Session, product_id: int) -> str:
@@ -38,6 +79,34 @@ def _product_payload(db: Session, product: MasterProduct) -> dict:
         "tags": [],
         "imageUrl": f"/api/lokero/product-media/{product.id}",
     }
+
+
+def _normalized_text(product: MasterProduct) -> str:
+    return f"{product.brand or ''} {product.name or ''}".strip().lower()
+
+
+def _family(product: MasterProduct) -> str | None:
+    text = _normalized_text(product)
+    for family, needles in FAMILY_RULES:
+        if any(needle in text for needle in needles):
+            return family
+    return None
+
+
+def _tokens(product: MasterProduct) -> set[str]:
+    words = re.findall(r"[a-zäöüß0-9]+", _normalized_text(product))
+    return {word for word in words if len(word) >= 4 and word not in STOP_WORDS and not word.isdigit()}
+
+
+def _alternative_match(source: MasterProduct, candidate: MasterProduct) -> tuple[bool, str]:
+    source_family = _family(source)
+    candidate_family = _family(candidate)
+    if source_family:
+        return (source_family == candidate_family, f"Gleiche Produktart: {source_family}")
+    shared = _tokens(source) & _tokens(candidate)
+    if shared:
+        return (True, f"Ähnliche Produktbezeichnung: {sorted(shared)[0]}")
+    return (False, "")
 
 
 def _public_store_ids(db: Session, user) -> list[int]:
@@ -119,6 +188,7 @@ def favorite_product_alternatives(product_id: int, db: Session = Depends(get_db)
     if not pref or not pref.allow_alternatives:
         return []
 
+    source_product = favorite.product
     category = _category_slug(db, product_id)
     if category == "sonstiges":
         return []
@@ -141,6 +211,9 @@ def favorite_product_alternatives(product_id: int, db: Session = Depends(get_db)
             continue
         if _category_slug(db, offer.master_product_id) != category:
             continue
+        matches, reason = _alternative_match(source_product, offer.product)
+        if not matches:
+            continue
         seen.add(offer.master_product_id)
         result.append({
             "product": _product_payload(db, offer.product),
@@ -151,7 +224,7 @@ def favorite_product_alternatives(product_id: int, db: Session = Depends(get_db)
                 "chain": offer.store.retailer,
             },
             "kind": "aehnlich",
-            "reason": "Gleiche Produktkategorie und aktuell im Angebot",
+            "reason": reason,
         })
         if len(result) >= 5:
             break
