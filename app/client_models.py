@@ -10,14 +10,7 @@ from .models import UserProfile
 
 
 class UserClient(Base):
-    """Anonymous browser/PWA client mapped to one persistent user profile.
-
-    The browser-generated ``client_key`` is the durable installation/device
-    identity. A HttpOnly cookie remains as a fallback for older clients, while
-    current clients also send the same key explicitly on API requests. This
-    prevents a race between the first bootstrap request and the PWA heartbeat
-    from creating two anonymous users for one browser.
-    """
+    """Anonymous browser/PWA client mapped to one persistent user profile."""
 
     __tablename__ = "user_clients"
 
@@ -36,11 +29,7 @@ class UserClient(Base):
 
 
 class ClientDevice(Base):
-    """Normalized, privacy-conscious device metadata for one anonymous client.
-
-    This is an additive table so existing SQLite installations get it through
-    ``Base.metadata.create_all`` without an in-place ALTER TABLE migration.
-    """
+    """Normalized, privacy-conscious device metadata for one anonymous client."""
 
     __tablename__ = "client_devices"
 
@@ -63,3 +52,16 @@ class ClientDevice(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     client: Mapped[UserClient] = relationship(back_populates="device")
+
+
+class ClientPricingFeedback(Base):
+    """One pricing/value survey answer per anonymous browser/PWA client."""
+
+    __tablename__ = "client_pricing_feedback"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("user_clients.id"), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), index=True)
+    savings_value: Mapped[str] = mapped_column(String(24), index=True)
+    monthly_price: Mapped[str] = mapped_column(String(12), index=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
