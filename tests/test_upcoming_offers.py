@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
-from app import upcoming_routes
-from app.config import settings
+from app import services, upcoming_routes
 from app.db import Base, SessionLocal, engine
 from app.models import FavoriteStore, MasterProduct, Offer, Store, UserProfile
 from app.services import offers_for_selected_stores
@@ -10,8 +9,7 @@ from app.services import offers_for_selected_stores
 def test_next_week_only_returns_released_selected_future_offers(monkeypatch):
     Base.metadata.create_all(engine)
     db = SessionLocal()
-    old_override = settings.local_date_override
-    settings.local_date_override = "2026-08-24"
+    monkeypatch.setattr(services, "app_today", lambda: date(2026, 8, 24))
     user = None
     store = None
     product = None
@@ -82,7 +80,6 @@ def test_next_week_only_returns_released_selected_future_offers(monkeypatch):
         assert payload["prices"][0]["validFrom"] == "2026-08-31"
         assert payload["prices"][0]["offer"]["price"] == 2.49
     finally:
-        settings.local_date_override = old_override
         if store is not None:
             db.query(Offer).filter(Offer.store_id == store.id).delete(synchronize_session=False)
             db.query(FavoriteStore).filter(FavoriteStore.store_id == store.id).delete(synchronize_session=False)
