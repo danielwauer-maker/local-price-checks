@@ -31,6 +31,7 @@ from .media_routes import router as media_router
 from .ux_routes import router as ux_router
 from .prospect_routes import router as prospect_router
 from .offer_review_routes import router as offer_review_router
+from .upcoming_routes import router as upcoming_router
 from .admin_seed import seed_admin_catalog
 from .category_classifier import backfill_auto_categories
 from .db import SessionLocal
@@ -92,6 +93,7 @@ app.include_router(media_router)
 app.include_router(ux_router)
 app.include_router(prospect_router)
 app.include_router(offer_review_router)
+app.include_router(upcoming_router)
 
 
 @app.on_event("startup")

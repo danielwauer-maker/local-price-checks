@@ -1,11 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { MapPin, Settings } from "lucide-react";
+import { CalendarDays, ChevronRight, MapPin, Settings } from "lucide-react";
 import { useActiveMarketIds, useStore } from "@/lib/app-store";
-import { PRODUCTS, currentOffers, formatEuro } from "@/data/demo";
+import { PRODUCTS, currentOffers, formatEuro, type Price } from "@/data/demo";
 import { groupIdenticalOffers, marketSummary } from "@/lib/offer-groups";
 import { matchesFavorite } from "@/lib/favorite-matching";
 import { useFavoriteAlternatives } from "@/lib/use-favorite-alternatives";
+import { withDeviceIdentity } from "@/lib/device-identity";
 import { CoverageMapPanel } from "@/components/CoverageMapPanel";
 import type { CoverageRegion } from "@/components/CoverageMap";
 
@@ -19,11 +20,14 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
+type UpcomingPayload = { count: number; startsOn: string | null; prices: Price[] };
+
 function Index() {
   const { location, productFavorites, profile } = useStore();
   const { preferences } = useFavoriteAlternatives();
   const activeIds = useActiveMarketIds();
   const [regions, setRegions] = useState<CoverageRegion[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingPayload>({ count: 0, startsOn: null, prices: [] });
 
   useEffect(() => {
     let live = true;
@@ -33,6 +37,15 @@ function Index() {
       .catch(() => live && setRegions([]));
     return () => { live = false; };
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/offers/upcoming", { headers: withDeviceIdentity() })
+      .then((response) => response.ok ? response.json() : { count: 0, startsOn: null, prices: [] })
+      .then((payload: UpcomingPayload) => live && setUpcoming(payload))
+      .catch(() => live && setUpcoming({ count: 0, startsOn: null, prices: [] }));
+    return () => { live = false; };
+  }, [activeIds.join(",")]);
 
   const favoriteOffers = useMemo(() => {
     if (activeIds.length === 0 || productFavorites.length === 0) return [];
@@ -46,6 +59,10 @@ function Index() {
   const favoriteHeadline = favoriteOffers.length === 1
     ? "1 Favorit ist aktuell besonders günstig"
     : `${favoriteOffers.length} Favoriten sind aktuell besonders günstig`;
+
+  const upcomingStart = upcoming.startsOn
+    ? new Date(`${upcoming.startsOn}T12:00:00`).toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })
+    : null;
 
   const coverage = useMemo(() => {
     const distanceKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
@@ -75,6 +92,18 @@ function Index() {
         <div className="surface-card mt-3 p-4">
           {coverage?.status === "live" ? <><p className="text-sm font-semibold text-primary">Deine Region ist freigegeben</p><p className="mt-1 text-xs text-muted-foreground">{coverage.name} · {coverage.verifiedStores} geprüfte Märkte · {coverage.currentOffers} aktuelle Angebotszeilen</p></> : coverage?.status === "building" ? <><p className="text-sm font-semibold">Deine Region wird gerade aufgebaut</p><p className="mt-1 text-xs text-muted-foreground">Märkte und Prospekte werden gesammelt und geprüft. Erst nach QA erscheinen Angebote im Vergleich.</p></> : <><p className="text-sm font-semibold">Für deinen Standort ist noch keine Region freigegeben</p><p className="mt-1 text-xs text-muted-foreground">Grüne Bereiche sind verfügbar, gelbe Bereiche befinden sich im Aufbau.</p></>}
         </div>
+      </section>
+
+      <section className="px-5 pt-6">
+        <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">Nächste Woche</h2><span className="text-xs text-muted-foreground">Vorschau</span></div>
+        <Link to="/naechste-woche" className="surface-card mt-3 flex items-center gap-3 p-4 transition-transform active:scale-[.99]">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary-soft text-primary"><CalendarDays className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">{upcoming.count > 0 ? `${upcoming.count} kommende Angebote entdeckt` : "Kommende Angebote im Blick"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{upcoming.count > 0 ? `${upcomingStart ? `Ab ${upcomingStart} · ` : ""}prüfe, ob sich Warten bei deiner Einkaufsliste lohnt.` : "Sobald deine Märkte die nächste Angebotsrunde veröffentlichen, erscheint sie hier automatisch."}</p>
+          </div>
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Link>
       </section>
 
       <section className="px-5 pt-6">
