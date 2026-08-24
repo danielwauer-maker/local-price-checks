@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, LogOut, Mail, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
@@ -28,12 +28,24 @@ export const Route = createFileRoute("/auth")({
 function AuthPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordRepeat, setNewPasswordRepeat] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmationPending, setConfirmationPending] = useState(false);
   const [resending, setResending] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryMode(true);
+      }
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,7 +56,7 @@ function AuthPage() {
         if (error) throw error;
         toast.success("Willkommen zurück!");
         navigate({ to: "/" });
-      } else {
+      } else if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -60,9 +72,42 @@ function AuthPage() {
 
         setConfirmationPending(true);
         toast.success("Konto erstellt – bitte E-Mail bestätigen.");
+      } else {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/auth`,
+        });
+        if (error) throw error;
+        toast.success("Wenn ein Konto existiert, wurde ein Link zum Zurücksetzen versendet.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Anmeldung fehlgeschlagen");
+      toast.error(err instanceof Error ? err.message : "Aktion fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updatePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPassword.length < 8) {
+      toast.error("Das neue Passwort muss mindestens 8 Zeichen lang sein.");
+      return;
+    }
+    if (newPassword !== newPasswordRepeat) {
+      toast.error("Die Passwörter stimmen nicht überein.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      setRecoveryMode(false);
+      setNewPassword("");
+      setNewPasswordRepeat("");
+      toast.success("Passwort wurde geändert.");
+      navigate({ to: "/" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Passwort konnte nicht geändert werden");
     } finally {
       setBusy(false);
     }
@@ -86,22 +131,6 @@ function AuthPage() {
     }
   }
 
-  async function google() {
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth`,
-        },
-      });
-      if (error) throw error;
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Google-Anmeldung fehlgeschlagen");
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="min-h-dvh px-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
       <button
@@ -112,7 +141,43 @@ function AuthPage() {
         <ArrowLeft className="h-5 w-5" />
       </button>
 
-      {user ? (
+      {recoveryMode ? (
+        <div className="mt-10 surface-card p-6">
+          <h1 className="text-2xl font-semibold">Neues Passwort setzen</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Wähle ein neues Passwort für dein Lokero-Konto.
+          </p>
+          <form onSubmit={updatePassword} className="mt-6 space-y-3">
+            <input
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="Neues Passwort"
+              className="w-full rounded-2xl bg-surface px-4 py-3.5 text-sm shadow-card outline-none ring-primary/40 focus:ring-2"
+            />
+            <input
+              type="password"
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={newPasswordRepeat}
+              onChange={(e) => setNewPasswordRepeat(e.target.value)}
+              placeholder="Passwort wiederholen"
+              className="w-full rounded-2xl bg-surface px-4 py-3.5 text-sm shadow-card outline-none ring-primary/40 focus:ring-2"
+            />
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full rounded-2xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow-float disabled:opacity-60"
+            >
+              Passwort speichern
+            </button>
+          </form>
+        </div>
+      ) : user ? (
         <div className="mt-10 surface-card p-6 text-center">
           <p className="text-sm text-muted-foreground">Angemeldet als</p>
           <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Lokero-Konto"}</p>
@@ -134,30 +199,34 @@ function AuthPage() {
         <>
           <header className="mt-8">
             <h1 className="text-2xl font-semibold">
-              {mode === "login" ? "Willkommen zurück" : "Konto erstellen"}
+              {mode === "login" ? "Willkommen zurück" : mode === "signup" ? "Konto erstellen" : "Passwort vergessen"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Sichere Einkaufslisten, Favoriten und Märkte auf allen Geräten.
+              {mode === "forgot"
+                ? "Wir senden dir einen Link, mit dem du ein neues Passwort festlegen kannst."
+                : "Sichere Einkaufslisten, Favoriten und Märkte auf allen Geräten."}
             </p>
           </header>
 
-          <div className="mt-6 flex rounded-2xl bg-secondary p-1">
-            {(["login", "signup"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => {
-                  setMode(m);
-                  setConfirmationPending(false);
-                }}
-                className={cn(
-                  "flex-1 rounded-xl py-2 text-sm font-semibold transition-colors",
-                  mode === m ? "bg-surface text-foreground shadow-card" : "text-muted-foreground",
-                )}
-              >
-                {m === "login" ? "Anmelden" : "Registrieren"}
-              </button>
-            ))}
-          </div>
+          {mode !== "forgot" ? (
+            <div className="mt-6 flex rounded-2xl bg-secondary p-1">
+              {(["login", "signup"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => {
+                    setMode(m);
+                    setConfirmationPending(false);
+                  }}
+                  className={cn(
+                    "flex-1 rounded-xl py-2 text-sm font-semibold transition-colors",
+                    mode === m ? "bg-surface text-foreground shadow-card" : "text-muted-foreground",
+                  )}
+                >
+                  {m === "login" ? "Anmelden" : "Registrieren"}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <form onSubmit={submit} className="mt-5 space-y-3">
             <input
@@ -169,25 +238,45 @@ function AuthPage() {
               placeholder="E-Mail"
               className="w-full rounded-2xl bg-surface px-4 py-3.5 text-sm shadow-card outline-none ring-primary/40 focus:ring-2"
             />
-            <input
-              type="password"
-              required
-              minLength={6}
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Passwort"
-              className="w-full rounded-2xl bg-surface px-4 py-3.5 text-sm shadow-card outline-none ring-primary/40 focus:ring-2"
-            />
+            {mode !== "forgot" ? (
+              <input
+                type="password"
+                required
+                minLength={6}
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Passwort"
+                className="w-full rounded-2xl bg-surface px-4 py-3.5 text-sm shadow-card outline-none ring-primary/40 focus:ring-2"
+              />
+            ) : null}
             <button
               type="submit"
               disabled={busy}
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow-float disabled:opacity-60"
             >
               <Mail className="h-4 w-4" />
-              {mode === "login" ? "Anmelden" : "Registrieren"}
+              {mode === "login" ? "Anmelden" : mode === "signup" ? "Registrieren" : "Reset-Link senden"}
             </button>
           </form>
+
+          {mode === "login" ? (
+            <button
+              type="button"
+              onClick={() => setMode("forgot")}
+              className="mt-3 w-full text-center text-sm font-semibold text-primary"
+            >
+              Passwort vergessen?
+            </button>
+          ) : mode === "forgot" ? (
+            <button
+              type="button"
+              onClick={() => setMode("login")}
+              className="mt-3 w-full text-center text-sm font-semibold text-primary"
+            >
+              Zurück zur Anmeldung
+            </button>
+          ) : null}
 
           {confirmationPending ? (
             <div className="mt-4 rounded-2xl bg-surface p-4 text-sm shadow-card">
@@ -207,32 +296,9 @@ function AuthPage() {
             </div>
           ) : null}
 
-          <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wide text-muted-foreground">
-            <span className="h-px flex-1 bg-border" /> oder <span className="h-px flex-1 bg-border" />
+          <div className="mt-6 rounded-2xl border border-border bg-surface/60 p-3 text-center text-xs text-muted-foreground">
+            Google-Anmeldung ist vorübergehend deaktiviert, bis die OAuth-Credentials für die Produktions-App konfiguriert sind.
           </div>
-
-          <button
-            onClick={google}
-            disabled={busy}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-surface py-3.5 text-sm font-semibold shadow-card disabled:opacity-60"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
-              <path
-                fill="#4285F4"
-                d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.7v3h3.9c2.3-2.1 3.5-5.2 3.5-8.9Z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24Z"
-              />
-              <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.3a12 12 0 0 0 0 10.8l4-3.1Z" />
-              <path
-                fill="#EA4335"
-                d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-5 6.7-5Z"
-              />
-            </svg>
-            Mit Google fortfahren
-          </button>
 
           <p className="mt-6 text-center text-[11px] text-muted-foreground">
             Ohne Konto kannst du die App weiter nutzen – Daten bleiben dann nur auf diesem Gerät.
