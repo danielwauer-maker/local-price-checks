@@ -1,8 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowLeft, LogOut, Mail } from "lucide-react";
+import { ArrowLeft, LogOut, Mail, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { useAuth } from "@/lib/use-auth";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -33,6 +32,8 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmationPending, setConfirmationPending] = useState(false);
+  const [resending, setResending] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,12 +45,20 @@ function AuthPage() {
         toast.success("Willkommen zurück!");
         navigate({ to: "/" });
       } else {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: window.location.origin },
+          options: { emailRedirectTo: `${window.location.origin}/auth` },
         });
         if (error) throw error;
+
+        if (data.session) {
+          toast.success("Konto erstellt und angemeldet.");
+          navigate({ to: "/" });
+          return;
+        }
+
+        setConfirmationPending(true);
         toast.success("Konto erstellt – bitte E-Mail bestätigen.");
       }
     } catch (err) {
@@ -59,16 +68,38 @@ function AuthPage() {
     }
   }
 
-  async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error("Google-Anmeldung fehlgeschlagen");
-      return;
+  async function resendConfirmation() {
+    if (!email.trim()) return;
+    setResending(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/auth` },
+      });
+      if (error) throw error;
+      toast.success("Bestätigungsmail wurde erneut angefordert.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bestätigungsmail konnte nicht gesendet werden");
+    } finally {
+      setResending(false);
     }
-    if (result.redirected) return;
-    navigate({ to: "/" });
+  }
+
+  async function google() {
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth`,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Google-Anmeldung fehlgeschlagen");
+      setBusy(false);
+    }
   }
 
   return (
@@ -84,7 +115,10 @@ function AuthPage() {
       {user ? (
         <div className="mt-10 surface-card p-6 text-center">
           <p className="text-sm text-muted-foreground">Angemeldet als</p>
-          <p className="mt-1 text-lg font-semibold">{user.email}</p>
+          <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Lokero-Konto"}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Diese Anmeldung kann auch aus einer früheren Lokero-/Test-Session stammen.
+          </p>
           <button
             onClick={async () => {
               await signOut();
@@ -111,7 +145,10 @@ function AuthPage() {
             {(["login", "signup"] as const).map((m) => (
               <button
                 key={m}
-                onClick={() => setMode(m)}
+                onClick={() => {
+                  setMode(m);
+                  setConfirmationPending(false);
+                }}
                 className={cn(
                   "flex-1 rounded-xl py-2 text-sm font-semibold transition-colors",
                   mode === m ? "bg-surface text-foreground shadow-card" : "text-muted-foreground",
@@ -152,13 +189,32 @@ function AuthPage() {
             </button>
           </form>
 
+          {confirmationPending ? (
+            <div className="mt-4 rounded-2xl bg-surface p-4 text-sm shadow-card">
+              <p className="font-semibold">E-Mail noch nicht angekommen?</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Prüfe bitte auch Spam/Junk. Du kannst die Bestätigungsmail anschließend erneut anfordern.
+              </p>
+              <button
+                type="button"
+                onClick={resendConfirmation}
+                disabled={resending}
+                className="mt-3 inline-flex items-center gap-2 rounded-full bg-secondary px-4 py-2 text-xs font-semibold disabled:opacity-60"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", resending && "animate-spin")} />
+                Bestätigungsmail erneut senden
+              </button>
+            </div>
+          ) : null}
+
           <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wide text-muted-foreground">
             <span className="h-px flex-1 bg-border" /> oder <span className="h-px flex-1 bg-border" />
           </div>
 
           <button
             onClick={google}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-surface py-3.5 text-sm font-semibold shadow-card"
+            disabled={busy}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-surface py-3.5 text-sm font-semibold shadow-card disabled:opacity-60"
           >
             <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
               <path
