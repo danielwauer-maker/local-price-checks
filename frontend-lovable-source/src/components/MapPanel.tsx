@@ -1,28 +1,28 @@
-import { Suspense, lazy, useEffect, useState } from "react";
-import type { Market } from "@/data/demo";
+import { lazy, Suspense } from "react";
+import { ClientOnly } from "@tanstack/react-router";
+import type { Market } from "@/data/lokero";
 
 const MarketMap = lazy(() => import("./MarketMap"));
 
 type Props = {
   center: { lat: number; lng: number };
   radiusKm: number;
-  markets: Array<Market & { distance: number }>;
-  selected: string[];
-  onSelect: (id: string) => void;
+  markets: Market[];
   activeId?: string | null;
+  onSelect?: (id: string) => void;
 };
 
-export function MapPanel(props: Props) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+function MapSkeleton() {
+  return <div className="h-full w-full animate-pulse bg-muted-surface" />;
+}
 
-  if (!mounted) {
-    return <div className="h-full w-full animate-pulse bg-surface-2" />;
-  }
-
+/** Leaflet lädt erst im Browser – SSR-sicher gekapselt. */
+export default function MapPanel(props: Props) {
   return (
-    <Suspense fallback={<div className="h-full w-full animate-pulse bg-surface-2" />}>
-      <MarketMap {...props} />
-    </Suspense>
+    <ClientOnly fallback={<MapSkeleton />}>
+      <Suspense fallback={<MapSkeleton />}>
+        <MarketMap {...props} />
+      </Suspense>
+    </ClientOnly>
   );
 }

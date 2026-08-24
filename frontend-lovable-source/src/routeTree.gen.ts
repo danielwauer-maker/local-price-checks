@@ -12,9 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AngeboteRouteImport } from './routes/angebote'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as EinstellungenRouteImport } from './routes/einstellungen'
+import { Route as FavoritenRouteImport } from './routes/favoriten'
 import { Route as ListeRouteImport } from './routes/liste'
 import { Route as MaerkteRouteImport } from './routes/maerkte'
+import { Route as RegionenRouteImport } from './routes/regionen'
 import { Route as ScannerRouteImport } from './routes/scanner'
+import { Route as SucheRouteImport } from './routes/suche'
+import { Route as ProduktProductIdRouteImport } from './routes/produkt.$productId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -31,6 +36,16 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EinstellungenRoute = EinstellungenRouteImport.update({
+  id: '/einstellungen',
+  path: '/einstellungen',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FavoritenRoute = FavoritenRouteImport.update({
+  id: '/favoriten',
+  path: '/favoriten',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ListeRoute = ListeRouteImport.update({
   id: '/liste',
   path: '/liste',
@@ -41,9 +56,24 @@ const MaerkteRoute = MaerkteRouteImport.update({
   path: '/maerkte',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RegionenRoute = RegionenRouteImport.update({
+  id: '/regionen',
+  path: '/regionen',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScannerRoute = ScannerRouteImport.update({
   id: '/scanner',
   path: '/scanner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SucheRoute = SucheRouteImport.update({
+  id: '/suche',
+  path: '/suche',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProduktProductIdRoute = ProduktProductIdRouteImport.update({
+  id: '/produkt/$productId',
+  path: '/produkt/$productId',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -51,49 +81,96 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/angebote': typeof AngeboteRoute
   '/auth': typeof AuthRoute
+  '/einstellungen': typeof EinstellungenRoute
+  '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
+  '/suche': typeof SucheRoute
+  '/produkt/$productId': typeof ProduktProductIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/angebote': typeof AngeboteRoute
   '/auth': typeof AuthRoute
+  '/einstellungen': typeof EinstellungenRoute
+  '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
+  '/suche': typeof SucheRoute
+  '/produkt/$productId': typeof ProduktProductIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/angebote': typeof AngeboteRoute
   '/auth': typeof AuthRoute
+  '/einstellungen': typeof EinstellungenRoute
+  '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
+  '/suche': typeof SucheRoute
+  '/produkt/$productId': typeof ProduktProductIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/angebote' | '/auth' | '/liste' | '/maerkte' | '/scanner'
+  fullPaths:
+    | '/'
+    | '/angebote'
+    | '/auth'
+    | '/einstellungen'
+    | '/favoriten'
+    | '/liste'
+    | '/maerkte'
+    | '/regionen'
+    | '/scanner'
+    | '/suche'
+    | '/produkt/$productId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/angebote' | '/auth' | '/liste' | '/maerkte' | '/scanner'
+  to:
+    | '/'
+    | '/angebote'
+    | '/auth'
+    | '/einstellungen'
+    | '/favoriten'
+    | '/liste'
+    | '/maerkte'
+    | '/regionen'
+    | '/scanner'
+    | '/suche'
+    | '/produkt/$productId'
   id:
     | '__root__'
     | '/'
     | '/angebote'
     | '/auth'
+    | '/einstellungen'
+    | '/favoriten'
     | '/liste'
     | '/maerkte'
+    | '/regionen'
     | '/scanner'
+    | '/suche'
+    | '/produkt/$productId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AngeboteRoute: typeof AngeboteRoute
   AuthRoute: typeof AuthRoute
+  EinstellungenRoute: typeof EinstellungenRoute
+  FavoritenRoute: typeof FavoritenRoute
   ListeRoute: typeof ListeRoute
   MaerkteRoute: typeof MaerkteRoute
+  RegionenRoute: typeof RegionenRoute
   ScannerRoute: typeof ScannerRoute
+  SucheRoute: typeof SucheRoute
+  ProduktProductIdRoute: typeof ProduktProductIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -119,6 +196,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/einstellungen': {
+      id: '/einstellungen'
+      path: '/einstellungen'
+      fullPath: '/einstellungen'
+      preLoaderRoute: typeof EinstellungenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/favoriten': {
+      id: '/favoriten'
+      path: '/favoriten'
+      fullPath: '/favoriten'
+      preLoaderRoute: typeof FavoritenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/liste': {
       id: '/liste'
       path: '/liste'
@@ -133,11 +224,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MaerkteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/regionen': {
+      id: '/regionen'
+      path: '/regionen'
+      fullPath: '/regionen'
+      preLoaderRoute: typeof RegionenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/scanner': {
       id: '/scanner'
       path: '/scanner'
       fullPath: '/scanner'
       preLoaderRoute: typeof ScannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/suche': {
+      id: '/suche'
+      path: '/suche'
+      fullPath: '/suche'
+      preLoaderRoute: typeof SucheRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/produkt/$productId': {
+      id: '/produkt/$productId'
+      path: '/produkt/$productId'
+      fullPath: '/produkt/$productId'
+      preLoaderRoute: typeof ProduktProductIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -147,9 +259,14 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AngeboteRoute: AngeboteRoute,
   AuthRoute: AuthRoute,
+  EinstellungenRoute: EinstellungenRoute,
+  FavoritenRoute: FavoritenRoute,
   ListeRoute: ListeRoute,
   MaerkteRoute: MaerkteRoute,
+  RegionenRoute: RegionenRoute,
   ScannerRoute: ScannerRoute,
+  SucheRoute: SucheRoute,
+  ProduktProductIdRoute: ProduktProductIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

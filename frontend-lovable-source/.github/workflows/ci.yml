@@ -1,0 +1,21 @@
+name: Frontend CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/backend-integration]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Production build
+        run: bun run build
+      - name: Legacy full-repo lint (advisory)
+        continue-on-error: true
+        run: bun run lint

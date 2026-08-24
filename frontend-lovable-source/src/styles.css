@@ -5,145 +5,118 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * LocalPrices design system — frisch, mobil, hochwertig.
- * Farben ausschliesslich als oklch-Tokens.
+ * Lokero Design System – Design Freeze.
+ * Alle Marken- und Funktionsfarben zentral als Tokens.
  */
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 6px);
-  --radius-md: calc(var(--radius) - 3px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 6px);
-  --radius-2xl: calc(var(--radius) + 12px);
-  --radius-3xl: calc(var(--radius) + 20px);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-2xl: 18px;
+  --radius-3xl: 24px;
 
-  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted-surface: var(--muted-surface);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-deep: var(--primary-deep);
   --color-primary-soft: var(--primary-soft);
+
+  --color-navy: var(--navy);
+  --color-teal: var(--teal);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-deal: var(--deal);
-  --color-deal-foreground: var(--deal-foreground);
+
+  --color-discount: var(--discount);
+  --color-discount-soft: var(--discount-soft);
+  --color-alert: var(--alert);
+  --color-alert-foreground: var(--alert-foreground);
+  --color-alt: var(--alt);
+
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
+
+  --color-chart-1: var(--primary);
+  --color-chart-2: var(--teal);
+  --color-chart-3: var(--info);
+  --color-chart-4: var(--discount);
+  --color-chart-5: var(--navy);
 }
 
 :root {
-  --radius: 1.15rem;
+  --radius: 16px;
 
-  --background: oklch(0.985 0.008 106);
-  --foreground: oklch(0.22 0.03 155);
-  --surface: oklch(1 0 0);
-  --surface-2: oklch(0.965 0.014 120);
+  /* Marke */
+  --brand-green: #22c55e;
+  --brand-navy: #0f172a;
+  --brand-teal: #14b8a6;
+  --brand-blue: #3b82f6;
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.22 0.03 155);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.22 0.03 155);
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --muted-surface: #f1f5f9;
 
-  --primary: oklch(0.47 0.113 158);
-  --primary-foreground: oklch(0.985 0.01 120);
-  --primary-soft: oklch(0.94 0.045 150);
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
 
-  --secondary: oklch(0.955 0.02 130);
-  --secondary-foreground: oklch(0.3 0.05 158);
+  --primary: #22c55e;
+  --primary-foreground: #ffffff;
+  --primary-deep: #078a4d;
+  --primary-soft: #ecfdf5;
 
-  --muted: oklch(0.955 0.012 110);
-  --muted-foreground: oklch(0.53 0.02 150);
+  --navy: #0f172a;
+  --teal: #14b8a6;
+  --info: #3b82f6;
+  --info-soft: #eff6ff;
 
-  --accent: oklch(0.86 0.17 105);
-  --accent-foreground: oklch(0.26 0.05 120);
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
 
-  --deal: oklch(0.63 0.19 32);
-  --deal-foreground: oklch(0.99 0.01 80);
+  --discount: #ef4444;
+  --discount-soft: #fef2f2;
+  --alert: #fef3c7;
+  --alert-foreground: #b45309;
+  --alt: #ecfdf5;
 
-  --destructive: oklch(0.58 0.21 27);
-  --destructive-foreground: oklch(0.99 0.01 80);
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #22c55e;
 
-  --border: oklch(0.915 0.012 130);
-  --input: oklch(0.915 0.012 130);
-  --ring: oklch(0.47 0.113 158);
-
-  --chart-1: oklch(0.47 0.113 158);
-  --chart-2: oklch(0.86 0.17 105);
-  --chart-3: oklch(0.63 0.19 32);
-  --chart-4: oklch(0.6 0.09 220);
-  --chart-5: oklch(0.7 0.13 300);
-
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.22 0.03 155);
-  --sidebar-primary: oklch(0.47 0.113 158);
-  --sidebar-primary-foreground: oklch(0.985 0.01 120);
-  --sidebar-accent: oklch(0.955 0.02 130);
-  --sidebar-accent-foreground: oklch(0.3 0.05 158);
-  --sidebar-border: oklch(0.915 0.012 130);
-  --sidebar-ring: oklch(0.47 0.113 158);
-
-  --gradient-hero: linear-gradient(
-    150deg,
-    oklch(0.42 0.1 162) 0%,
-    oklch(0.52 0.12 148) 55%,
-    oklch(0.62 0.14 130) 100%
-  );
-  --gradient-deal: linear-gradient(120deg, oklch(0.68 0.19 45), oklch(0.78 0.17 75));
-  --shadow-card: 0 1px 2px oklch(0.3 0.04 155 / 0.05), 0 10px 24px -18px oklch(0.3 0.04 155 / 0.45);
-  --shadow-float: 0 12px 34px -14px oklch(0.3 0.06 155 / 0.4);
-}
-
-.dark {
-  --background: oklch(0.18 0.02 155);
-  --foreground: oklch(0.96 0.01 120);
-  --surface: oklch(0.23 0.024 158);
-  --surface-2: oklch(0.27 0.028 158);
-  --card: oklch(0.23 0.024 158);
-  --card-foreground: oklch(0.96 0.01 120);
-  --popover: oklch(0.23 0.024 158);
-  --popover-foreground: oklch(0.96 0.01 120);
-  --primary: oklch(0.72 0.14 152);
-  --primary-foreground: oklch(0.18 0.02 155);
-  --primary-soft: oklch(0.3 0.05 155);
-  --secondary: oklch(0.28 0.03 155);
-  --secondary-foreground: oklch(0.95 0.01 120);
-  --muted: oklch(0.28 0.03 155);
-  --muted-foreground: oklch(0.72 0.02 140);
-  --accent: oklch(0.82 0.16 105);
-  --accent-foreground: oklch(0.2 0.03 120);
-  --deal: oklch(0.68 0.18 35);
-  --deal-foreground: oklch(0.99 0.01 80);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.72 0.14 152);
+  --gradient-savings: linear-gradient(160deg, #078a4d 0%, #047857 100%);
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-raised: 0 4px 16px -6px rgba(15, 23, 42, 0.12);
+  --shadow-nav: 0 -1px 0 #e2e8f0;
 }
 
 @layer base {
@@ -153,7 +126,7 @@
 
   html,
   body {
-    background-color: var(--color-surface-2);
+    background-color: #eef2f6;
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
@@ -163,38 +136,45 @@
   h1,
   h2,
   h3 {
-    font-family: var(--font-display);
-    letter-spacing: -0.02em;
+    font-family: var(--font-sans);
+    letter-spacing: -0.015em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 }
 
-/* Mobile-first Geräterahmen: die App bleibt auf grossen Screens eine App. */
+/* Mobile-first Container: die App bleibt auf grossen Screens eine App. */
 @utility app-frame {
   width: 100%;
-  max-width: 460px;
+  max-width: 430px;
   margin-inline: auto;
   min-height: 100dvh;
   background-color: var(--color-background);
   position: relative;
-  box-shadow: 0 0 0 1px oklch(0.3 0.03 155 / 0.06), 0 30px 80px -40px oklch(0.3 0.04 155 / 0.5);
 }
 
-@utility surface-card {
+@media (min-width: 480px) {
+  .app-frame {
+    box-shadow: 0 0 0 1px #e2e8f0;
+  }
+}
+
+@utility card-surface {
   background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
 }
 
-@utility gradient-hero {
-  background-image: var(--gradient-hero);
+@utility gradient-savings {
+  background-image: var(--gradient-savings);
 }
 
-@utility gradient-deal {
-  background-image: var(--gradient-deal);
-}
-
-@utility shadow-float {
-  box-shadow: var(--shadow-float);
+@utility shadow-raised {
+  box-shadow: var(--shadow-raised);
 }
 
 @utility no-scrollbar {
@@ -208,12 +188,17 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Leaflet in das Design einbetten */
+@utility tap-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Leaflet in das Lokero-Design einbetten */
 .leaflet-container {
   font-family: var(--font-sans);
-  background: var(--color-surface-2);
+  background: var(--color-muted-surface);
 }
 .leaflet-control-attribution {
   font-size: 9px;
-  opacity: 0.6;
+  opacity: 0.55;
 }

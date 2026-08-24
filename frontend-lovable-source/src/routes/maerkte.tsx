@@ -1,81 +1,103 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { Crosshair, Heart, MapPin, RefreshCw } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { Store } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
-import { MapPanel } from "@/components/MapPanel";
-import { useActiveMarketIds, useStore } from "@/lib/app-store";
-import { DEFAULT_LOCATION } from "@/data/demo";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { FilterChips } from "@/components/lokero/FilterChips";
+import { MarketCard } from "@/components/lokero/MarketCard";
+import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
+import MapPanel from "@/components/MapPanel";
+import { useStore } from "@/lib/app-store";
+import { fetchMarkets } from "@/services/lokero-api";
 
 export const Route = createFileRoute("/maerkte")({
-  head: () => ({ meta: [{ title: "Märkte in deiner Nähe – LocalPrices" }] }),
-  component: MarketsPage,
+  head: () => ({
+    meta: [
+      { title: "Märkte in deiner Nähe – Lokero" },
+      {
+        name: "description",
+        content:
+          "Alle Supermärkte in deinem Umkreis auf der Karte, sortiert nach Entfernung, Sparpotenzial und Öffnungszeiten.",
+      },
+      { property: "og:title", content: "Märkte in deiner Nähe – Lokero" },
+      {
+        property: "og:description",
+        content: "Karte mit Umkreissuche und Sparpotenzial je Markt.",
+      },
+    ],
+  }),
+  component: MarketsScreen,
 });
 
-function MarketsPage() {
-  const { location, setLocation, radius, setRadius, marketsInRadius, favoriteMarketsOutsideRadius, refreshingMarketIds, selected, toggleSelected } = useStore();
-  const activeIds = useActiveMarketIds();
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [locating, setLocating] = useState(false);
-  const navigate = useNavigate();
+const FILTERS = [
+  { id: "alle", label: "Alle" },
+  { id: "entfernung", label: "Entfernung", dropdown: true },
+  { id: "sparpotenzial", label: "Sparpotenzial", dropdown: true },
+  { id: "oeffnung", label: "Öffnungszeiten", dropdown: true },
+];
 
-  function locate() {
-    if (!("geolocation" in navigator)) {
-      toast.error("Standort wird von diesem Gerät nicht unterstützt.");
-      return;
-    }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, label: "Mein Standort" });
-        setLocating(false);
-        toast.success("Standort aktualisiert");
-      },
-      () => {
-        setLocating(false);
-        setLocation(DEFAULT_LOCATION);
-        toast.error("Standort nicht verfügbar – Referenzort aktiv.");
-      },
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
-  }
+function MarketsScreen() {
+  const { location, radius, favoriteMarkets, toggleFavoriteMarket } = useStore();
+  const [filter, setFilter] = useState("alle");
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const query = useQuery({
+    queryKey: ["markets", radius],
+    queryFn: () => fetchMarkets(radius),
+  });
+
+  const markets = useMemo(() => {
+    const list = [...(query.data ?? [])];
+    if (filter === "entfernung") list.sort((a, b) => a.distanceKm - b.distanceKm);
+    else if (filter === "sparpotenzial") list.sort((a, b) => b.savingPotential - a.savingPotential);
+    else if (filter === "oeffnung") list.sort((a, b) => b.openUntil.localeCompare(a.openUntil));
+    return list;
+  }, [query.data, filter]);
 
   return (
     <div>
-      <PageHeader title="Märkte" subtitle={<Link to="/settings" className="inline-flex items-center gap-1 hover:text-primary"><MapPin className="h-3.5 w-3.5" />{location.label} · {radius} km Umkreis</Link>} />
+      <PageHeader title="Märkte" subtitle={`Umkreis ${radius} km · ${location.label}`} />
 
-      <div className="relative mx-5 h-[300px] overflow-hidden rounded-3xl shadow-float">
-        <MapPanel center={location} radiusKm={radius} markets={marketsInRadius} selected={selected} onSelect={(id) => setActiveId(id)} activeId={activeId} />
-        <button onClick={locate} className="absolute right-3 top-3 z-[500] flex h-11 w-11 items-center justify-center rounded-full bg-surface shadow-float" aria-label="Meinen Standort verwenden"><Crosshair className={cn("h-5 w-5 text-primary", locating && "animate-spin")} strokeWidth={2.2} /></button>
+      <div className="bg-surface px-4 pb-3">
+        <FilterChips options={FILTERS} value={filter} onChange={setFilter} />
       </div>
 
-      <div className="px-5 pt-5"><div className="flex items-center justify-between text-sm font-medium"><span>Suchradius</span><span className="tabular text-primary">{radius} km</span></div><input type="range" min={2} max={25} step={1} value={radius} onChange={(e) => setRadius(Number(e.target.value))} className="mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-secondary accent-primary" /></div>
+      <div className="px-4 pt-3">
+        <div className="relative h-[190px] overflow-hidden rounded-2xl border border-border">
+          <MapPanel
+            center={location}
+            radiusKm={radius}
+            markets={markets}
+            activeId={activeId}
+            onSelect={setActiveId}
+          />
+          <span className="tabular pointer-events-none absolute right-2 top-2 rounded-full bg-surface/95 px-2 py-1 text-[10px] font-semibold text-navy shadow-raised">
+            {radius} km
+          </span>
+        </div>
+      </div>
 
-      <section className="mt-5 space-y-3 px-5">
-        <div className="flex items-baseline justify-between"><h2 className="text-base font-semibold">{marketsInRadius.length} Märkte gefunden</h2><span className="text-xs text-muted-foreground">{activeIds.length} im Vergleich</span></div>
-
-        {marketsInRadius.map((m) => {
-          const chosen = selected.includes(m.id);
-          const refreshing = refreshingMarketIds.includes(m.id);
-          const released = (m as any).verified !== false;
-          return (
-            <article key={m.id} onClick={() => navigate({ to: "/markt/$id", params: { id: m.id } })} className={cn("surface-card flex cursor-pointer items-center gap-3 p-4 transition-all", activeId === m.id && "ring-2 ring-primary/40")}>
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-[10px] font-bold uppercase text-primary">{(m as any).logoUrl ? <img src={(m as any).logoUrl} alt={m.chain} className="h-full w-full object-contain p-1" /> : m.chain.slice(0, 4)}</div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{m.name}</p>
-                <p className="truncate text-xs text-muted-foreground">{m.street}, {m.city} · {m.distance} km</p>
-                <p className={cn("mt-1 text-[11px]", refreshing ? "text-primary" : released ? "text-muted-foreground" : "font-medium text-amber-700")}>{refreshing ? (released ? "Angebote werden aktualisiert …" : "Marktdaten werden für QA gesammelt …") : released ? "Antippen für Markt & Prospekt" : "Markt gespeichert · Angebote noch in Prüfung"}</p>
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }} aria-label={chosen ? "Aus Favoriten entfernen" : "Als Markt-Favorit speichern"} className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors", chosen ? "bg-deal/12 text-deal" : "bg-secondary text-muted-foreground")}>{refreshing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Heart className={cn("h-5 w-5", chosen && "fill-current")} />}</button>
-            </article>
-          );
-        })}
-
-        {marketsInRadius.length === 0 && <p className="surface-card p-5 text-center text-sm text-muted-foreground">Keine Märkte im Umkreis. Erhöhe den Radius.</p>}
+      <section className="space-y-2.5 px-4 pt-4">
+        {query.isLoading && <SkeletonList count={4} />}
+        {query.isError && <ErrorState onRetry={() => query.refetch()} />}
+        {query.isSuccess && markets.length === 0 && (
+          <EmptyState
+            icon={Store}
+            title="Keine Märkte im Umkreis"
+            description="Erhöhe deinen Suchradius, um mehr Märkte in deiner Nähe zu finden."
+          />
+        )}
+        {markets.map((m, i) => (
+          <MarketCard
+            key={m.id}
+            market={m}
+            rank={i + 1}
+            isFavorite={favoriteMarkets.includes(m.id)}
+            onToggleFavorite={() => toggleFavoriteMarket(m.id)}
+            onSelect={() => setActiveId(m.id)}
+          />
+        ))}
       </section>
-
-      {favoriteMarketsOutsideRadius.length > 0 && <section className="mt-7 space-y-3 px-5 pb-4"><div><h2 className="text-base font-semibold">Weitere Favoriten</h2><p className="text-xs text-muted-foreground">Diese Märkte bleiben gespeichert, werden aktuell aber nicht für Angebote oder den Sparplan verwendet.</p></div>{favoriteMarketsOutsideRadius.map((m) => <article key={m.id} onClick={() => navigate({ to: "/markt/$id", params: { id: m.id } })} className="surface-card flex cursor-pointer items-center gap-3 p-4 opacity-75"><div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-surface-2 text-[10px] font-bold uppercase text-primary">{(m as any).logoUrl ? <img src={(m as any).logoUrl} alt={m.chain} className="h-full w-full object-contain p-1" /> : m.chain.slice(0, 4)}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{m.name}</p><p className="truncate text-xs text-muted-foreground">{m.street}, {m.city} · {m.distance} km</p><p className="mt-1 text-[11px] font-medium text-muted-foreground">Markt aktuell nicht im Suchgebiet</p></div><button onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }} aria-label="Favorit entfernen" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-deal/12 text-deal"><Heart className="h-5 w-5 fill-current" /></button></article>)}</section>}
     </div>
   );
 }

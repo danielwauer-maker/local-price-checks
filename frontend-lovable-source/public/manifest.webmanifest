@@ -1,28 +1,16 @@
 {
-  "name": "Local Price Checks",
-  "short_name": "Price Checks",
-  "description": "Vergleiche lokale Lebensmittelangebote und finde die günstigsten Preise in deiner Umgebung.",
+  "name": "Lokero – Alles in deiner Nähe. Das Beste für dich.",
+  "short_name": "Lokero",
+  "description": "Smarter lokaler Einkaufsassistent: Märkte vergleichen, Angebote entdecken und den Einkauf automatisch optimieren.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "orientation": "portrait",
+  "background_color": "#F8FAFC",
+  "theme_color": "#22C55E",
+  "lang": "de",
   "icons": [
-    {
-      "src": "/pwa-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/pwa-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    },
-    {
-      "src": "/maskable-icon-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/icons/lokero-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/lokero-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }
