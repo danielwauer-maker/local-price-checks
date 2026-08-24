@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
+from .account_linking import account_profile_for_client
 from .client_context import get_client_key, get_legacy_client_key
 from .client_models import UserClient
 from .clock import app_today
@@ -30,23 +31,18 @@ def _unclaimed_profile(db: Session) -> UserProfile | None:
 def current_user(db: Session) -> UserProfile:
     """Return the persistent profile for the current browser/PWA client.
 
-    Before multi-client tracking existed, LocalPrices used the first UserProfile
-    for every request. A newly seen browser first claims an existing unclaimed
-    profile so legacy location/favorites and seeded test data remain intact.
-    Later browsers receive isolated profiles.
-
-    During the 0A.1 rollout an existing browser may already have a valid
-    ``lp_client_id`` cookie while the new frontend creates its first localStorage
-    device key. If the new key is not known yet, migrate the existing UserClient
-    mapping to that key instead of creating a second anonymous profile.
+    Anonymous clients keep their original profile. Once a client has been
+    linked to a verified external account, requests resolve to that account's
+    canonical UserProfile so the same account can be used across devices.
     """
     client_key = get_client_key()
     if client_key:
         client = db.query(UserClient).filter(UserClient.client_key == client_key).first()
         if client:
             client.last_seen_at = datetime.utcnow()
+            account_user = account_profile_for_client(db, client)
             db.flush()
-            return client.user
+            return account_user or client.user
 
         legacy_key = get_legacy_client_key()
         if legacy_key and legacy_key != client_key:
@@ -59,7 +55,8 @@ def current_user(db: Session) -> UserProfile:
                     legacy_client.device.last_seen_at = legacy_client.last_seen_at
                 db.commit()
                 db.refresh(legacy_client)
-                return legacy_client.user
+                account_user = account_profile_for_client(db, legacy_client)
+                return account_user or legacy_client.user
 
         user = _unclaimed_profile(db)
         if user is None:

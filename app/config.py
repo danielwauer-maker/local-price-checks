@@ -37,6 +37,8 @@ class Settings:
     route_distance_factor: float = float(os.getenv("ROUTE_DISTANCE_FACTOR", "1.25"))
     admin_username: str = os.getenv("ADMIN_USERNAME", "admin").strip()
     admin_password: str = os.getenv("ADMIN_PASSWORD", "").strip()
+    supabase_url: str = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    supabase_publishable_key: str = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
 
 settings = Settings()
