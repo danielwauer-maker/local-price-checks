@@ -19,6 +19,7 @@ from .coverage_routes import router as coverage_router
 from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
+from .lokero_media_routes import router as lokero_media_router
 from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
 from .client_models import UserClient, ClientDevice  # noqa: F401 - registers additive tables before startup create_all
 from .activity_models import ClientActivityDay, ClientFeatureUsage, ClientUsageSession  # noqa: F401 - registers additive analytics tables
@@ -97,6 +98,7 @@ app.include_router(coverage_router)
 app.include_router(lokero_router)
 app.include_router(lokero_state_router)
 app.include_router(lokero_admin_router)
+app.include_router(lokero_media_router)
 app.include_router(media_router)
 app.include_router(ux_router)
 app.include_router(prospect_router)

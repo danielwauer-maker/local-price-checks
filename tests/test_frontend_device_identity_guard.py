@@ -3,20 +3,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "frontend-lovable-source" / "src"
 
 
-def test_client_entry_installs_device_aware_api_fetch_before_pwa():
-    client = (ROOT / "client.tsx").read_text(encoding="utf-8")
-    api_import = 'import "./lib/api-client";'
-    pwa_import = 'import "./pwa";'
+def test_lokero_api_uses_same_origin_cookie_identity():
+    api_client = (ROOT / "services" / "lokero-api.ts").read_text(encoding="utf-8")
 
-    assert api_import in client
-    assert pwa_import in client
-    assert client.index(api_import) < client.index(pwa_import)
+    assert 'credentials: "include"' in api_client
+    assert 'fetch(path' in api_client
+    assert '"/api/' in api_client
 
 
-def test_api_client_protects_all_same_origin_api_fetches():
-    api_client = (ROOT / "lib" / "api-client.ts").read_text(encoding="utf-8")
+def test_lokero_state_api_uses_same_origin_cookie_identity():
+    state_client = (ROOT / "services" / "lokero-state-api.ts").read_text(encoding="utf-8")
 
-    assert 'url.pathname.startsWith("/api/")' in api_client
-    assert "withDeviceIdentity" in api_client
-    assert "window.fetch =" in api_client
-    assert "installDeviceAwareApiFetch();" in api_client
+    assert 'credentials: "include"' in state_client
+    assert 'fetch(path' in state_client
+    assert '/api/lokero/' in state_client
