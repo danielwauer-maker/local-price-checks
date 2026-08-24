@@ -149,4 +149,4 @@ def submit_pricing_feedback(payload: PricingFeedbackPayload, db: Session = Depen
         rating_row.submitted_at = now
 
     db.commit()
-    return {"ok": True, "submitted": True, "ratingSubmitted": payload.rating is not None}
+    return {"ok": True, "submitted": True}
