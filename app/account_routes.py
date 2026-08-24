@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .account_linking import AccountLinkConflict, account_profile_for_client, link_verified_identity
 from .client_context import get_client_key
-from .client_models import AccountIdentity, UserClient
+from .client_models import AccountClientLink, AccountIdentity, UserClient
 from .db import get_db
 from .services import current_user
 from .supabase_auth import verify_supabase_access_token
@@ -70,14 +70,14 @@ def account_status(db: Session = Depends(get_db)):
     profile = account_profile_for_client(db, client)
     if profile is None:
         return {"linked": False, "profileId": client.user_id}
-    link_identity = (
+    identity = (
         db.query(AccountIdentity)
-        .join(AccountIdentity.client_links)
-        .filter_by(client_id=client.id)
+        .join(AccountClientLink, AccountClientLink.identity_id == AccountIdentity.id)
+        .filter(AccountClientLink.client_id == client.id)
         .first()
     )
     return {
         "linked": True,
         "profileId": profile.id,
-        "email": link_identity.email if link_identity else None,
+        "email": identity.email if identity else None,
     }
