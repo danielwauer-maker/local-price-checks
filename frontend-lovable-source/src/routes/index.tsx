@@ -47,7 +47,10 @@ function StartScreen() {
     <div className="pb-4">
       <TopBar />
       <div className="space-y-5 px-4 pt-3">
-        {showRegion && (region.data ? <RegionAvailabilityCard region={region.data} markets={markets.data ?? []} radiusKm={radius} /> : <div className="h-[112px] animate-pulse rounded-2xl bg-muted-surface" />)}
+        {showRegion && !region.data && <div className="h-[82px] animate-pulse rounded-2xl bg-muted-surface" />}
+        {showRegion && region.data && region.data.status !== "available" && (
+          <RegionAvailabilityCard region={region.data} markets={markets.data ?? []} radiusKm={radius} />
+        )}
 
         {showSavings && savings.data ? (
           <SavingsHero amount={savings.data.amount} combinationLabel={savings.data.combinationLabel} itemCount={savings.data.itemCount} marketCount={savings.data.marketCount} distanceKm={savings.data.distanceKm} explanation={OPTIMIZED_TRIP.savingsExplanation} />

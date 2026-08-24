@@ -87,17 +87,17 @@ function ListScreen() {
               <section key={group.key} className="overflow-hidden rounded-2xl border border-border bg-surface">
                 <div className="flex items-center gap-3 border-b border-border px-3 py-3">
                   {market && <MarketLogo chain={market.chain} size="sm" />}
-                  <div className="min-w-0 flex-1"><h2 className="truncate text-[13px] font-semibold text-navy">{group.marketName}</h2>{market && <p className="text-[10px] text-muted-foreground">{formatKm(group.distanceKm)}</p>}</div>
-                  {group.subtotal != null && <div className="text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
+                  <div className="min-w-0 flex-1"><h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{group.marketName}</h2>{market && <p className="text-[10px] text-muted-foreground">{formatKm(group.distanceKm)}</p>}</div>
+                  {group.subtotal != null && <div className="shrink-0 text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
                 </div>
                 <div className="divide-y divide-border">
                   {group.entries.map(({ productId, qty, price }) => {
                     const product = getProduct(productId);
                     if (!product) return null;
                     return (
-                      <article key={productId} className="flex items-center gap-3 p-3">
-                        <ProductImage product={product} />
-                        <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-navy">{product.name}</p>{price != null && <p className="tabular mt-1 text-[11px] text-muted-foreground">{formatEuro(price)} je Stück</p>}</div>
+                      <article key={productId} className="flex items-center gap-2.5 p-3">
+                        <ProductImage product={product} size="sm" />
+                        <div className="min-w-0 flex-1"><p className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{product.name}</p>{price != null && <p className="tabular mt-1 text-[11px] text-muted-foreground">{formatEuro(price)} je Stück</p>}</div>
                         <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
                           <button onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
                           <span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span>
