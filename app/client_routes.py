@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .client_context import get_client_key
-from .client_models import ClientDevice, UserClient
+from .client_models import ClientDevice, ClientPricingFeedback, UserClient
 from .db import get_db
 from .device_detection import detect_device
 from .services import current_user
@@ -24,6 +25,11 @@ class ClientHeartbeat(BaseModel):
     screenWidth: int | None = Field(default=None, ge=1, le=20000)
     screenHeight: int | None = Field(default=None, ge=1, le=20000)
     pixelRatio: float | None = Field(default=None, ge=0.5, le=10)
+
+
+class PricingFeedbackPayload(BaseModel):
+    savingsValue: Literal["significant", "some", "not_yet", "unsure"]
+    monthlyPrice: Literal["1.99", "2.99", "4.99", "9.99", "none"]
 
 
 @router.post("/heartbeat")
@@ -86,3 +92,42 @@ def client_heartbeat(payload: ClientHeartbeat, request: Request, db: Session = D
             "browserVersion": device.browser_version,
         },
     }
+
+
+@router.get("/feedback")
+def pricing_feedback_status(db: Session = Depends(get_db)):
+    user = current_user(db)
+    client_key = get_client_key()
+    client = db.query(UserClient).filter(UserClient.client_key == client_key).first() if client_key else None
+    if not client:
+        return {"submitted": False}
+    row = db.query(ClientPricingFeedback).filter(ClientPricingFeedback.client_id == client.id).first()
+    if not row:
+        return {"submitted": False}
+    return {
+        "submitted": True,
+        "savingsValue": row.savings_value,
+        "monthlyPrice": row.monthly_price,
+        "submittedAt": row.submitted_at.isoformat(),
+        "userId": user.id,
+    }
+
+
+@router.post("/feedback")
+def submit_pricing_feedback(payload: PricingFeedbackPayload, db: Session = Depends(get_db)):
+    user = current_user(db)
+    client_key = get_client_key()
+    client = db.query(UserClient).filter(UserClient.client_key == client_key).first() if client_key else None
+    if not client:
+        return {"ok": False, "reason": "client_not_found"}
+
+    row = db.query(ClientPricingFeedback).filter(ClientPricingFeedback.client_id == client.id).first()
+    if row is None:
+        row = ClientPricingFeedback(client_id=client.id, user_id=user.id)
+        db.add(row)
+    row.user_id = user.id
+    row.savings_value = payload.savingsValue
+    row.monthly_price = payload.monthlyPrice
+    row.submitted_at = datetime.utcnow()
+    db.commit()
+    return {"ok": True, "submitted": True}
