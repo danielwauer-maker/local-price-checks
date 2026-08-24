@@ -13,7 +13,7 @@ from .clock import app_today
 from .config import settings
 from .db import get_db
 from .geo import haversine_km
-from .lokero_models import FavoriteProductPreference
+from .lokero_models import FavoriteProductFamily, FavoriteProductPreference
 from .models import FavoriteProduct, MasterProduct, Offer, ProductAdminData, ProductCategory, Store
 from .product_media import preferred_product_media
 from .services import current_user
@@ -39,6 +39,22 @@ CATEGORY_ICONS = {
     "tiernahrung": "package",
     "sonstiges": "package",
 }
+
+PRODUCT_FAMILIES = [
+    {"slug": "bier", "label": "Bier", "category": "getraenke", "keywords": ["bier", "pils", "pilsener", "helles", "weizen", "radler", "kölsch"]},
+    {"slug": "cola", "label": "Cola", "category": "getraenke", "keywords": ["cola", "coca-cola", "pepsi", "freeway"]},
+    {"slug": "wasser", "label": "Wasser", "category": "getraenke", "keywords": ["wasser", "mineralwasser", "sprudel"]},
+    {"slug": "kaffee", "label": "Kaffee", "category": "fruehstueck", "keywords": ["kaffee", "espresso", "cappuccino"]},
+    {"slug": "fisch", "label": "Fisch", "category": "fisch", "keywords": ["fisch", "lachs", "thunfisch", "hering", "forelle", "garnelen"]},
+    {"slug": "kaese", "label": "Käse", "category": "kaese", "keywords": ["käse", "gouda", "mozzarella", "feta", "camembert", "emmentaler"]},
+    {"slug": "joghurt", "label": "Joghurt", "category": "molkerei", "keywords": ["joghurt", "yoghurt"]},
+    {"slug": "milch", "label": "Milch", "category": "molkerei", "keywords": ["milch", "vollmilch", "fettarme milch"]},
+    {"slug": "chips", "label": "Chips", "category": "suesswaren", "keywords": ["chips", "crisps", "nachos"]},
+    {"slug": "schokolade", "label": "Schokolade", "category": "suesswaren", "keywords": ["schokolade", "schoko", "pralinen"]},
+    {"slug": "katzenfutter", "label": "Katzenfutter", "category": "tiernahrung", "keywords": ["katzenfutter", "katze", "sheba", "whiskas", "felix"]},
+    {"slug": "hundefutter", "label": "Hundefutter", "category": "tiernahrung", "keywords": ["hundefutter", "hund", "pedigree", "cesar"]},
+]
+FAMILY_BY_SLUG = {row["slug"]: row for row in PRODUCT_FAMILIES}
 
 # Conservative product-family hints. Alternatives are suggested only when the
 # products share one of these families or a meaningful product-name token.
@@ -95,6 +111,47 @@ def _product_payload(db: Session, product: MasterProduct) -> dict:
     }
 
 
+def _market_payload(user, store: Store) -> dict:
+    distance = 0.0
+    if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
+        distance = haversine_km(user.latitude, user.longitude, store.latitude, store.longitude)
+    return {
+        "id": str(store.id),
+        "name": store.name,
+        "chain": store.retailer,
+        "street": store.address,
+        "city": store.city,
+        "lat": float(store.latitude or 0),
+        "lng": float(store.longitude or 0),
+        "openUntil": "",
+        "isOpen": True,
+        "distanceKm": round(distance, 1),
+        "savingPotential": 0.0,
+        "strength": "",
+        "verified": bool(store.benchmark_verified),
+    }
+
+
+def _offer_view_payload(db: Session, user, offer: Offer) -> dict:
+    base_price = None
+    if offer.unit_price is not None:
+        base_price = f"{float(offer.unit_price):.2f} €/{offer.unit_price_unit or ''}".replace(".", ",")
+    return {
+        "offerId": str(offer.id),
+        "productId": str(offer.master_product_id),
+        "marketId": str(offer.store_id),
+        "price": float(offer.price),
+        "oldPrice": None,
+        "discount": None,
+        "basePrice": base_price,
+        "leafletPage": None,
+        "validFrom": offer.valid_from.isoformat(),
+        "validUntil": offer.valid_to.isoformat(),
+        "product": _product_payload(db, offer.product),
+        "market": _market_payload(user, offer.store),
+    }
+
+
 def _family(text: str) -> str | None:
     normalized = text.lower().replace("-", " ")
     for term in FAMILY_TERMS:
@@ -129,6 +186,13 @@ def _store_is_in_user_radius(user, store: Store) -> bool:
     if user.latitude is None or user.longitude is None:
         return True
     return haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) <= user.radius_km
+
+
+def _matches_family(product: MasterProduct, family: dict, category_slug: str) -> bool:
+    if category_slug != family["category"]:
+        return False
+    text = f"{product.brand or ''} {product.name}".lower()
+    return any(keyword in text for keyword in family["keywords"])
 
 
 @router.get("/product-media/{product_id}")
@@ -174,6 +238,49 @@ def categories(db: Session = Depends(get_db)):
         }
         for row in rows
     ]
+
+
+@router.get("/product-families")
+def product_families():
+    return PRODUCT_FAMILIES
+
+
+@router.get("/favorites/families")
+def favorite_families(db: Session = Depends(get_db)):
+    user = current_user(db)
+    rows = db.query(FavoriteProductFamily).filter(FavoriteProductFamily.user_id == user.id).all()
+    return [FAMILY_BY_SLUG[row.family_slug] for row in rows if row.family_slug in FAMILY_BY_SLUG]
+
+
+@router.put("/favorites/families/{slug}")
+def add_favorite_family(slug: str, db: Session = Depends(get_db)):
+    family = FAMILY_BY_SLUG.get(slug)
+    if not family:
+        raise HTTPException(status_code=404, detail="Unknown product family")
+    user = current_user(db)
+    row = (
+        db.query(FavoriteProductFamily)
+        .filter(FavoriteProductFamily.user_id == user.id, FavoriteProductFamily.family_slug == slug)
+        .first()
+    )
+    if not row:
+        db.add(FavoriteProductFamily(user_id=user.id, family_slug=slug))
+        db.commit()
+    return family
+
+
+@router.delete("/favorites/families/{slug}")
+def remove_favorite_family(slug: str, db: Session = Depends(get_db)):
+    user = current_user(db)
+    row = (
+        db.query(FavoriteProductFamily)
+        .filter(FavoriteProductFamily.user_id == user.id, FavoriteProductFamily.family_slug == slug)
+        .first()
+    )
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
 
 
 @router.get("/favorites/preferences")
@@ -295,6 +402,80 @@ def favorite_alternatives(product_id: int, db: Session = Depends(get_db)):
             "reason": reason,
         })
     return result
+
+
+@router.get("/favorites/matched-offers")
+def matched_favorite_offers(db: Session = Depends(get_db)):
+    user = current_user(db)
+    favorite_ids = {
+        row.master_product_id
+        for row in db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()
+    }
+    family_rows = db.query(FavoriteProductFamily).filter(FavoriteProductFamily.user_id == user.id).all()
+    families = [FAMILY_BY_SLUG[row.family_slug] for row in family_rows if row.family_slug in FAMILY_BY_SLUG]
+    if not favorite_ids and not families:
+        return []
+
+    today = app_today()
+    offers = (
+        db.query(Offer)
+        .join(Store, Store.id == Offer.store_id)
+        .filter(
+            Store.active.is_(True),
+            Store.benchmark_verified.is_(True),
+            Offer.local_store_offer.is_(True),
+            Offer.valid_from <= today,
+            Offer.valid_to >= today,
+        )
+        .order_by(Offer.price.asc())
+        .all()
+    )
+    best_by_product: dict[int, Offer] = {}
+    for offer in offers:
+        if not _store_is_in_user_radius(user, offer.store):
+            continue
+        category = _category_slug(db, offer.master_product_id)
+        matches = offer.master_product_id in favorite_ids or any(
+            _matches_family(offer.product, family, category) for family in families
+        )
+        if not matches:
+            continue
+        current = best_by_product.get(offer.master_product_id)
+        if current is None or offer.price < current.price:
+            best_by_product[offer.master_product_id] = offer
+    return [_offer_view_payload(db, user, offer) for offer in list(best_by_product.values())[:24]]
+
+
+@router.get("/products/{product_id}/last-offer")
+def last_product_offer(product_id: int, db: Session = Depends(get_db)):
+    user = current_user(db)
+    today = app_today()
+    rows = (
+        db.query(Offer)
+        .join(Store, Store.id == Offer.store_id)
+        .filter(
+            Offer.master_product_id == product_id,
+            Offer.local_store_offer.is_(True),
+            Offer.valid_from <= today,
+            Store.active.is_(True),
+            Store.benchmark_verified.is_(True),
+        )
+        .order_by(Offer.valid_to.desc(), Offer.valid_from.desc(), Offer.id.desc())
+        .all()
+    )
+    offer = next((row for row in rows if _store_is_in_user_radius(user, row.store)), None)
+    if not offer:
+        return None
+    return {
+        "price": float(offer.price),
+        "market": {
+            "id": str(offer.store.id),
+            "name": offer.store.name,
+            "chain": offer.store.retailer,
+        },
+        "validFrom": offer.valid_from.isoformat(),
+        "validUntil": offer.valid_to.isoformat(),
+    }
 
 
 @router.get("/media-coverage")
