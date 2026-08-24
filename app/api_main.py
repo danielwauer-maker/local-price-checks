@@ -39,8 +39,10 @@ from .lokero_models import (  # noqa: F401 - registers additive Lokero tables
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
+    reset_request_method,
     set_client_key,
     set_legacy_client_key,
+    set_request_method,
 )
 from .config import settings
 from .coverage_service import seed_initial_coverage
@@ -59,13 +61,11 @@ _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 
 @app.middleware("http")
 async def persistent_client_identity(request, call_next):
-    """Give each browser/PWA installation one durable anonymous identity.
+    """Give each browser/PWA installation one durable opaque client key.
 
-    Current clients persist an opaque device key in localStorage and send it as
-    ``X-LocalPrices-Client``. Prefer that value over the legacy cookie, but keep
-    the valid cookie identity in request context for one-time migration. This
-    lets an existing browser adopt the new device key without losing the
-    UserProfile that already owns its location, favorites or shopping state.
+    The key itself is cheap and may be issued on a read-only request. A database
+    UserProfile/UserClient is materialized lazily only when a real personal
+    write occurs (or when an existing client/account already resolves).
     """
     header_key = request.headers.get("x-localprices-client") or ""
     cookie_key = request.cookies.get("lp_client_id") or ""
@@ -76,9 +76,11 @@ async def persistent_client_identity(request, call_next):
 
     token = set_client_key(client_key)
     legacy_token = set_legacy_client_key(legacy_key)
+    method_token = set_request_method(request.method)
     try:
         response = await call_next(request)
     finally:
+        reset_request_method(method_token)
         reset_legacy_client_key(legacy_token)
         reset_client_key(token)
     response.set_cookie(

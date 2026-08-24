@@ -36,12 +36,18 @@ class PricingFeedbackPayload(BaseModel):
 
 @router.post("/heartbeat")
 def client_heartbeat(payload: ClientHeartbeat, request: Request, db: Session = Depends(get_db)):
-    """Record one browser/PWA installation and normalized device metadata."""
-    user = current_user(db)
+    """Record device metadata only for an already materialized client.
+
+    Heartbeats are technical telemetry and must never create a durable user by
+    themselves. A visitor becomes a persisted user only after a real personal
+    action such as profile/location state, favorites, shopping state, feedback
+    or account registration.
+    """
+    user = current_user(db, persist=False)
     client_key = get_client_key()
     client = db.query(UserClient).filter(UserClient.client_key == client_key).first() if client_key else None
     if not client:
-        return {"ok": True, "userId": user.id, "pwaInstalled": False}
+        return {"ok": True, "userId": None, "pwaInstalled": False, "materialized": False}
 
     now = datetime.utcnow()
     user_agent = (request.headers.get("user-agent") or "")[:1000]
@@ -86,6 +92,7 @@ def client_heartbeat(payload: ClientHeartbeat, request: Request, db: Session = D
         "userId": user.id,
         "clientId": client.id,
         "pwaInstalled": client.pwa_installed,
+        "materialized": True,
         "device": {
             "type": device.device_type,
             "os": device.os_name,
