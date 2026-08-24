@@ -36,6 +36,16 @@ CATEGORY_ICONS = {
 }
 
 
+def _asset_is_serveable(asset) -> bool:
+    if not asset:
+        return False
+    if asset.file_path:
+        target = MEDIA_DIR / Path(asset.file_path).name
+        if target.exists() and target.is_file():
+            return True
+    return bool(asset.source_url and asset.source_url.lower().startswith(("http://", "https://")))
+
+
 @router.get("/product-media/{product_id}")
 def product_media(product_id: int, db: Session = Depends(get_db)):
     asset = preferred_product_media(db, product_id, purpose="public")
@@ -83,12 +93,7 @@ def categories(db: Session = Depends(get_db)):
 
 @router.get("/media-coverage")
 def media_coverage(db: Session = Depends(get_db)):
-    """Report image coverage for currently public offers.
-
-    This is intentionally read-only and exposes only aggregate counts plus product
-    ids missing public media. It lets us verify collector/media quality after a
-    deployment without guessing from the UI.
-    """
+    """Report actually serveable image coverage for current public offers."""
     today = app_today()
     product_ids = [
         row[0]
@@ -110,7 +115,8 @@ def media_coverage(db: Session = Depends(get_db)):
     with_media: list[int] = []
     missing: list[int] = []
     for product_id in product_ids:
-        if preferred_product_media(db, product_id, purpose="public"):
+        asset = preferred_product_media(db, product_id, purpose="public")
+        if _asset_is_serveable(asset):
             with_media.append(product_id)
         else:
             missing.append(product_id)
