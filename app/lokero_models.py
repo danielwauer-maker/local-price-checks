@@ -70,3 +70,25 @@ class RegionInterest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     user: Mapped[UserProfile | None] = relationship()
+
+
+class FavoriteProductPreference(Base):
+    """Per-user choice whether a favorite may be substituted by similar products.
+
+    Kept in an additive table so existing SQLite installations pick it up via
+    ``Base.metadata.create_all`` without an ALTER TABLE migration. Existing
+    favorites default to ``False`` until the user explicitly opts in.
+    """
+
+    __tablename__ = "favorite_product_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "master_product_id", name="uq_favorite_product_preference"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), index=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    allow_alternatives: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user: Mapped[UserProfile] = relationship()
+    product: Mapped[MasterProduct] = relationship()
