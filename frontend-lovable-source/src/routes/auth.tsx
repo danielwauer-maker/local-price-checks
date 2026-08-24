@@ -10,16 +10,16 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Anmelden – LocalPrices" },
+      { title: "Anmelden – Lokero" },
       {
         name: "description",
         content:
           "Melde dich an, um Einkaufslisten, Favoriten und deine Märkte geräteübergreifend zu sichern.",
       },
-      { property: "og:title", content: "Anmelden – LocalPrices" },
+      { property: "og:title", content: "Anmelden – Lokero" },
       {
         property: "og:description",
-        content: "Konto für Einkaufslisten, Favoriten und Märkte bei LocalPrices.",
+        content: "Konto für Einkaufslisten, Favoriten und Märkte bei Lokero.",
       },
     ],
   }),
@@ -89,6 +89,7 @@ function AuthPage() {
             onClick={async () => {
               await signOut();
               toast.success("Abgemeldet");
+              window.location.assign("/");
             }}
             className="mt-6 inline-flex items-center gap-2 rounded-full bg-secondary px-4 py-2.5 text-sm font-semibold text-secondary-foreground"
           >
