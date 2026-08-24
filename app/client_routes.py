@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .client_context import get_client_key
-from .client_models import ClientDevice, ClientPricingFeedback, UserClient
+from .client_models import ClientAppRating, ClientDevice, ClientPricingFeedback, UserClient
 from .db import get_db
 from .device_detection import detect_device
 from .services import current_user
@@ -30,6 +30,8 @@ class ClientHeartbeat(BaseModel):
 class PricingFeedbackPayload(BaseModel):
     savingsValue: Literal["significant", "some", "not_yet", "unsure"]
     monthlyPrice: Literal["1.99", "2.99", "4.99", "9.99", "none"]
+    rating: int | None = Field(default=None, ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 @router.post("/heartbeat")
@@ -100,15 +102,20 @@ def pricing_feedback_status(db: Session = Depends(get_db)):
     client_key = get_client_key()
     client = db.query(UserClient).filter(UserClient.client_key == client_key).first() if client_key else None
     if not client:
-        return {"submitted": False}
+        return {"submitted": False, "ratingSubmitted": False}
     row = db.query(ClientPricingFeedback).filter(ClientPricingFeedback.client_id == client.id).first()
+    rating_row = db.query(ClientAppRating).filter(ClientAppRating.client_id == client.id).first()
     if not row:
-        return {"submitted": False}
+        return {"submitted": False, "ratingSubmitted": bool(rating_row)}
     return {
         "submitted": True,
+        "ratingSubmitted": bool(rating_row),
         "savingsValue": row.savings_value,
         "monthlyPrice": row.monthly_price,
+        "rating": rating_row.rating if rating_row else None,
+        "comment": rating_row.comment if rating_row else "",
         "submittedAt": row.submitted_at.isoformat(),
+        "ratingSubmittedAt": rating_row.submitted_at.isoformat() if rating_row else None,
         "userId": user.id,
     }
 
@@ -121,6 +128,7 @@ def submit_pricing_feedback(payload: PricingFeedbackPayload, db: Session = Depen
     if not client:
         return {"ok": False, "reason": "client_not_found"}
 
+    now = datetime.utcnow()
     row = db.query(ClientPricingFeedback).filter(ClientPricingFeedback.client_id == client.id).first()
     if row is None:
         row = ClientPricingFeedback(client_id=client.id, user_id=user.id)
@@ -128,6 +136,17 @@ def submit_pricing_feedback(payload: PricingFeedbackPayload, db: Session = Depen
     row.user_id = user.id
     row.savings_value = payload.savingsValue
     row.monthly_price = payload.monthlyPrice
-    row.submitted_at = datetime.utcnow()
+    row.submitted_at = now
+
+    if payload.rating is not None:
+        rating_row = db.query(ClientAppRating).filter(ClientAppRating.client_id == client.id).first()
+        if rating_row is None:
+            rating_row = ClientAppRating(client_id=client.id, user_id=user.id, rating=payload.rating)
+            db.add(rating_row)
+        rating_row.user_id = user.id
+        rating_row.rating = payload.rating
+        rating_row.comment = (payload.comment or "").strip() or None
+        rating_row.submitted_at = now
+
     db.commit()
     return {"ok": True, "submitted": True}
