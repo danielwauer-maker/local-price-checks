@@ -7,13 +7,33 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .clock import app_today
 from .config import settings
 from .db import get_db
-from .models import ProductAdminData, ProductCategory
+from .models import Offer, ProductAdminData, ProductCategory, Store
 from .product_media import preferred_product_media
 
 router = APIRouter(prefix="/api/lokero", tags=["lokero-media"])
 MEDIA_DIR = settings.data_dir / "admin_media"
+
+CATEGORY_ICONS = {
+    "obst-gemuese": "apple",
+    "fleisch-wurst": "beef",
+    "fisch": "fish",
+    "kaese": "cheese",
+    "molkerei": "milk",
+    "brot": "bread",
+    "getraenke": "drink",
+    "suesswaren": "candy",
+    "tiefkuehl": "snow",
+    "vorrat": "wheat",
+    "fruehstueck": "coffee",
+    "fertiggerichte": "soup",
+    "drogerie": "sparkles",
+    "haushalt": "home",
+    "tiernahrung": "package",
+    "sonstiges": "package",
+}
 
 
 @router.get("/product-media/{product_id}")
@@ -54,8 +74,53 @@ def categories(db: Session = Depends(get_db)):
         {
             "id": row.slug,
             "label": row.name,
-            "icon": "tag",
+            "icon": CATEGORY_ICONS.get(row.slug, "package"),
             "count": int(row.product_count or 0),
         }
         for row in rows
     ]
+
+
+@router.get("/media-coverage")
+def media_coverage(db: Session = Depends(get_db)):
+    """Report image coverage for currently public offers.
+
+    This is intentionally read-only and exposes only aggregate counts plus product
+    ids missing public media. It lets us verify collector/media quality after a
+    deployment without guessing from the UI.
+    """
+    today = app_today()
+    product_ids = [
+        row[0]
+        for row in (
+            db.query(Offer.master_product_id)
+            .join(Store, Store.id == Offer.store_id)
+            .filter(
+                Store.active.is_(True),
+                Store.benchmark_verified.is_(True),
+                Offer.valid_from <= today,
+                Offer.valid_to >= today,
+                Offer.local_store_offer.is_(True),
+            )
+            .distinct()
+            .all()
+        )
+    ]
+
+    with_media: list[int] = []
+    missing: list[int] = []
+    for product_id in product_ids:
+        if preferred_product_media(db, product_id, purpose="public"):
+            with_media.append(product_id)
+        else:
+            missing.append(product_id)
+
+    total = len(product_ids)
+    covered = len(with_media)
+    return {
+        "currentPublicProducts": total,
+        "withPublicMedia": covered,
+        "missingPublicMedia": len(missing),
+        "coveragePercentage": round((covered / total * 100.0), 1) if total else 100.0,
+        "missingProductIds": missing[:200],
+    }
