@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from .clock import app_today
 from .config import settings
 from .db import get_db
-from .feature_flags import feature_enabled
 from .geo import haversine_km
 from .lokero_models import FavoriteProductPreference
 from .models import FavoriteProduct, MasterProduct, Offer, ProductAdminData, ProductCategory, Store
@@ -226,9 +225,6 @@ def update_favorite_preferences(
 @router.get("/favorites/products/{product_id}/alternatives")
 def favorite_alternatives(product_id: int, db: Session = Depends(get_db)):
     user = current_user(db)
-    if not feature_enabled(db, "product_alternatives"):
-        return []
-
     favorite = (
         db.query(FavoriteProduct)
         .filter(FavoriteProduct.user_id == user.id, FavoriteProduct.master_product_id == product_id)
