@@ -33,6 +33,11 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
         "wein", "sekt", "prosecco", "vodka", "wodka", "whisky", " gin ", " rum ", "likör", "getränk", "energy",
         "eistee", "schorle", "sirup", "tonic", "orangeade", "helles", " hell ", "0,0%", "0.0%",
     )),
+    ("molkerei", (
+        "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "butter", "margarine",
+        "sahne", "schmand", "kefir", "pudding", "milchreis", "skyr", "dessert", "eier", " ei ", "creme fraiche",
+        "buttermilch", "ayran",
+    )),
     ("obst-gemuese", (
         "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine",
         "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume",
@@ -42,11 +47,6 @@ CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("brot", (
         "brot", "brötchen", "croissant", "baguette", "toast", "kuchen", "torte", "muffin", "donut", "backware",
         "brezel", "stuten", "ciabatta", "knäckebrot", "wrap", "tortilla",
-    )),
-    ("molkerei", (
-        "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "butter", "margarine",
-        "sahne", "schmand", "kefir", "pudding", "milchreis", "skyr", "dessert", "eier", " ei ", "creme fraiche",
-        "buttermilch", "ayran",
     )),
     ("fruehstueck", (
         "müsli", "haferflocken", "cornflakes", "cerealien", "marmelade", "konfitüre", "honig", "nuss-nougat",
