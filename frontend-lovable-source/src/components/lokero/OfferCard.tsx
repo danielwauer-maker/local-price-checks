@@ -69,9 +69,9 @@ export function OfferRow({ offer }: { offer: OfferView }) {
       </Link>
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="min-w-0">
-            <p className="truncate text-[13px] font-semibold text-navy">{offer.product.name}</p>
-            <p className="truncate text-[11px] text-muted-foreground">{offer.product.detail ?? offer.product.amount}</p>
+          <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="min-w-0 flex-1">
+            <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{offer.product.name}</p>
+            <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{offer.product.detail ?? offer.product.amount}</p>
           </Link>
           <div className="flex shrink-0 items-center gap-1">
             <MarketLogo chain={offer.market.chain} size="xs" />
