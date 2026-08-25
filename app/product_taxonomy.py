@@ -19,6 +19,7 @@ class TaxonomyRule:
     slug: str
     terms: tuple[str, ...]
     reason: str
+    compound_heads: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,50 @@ def normalize_search_text(value: str | None) -> str:
         if not unicodedata.combining(character)
     )
     return re.sub(r"[^a-z0-9]+", " ", folded).strip()
+
+
+def tokenize_search_text(value: str | None) -> tuple[str, ...]:
+    """Return Unicode-folded tokens while treating hyphens as word separators."""
+
+    return tuple(normalize_search_text(value).split())
+
+
+def phrase_matches(value: str | None, phrase: str) -> bool:
+    """Match a complete token or contiguous multi-token phrase.
+
+    Single-word taxonomy terms never match arbitrary prefixes such as ``rum``
+    in ``Rumpsteak``. Multi-word terms remain useful across punctuation, so
+    ``Coca-Cola`` matches the normalized phrase ``coca cola``.
+    """
+
+    value_tokens = tokenize_search_text(value)
+    phrase_tokens = tokenize_search_text(phrase)
+    if not phrase_tokens or len(phrase_tokens) > len(value_tokens):
+        return False
+    width = len(phrase_tokens)
+    return any(value_tokens[index:index + width] == phrase_tokens for index in range(len(value_tokens) - width + 1))
+
+
+def taxonomy_term_matches(value: str | None, term: str) -> bool:
+    """Match taxonomy and family terms only as complete normalized phrases."""
+
+    return phrase_matches(value, term)
+
+
+def compound_head_matches(value: str | None, head_term: str) -> bool:
+    """Match an explicitly opted-in German compound head plus inflection.
+
+    This is separate from normal term matching: only taxonomy rules that
+    declare a known semantic head may use it. Thus ``Bierwurst`` can match the
+    declared head ``wurst``, while the undeclared prefix ``bier`` cannot.
+    """
+
+    head_tokens = tokenize_search_text(head_term)
+    if len(head_tokens) != 1:
+        return False
+    head = head_tokens[0]
+    endings = (head, f"{head}e", f"{head}en", f"{head}n", f"{head}s")
+    return any(token.endswith(endings) for token in tokenize_search_text(value))
 
 
 def _category(slug: str, name: str, order: int, parent: str | None = None, *terms: str) -> CategorySpec:
@@ -184,7 +229,7 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("fischkonserven", ("thunfisch", "sardinen", "fischkonserve"), "Fischkonserve"),
     TaxonomyRule("raeucherfisch", ("raucherlachs", "raucherfisch", "matjes", "rauchforelle"), "Räucherfisch"),
     TaxonomyRule("meeresfruechte", ("garnele", "scampi", "meeresfruchte", "muscheln", "calamari"), "Meeresfrüchte"),
-    TaxonomyRule("fisch-produkte", ("lachs", "seelachs", "kabeljau", "forelle", "hering", "makrele", "dorade", "pangasius", "fisch"), "Fischart"),
+    TaxonomyRule("fisch-produkte", ("lachs", "lachsfilet", "seelachs", "kabeljau", "forelle", "hering", "makrele", "dorade", "pangasius", "fisch"), "Fischart"),
     TaxonomyRule("frischkaese", ("frischkase", "cream cheese"), "Frischkäse"),
     TaxonomyRule("mozzarella", ("mozzarella",), "Mozzarella"),
     TaxonomyRule("feta-hirtenkaese", ("feta", "hirtenkase", "salatkase"), "Feta/Hirtenkäse"),
@@ -224,9 +269,9 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("gefluegel", ("hahnchen", "huhn", "pute", "geflugel"), "Geflügel"),
     TaxonomyRule("hackfleisch", ("hackfleisch", "rinderhack", "hack"), "Hackfleisch"),
     TaxonomyRule("schinken", ("schinken", "speck"), "Schinken"),
-    TaxonomyRule("wurst", ("wurst", "salami", "bratwurst", "aufschnitt", "mortadella"), "Wurst"),
+    TaxonomyRule("wurst", ("wurst", "salami", "bratwurst", "aufschnitt", "mortadella"), "Wurst", ("wurst",)),
     TaxonomyRule("grillfleisch", ("grillfleisch", "grillsteak", "cevapcici", "grillspies"), "Grillfleisch"),
-    TaxonomyRule("fleisch", ("fleisch", "rind", "schwein", "steak", "schnitzel", "braten"), "Fleisch"),
+    TaxonomyRule("fleisch", ("fleisch", "rind", "schwein", "steak", "schnitzel", "braten"), "Fleisch", ("fleisch", "steak", "schnitzel", "braten")),
     TaxonomyRule("gebaeck", ("croissant", "geback", "donut", "muffin"), "Gebäck"),
     TaxonomyRule("toast", ("toast",), "Toast"),
     TaxonomyRule("broetchen", ("brotchen", "semmel", "baguette", "brezel", "ciabatta"), "Brötchen/kleine Backware"),
@@ -250,7 +295,7 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("kartoffeln", ("kartoffel",), "Kartoffel"),
     TaxonomyRule("salat", ("salat",), "Salat"),
     TaxonomyRule("kraeuter", ("krauter", "basilikum", "petersilie", "schnittlauch"), "Kräuter"),
-    TaxonomyRule("obst", ("apfel", "banane", "birne", "erdbeer", "traube", "orange", "mango", "ananas", "kiwi", "melone"), "Obst"),
+    TaxonomyRule("obst", ("apfel", "banane", "birne", "erdbeer", "traube", "orange", "mango", "ananas", "kiwi", "melone"), "Obst", ("apfel", "beere", "traube")),
     TaxonomyRule("gemuese", ("tomate", "gurke", "paprika", "zwiebel", "knoblauch", "mohre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "gemuse"), "Gemüse"),
     TaxonomyRule("fleischersatz", ("fleischersatz", "veganes schnitzel", "vegane wurst"), "Fleischersatz"),
     TaxonomyRule("babynahrung", ("babynahrung", "babybrei", "quetschie"), "Babynahrung"),
@@ -282,7 +327,7 @@ PRODUCT_FAMILY_SPECS: tuple[ProductFamilySpec, ...] = (
     ProductFamilySpec("cola", "Cola", ("cola",), ("cola", "coca cola", "coca-cola", "coke", "pepsi", "pepsi cola", "afri cola", "fritz cola", "freeway cola")),
     ProductFamilySpec("wasser", "Wasser", ("wasser",), ("wasser", "mineralwasser", "sprudel")),
     ProductFamilySpec("bier", "Bier", ("bier",), ("bier", "pils", "radler", "helles")),
-    ProductFamilySpec("fisch", "Fisch", ("fisch", "fisch-produkte", "raeucherfisch", "fischkonserven", "fisch-paniert", "meeresfruechte", "tiefkuehlfisch"), ("fisch", "lachs", "seelachs", "kabeljau", "thunfisch", "forelle", "hering", "matjes", "makrele", "fischstabchen", "raucherlachs")),
+    ProductFamilySpec("fisch", "Fisch", ("fisch", "fisch-produkte", "raeucherfisch", "fischkonserven", "fisch-paniert", "meeresfruechte", "tiefkuehlfisch"), ("fisch", "lachs", "lachsfilet", "seelachs", "kabeljau", "thunfisch", "forelle", "hering", "matjes", "makrele", "fischstabchen", "raucherlachs")),
     ProductFamilySpec("kaese", "Käse", ("kaese", "schnittkaese", "hartkaese", "weichkaese", "frischkaese", "mozzarella", "feta-hirtenkaese", "reibekaese"), ("kase", "gouda", "edamer", "emmentaler", "parmesan", "mozzarella", "camembert", "brie", "feta", "hirtenkase", "frischkase")),
     ProductFamilySpec("milch", "Milch", ("milch",), ("milch", "vollmilch", "fettarme milch")),
     ProductFamilySpec("butter", "Butter", ("butter",), ("butter", "margarine")),
@@ -324,12 +369,11 @@ def category_descendant_slugs(slug: str) -> set[str]:
 
 
 def matching_family(value: str, category_slug: str | None = None) -> ProductFamilySpec | None:
-    normalized = normalize_search_text(value)
     ancestors = set(category_ancestor_slugs(category_slug))
     for family in PRODUCT_FAMILY_SPECS:
         if ancestors.intersection(family.category_slugs):
             return family
-        if any(normalize_search_text(term) in normalized for term in family.terms):
+        if any(taxonomy_term_matches(value, term) for term in family.terms):
             return family
     return None
 

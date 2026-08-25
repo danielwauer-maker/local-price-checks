@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from .models import MasterProduct, ProductAdminData, ProductCategory
-from .product_taxonomy import CLASSIFICATION_RULES, matching_family, normalize_search_text
+from .product_taxonomy import (
+    CLASSIFICATION_RULES,
+    compound_head_matches,
+    matching_family,
+    normalize_search_text,
+    taxonomy_term_matches,
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +45,10 @@ class ReclassificationSummary:
 def classify_product(product: MasterProduct) -> ClassificationResult:
     haystack = normalize_search_text(" ".join(filter(None, (product.brand, product.name, product.package_size))))
     for rule in CLASSIFICATION_RULES:
-        if any(normalize_search_text(term) in haystack for term in rule.terms):
+        if (
+            any(taxonomy_term_matches(haystack, term) for term in rule.terms)
+            or any(compound_head_matches(haystack, head) for head in rule.compound_heads)
+        ):
             family = matching_family(haystack, rule.slug)
             return ClassificationResult(rule.slug, family.slug if family else None, rule.reason, "high")
     return ClassificationResult("sonstiges", None, "keine sichere Taxonomie-Regel", "unknown")

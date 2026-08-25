@@ -1,4 +1,5 @@
 from app.category_classifier import classify_product, infer_category_slug
+from app.product_taxonomy import matching_family
 from app.models import MasterProduct
 
 
@@ -50,3 +51,27 @@ def test_unknown_product_is_not_forced_into_an_unrelated_category():
     result = classify_product(product("Unbekannter Spezialartikel XYZ"))
     assert result.category_slug == "sonstiges"
     assert result.confidence == "unknown"
+
+
+def test_taxonomy_matching_rejects_embedded_short_words_and_keeps_real_tokens():
+    expected = {
+        "Rumpsteak": "fleisch",
+        "Ginger Ale": "sonstiges",
+        "Abwasserpumpe": "sonstiges",
+        "Bierwurst": "wurst",
+        "Weintrauben": "obst",
+        "Gin": "spirituosen",
+        "Rum": "spirituosen",
+        "Rotwein": "wein",
+        "Pils": "bier",
+    }
+    for name, category_slug in expected.items():
+        assert infer_category_slug(product(name)) == category_slug
+
+
+def test_product_family_matching_is_phrase_and_token_aware():
+    assert matching_family("Rumpsteak") is None
+    assert matching_family("Bierwurst") is None
+    assert matching_family("Abwasserpumpe") is None
+    assert matching_family("Coca-Cola").slug == "cola"
+    assert matching_family("Pepsi").slug == "cola"
