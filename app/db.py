@@ -20,12 +20,13 @@ def _configure_sqlite(dbapi_connection, connection_record):
 
     WAL lets readers continue while another request writes. ``busy_timeout``
     gives short competing writes time to finish instead of immediately
-    raising ``database is locked``. Existing SQLite foreign-key behavior stays
-    unchanged during the transition; PostgreSQL enforces the baseline FKs.
+    raising ``database is locked``. Foreign keys are enabled for every SQLite
+    connection; PostgreSQL connections never use this hook.
     """
 
     cursor = dbapi_connection.cursor()
     try:
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA busy_timeout=30000")

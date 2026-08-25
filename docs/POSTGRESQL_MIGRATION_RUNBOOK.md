@@ -23,7 +23,11 @@ isolierten Staging-Umgebung erfolgreich geprobt werden.
 1. Change-Freeze für Schema und schreibende Releases vereinbaren.
 2. Genauen SQLite-Pfad, freien Speicher, PostgreSQL-Version und Zugang prüfen.
 3. `PRAGMA integrity_check;` und `PRAGMA foreign_key_check;` auf einer Kopie
-   ausführen. Alle Befunde vor der Migration klären.
+   ausführen. Ältere SQLite-Installationen haben Foreign Keys möglicherweise
+   nicht erzwungen; ein späteres `PRAGMA foreign_keys=ON` repariert bereits
+   vorhandene Orphans nicht. Alle Befunde müssen deshalb vor der Migration
+   geklärt werden. Nur `integrity_check = ok` und null Zeilen aus
+   `foreign_key_check` erlauben den nächsten Schritt.
 4. Der Dry Run führt den automatisierten, strikten Schema-Preflight gegen die
    vollständige SQLAlchemy-/Alembic-Baseline aus. Er vergleicht die exakte
    Tabellen- und Spaltenmenge, normalisierte Typen/Längen, Nullable, Primary und
@@ -36,6 +40,35 @@ isolierten Staging-Umgebung erfolgreich geprobt werden.
    Transfer, Verifikation und API-Smoke-Tests.
 6. Verantwortliche Person, Wartungsfenster, Abbruchzeitpunkt und Rollback-
    Entscheider festlegen.
+
+### Kontrollierter Repair bekannter Offer-Orphans
+
+Der Repair läuft ausschließlich auf einer ausdrücklich angegebenen SQLite-
+Datei und ist standardmäßig ein Dry Run. Er gruppiert alle FK-Probleme und
+bricht ohne Änderung ab, sobald ein Problem außerhalb der bekannten direkten
+Offer-Beziehungen gefunden wird:
+
+```bash
+python scripts/repair_sqlite_foreign_keys.py /path/to/snapshot.sqlite3
+```
+
+Erst nach Prüfung der Ausgabe darf eine Snapshot-Kopie repariert werden. Mit
+`--apply` wird vor der Transaktion automatisch ein timestampiertes Backup
+erstellt; alternativ wird ein expliziter Backup-Pfad angegeben:
+
+```bash
+python scripts/repair_sqlite_foreign_keys.py /path/to/snapshot.sqlite3 \
+  --apply \
+  --backup-path /secure-backups/snapshot-before-fk-repair.sqlite3
+```
+
+Der Helper entfernt nur eindeutig verwaiste Zeilen aus
+`offer_occurrences`, `offer_price_references` und `offer_provenance` (samt
+deren abhängigen Review-Zeilen). Er rekonstruiert oder errät keine Parent-
+Daten. Nach dem Apply müssen die ausgegebenen Prüfungen erneut
+`integrity_check = ok` und `foreign_key_check = 0` zeigen. Das Original der
+Produktionsdaten wird weder beim App-Start noch durch den Migrationsprozess
+automatisch bereinigt.
 
 ## 2. Maintenance Window und Schreibstopp
 

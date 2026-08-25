@@ -1,16 +1,18 @@
 from datetime import date
 
-from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from app.coverage_models import CoverageRegion
-from app.db import Base
+from app.db import Base, create_database_engine
 from app.models import (
     CollectionRun,
     FavoriteProduct,
     MasterProduct,
     Offer,
+    OfferOccurrence,
+    OfferPriceReference,
     ShoppingItem,
     Store,
     UserProfile,
@@ -25,7 +27,7 @@ from app.prospect_models import (
 
 
 def _db():
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, future=True)
     return Session()
@@ -67,9 +69,24 @@ def test_offer_reset_preserves_prospect_release_and_other_store_products():
         store_id=a.id, period_key="current", source_url="https://example.test",
         pdf_url="https://example.test/a.pdf", local_path="/tmp/not-used.pdf", page_count=1,
     ))
-    db.add(OfferProvenance(offer_id=offer_a_shared.id, prospect_archive_id=archive.id, prospect_page=1))
+    provenance = OfferProvenance(offer_id=offer_a_shared.id, prospect_archive_id=archive.id, prospect_page=1)
+    db.add(provenance)
+    db.flush()
+    db.add_all([
+        ProspectOfferReview(offer_provenance_id=provenance.id, status="correct"),
+        OfferOccurrence(
+            offer_id=offer_a_shared.id,
+            occurrence_fingerprint="offer-a-occurrence",
+        ),
+        OfferPriceReference(
+            offer_id=offer_a_shared.id,
+            reference_price=1.5,
+        ),
+    ])
     db.add(CollectionRun(store_id=a.id, source_key="test", status="success", offers_received=2, offers_imported=2))
     db.commit()
+    deleted_offer_id = offer_a_shared.id
+    deleted_provenance_id = provenance.id
 
     result = reset_store_offers(db, a)
 
@@ -80,6 +97,11 @@ def test_offer_reset_preserves_prospect_release_and_other_store_products():
     assert db.query(MasterProduct).filter(MasterProduct.normalized_key == "nur-a").count() == 0
     assert db.query(ProspectArchive).filter(ProspectArchive.store_id == a.id).count() == 1
     assert db.query(Prospect).filter(Prospect.store_id == a.id).count() == 1
+    assert db.query(OfferOccurrence).filter(OfferOccurrence.offer_id == deleted_offer_id).count() == 0
+    assert db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == deleted_offer_id).count() == 0
+    assert db.query(OfferProvenance).filter(OfferProvenance.offer_id == deleted_offer_id).count() == 0
+    assert db.query(ProspectOfferReview).filter(ProspectOfferReview.offer_provenance_id == deleted_provenance_id).count() == 0
+    assert db.execute(text("PRAGMA foreign_key_check")).all() == []
     assert db.get(Store, a.id).benchmark_verified is True
     db.close()
 
