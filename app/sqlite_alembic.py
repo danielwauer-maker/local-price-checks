@@ -25,7 +25,8 @@ from .db_transfer import (
 from .model_registry import metadata as application_metadata
 
 BASELINE_REVISION = "20260825_01"
-TARGET_REVISION = "20260825_02"
+PREVIOUS_REVISION = "20260825_02"
+TARGET_REVISION = "20260825_03"
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -71,13 +72,18 @@ def _run_alembic(path: Path, *arguments: str) -> None:
         raise MigrationSafetyError(f"Alembic {' '.join(arguments)} failed: {detail}")
 
 
-@lru_cache(maxsize=1)
-def baseline_metadata() -> MetaData:
-    """Reflect the actual baseline revision instead of approximating old models."""
+@lru_cache(maxsize=4)
+def revision_metadata(revision: str) -> MetaData:
+    """Reflect exactly one historical Alembic revision for semantic validation.
 
-    with tempfile.TemporaryDirectory(prefix="lokero-alembic-baseline-") as directory:
-        target = Path(directory) / "baseline.sqlite3"
-        _run_alembic(target, "upgrade", BASELINE_REVISION)
+    Application metadata always represents the newest code. Historical database
+    revisions therefore must be compared with the schema that actually existed
+    at that revision, not with the current model registry.
+    """
+
+    with tempfile.TemporaryDirectory(prefix=f"lokero-alembic-{revision}-") as directory:
+        target = Path(directory) / "revision.sqlite3"
+        _run_alembic(target, "upgrade", revision)
         engine = create_engine(_database_url(target), future=True)
         try:
             expected = MetaData()
@@ -87,6 +93,13 @@ def baseline_metadata() -> MetaData:
     if ALEMBIC_TABLE in expected.tables:
         expected.remove(expected.tables[ALEMBIC_TABLE])
     return expected
+
+
+@lru_cache(maxsize=1)
+def baseline_metadata() -> MetaData:
+    """Reflect the actual baseline revision instead of approximating old models."""
+
+    return revision_metadata(BASELINE_REVISION)
 
 
 def _sqlite_checks(path: Path) -> None:
@@ -130,10 +143,15 @@ def _revision(path: Path) -> str | None:
 
 
 def _schema_checks(path: Path, revision: str | None) -> None:
-    if revision in {None, BASELINE_REVISION}:
+    if revision is None:
         expected = baseline_metadata()
+        expected_label = BASELINE_REVISION
+    elif revision in {BASELINE_REVISION, PREVIOUS_REVISION}:
+        expected = revision_metadata(revision)
+        expected_label = revision
     elif revision == TARGET_REVISION:
         expected = application_metadata()
+        expected_label = TARGET_REVISION
     else:
         raise MigrationSafetyError(f"Unsupported Alembic revision: {revision}")
     engine = _immutable_source_engine(path)
@@ -143,7 +161,6 @@ def _schema_checks(path: Path, revision: str | None) -> None:
     finally:
         engine.dispose()
     if differences:
-        expected_label = BASELINE_REVISION if revision in {None, BASELINE_REVISION} else TARGET_REVISION
         raise MigrationSafetyError(
             f"SQLite schema differs from expected revision {expected_label}: " + "; ".join(differences)
         )

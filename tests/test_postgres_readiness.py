@@ -31,8 +31,15 @@ def test_database_configuration_supports_sqlite_and_psycopg():
 
 def test_model_registry_contains_additive_models():
     names = set(metadata().tables)
-    assert {"account_client_links", "client_devices", "shopping_item_checks", "collection_quality_snapshots"} <= names
-    assert len(names) == 42
+    assert {
+        "account_client_links",
+        "client_devices",
+        "shopping_item_checks",
+        "collection_quality_snapshots",
+        "coverage_postal_codes",
+        "store_discovery_candidates",
+    } <= names
+    assert len(names) == 44
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):
