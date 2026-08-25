@@ -1,25 +1,7 @@
 from sqlalchemy.orm import Session
 
 from .models import ProductCategory
-
-DEFAULT_CATEGORIES = [
-    (10, "Obst & Gemüse", "obst-gemuese"),
-    (20, "Fleisch & Wurst", "fleisch-wurst"),
-    (30, "Fisch & Meeresfrüchte", "fisch"),
-    (40, "Käse", "kaese"),
-    (50, "Milch & Molkerei", "molkerei"),
-    (60, "Brot & Backwaren", "brot"),
-    (70, "Getränke", "getraenke"),
-    (80, "Süßwaren & Snacks", "suesswaren"),
-    (90, "Tiefkühl", "tiefkuehl"),
-    (100, "Vorrat", "vorrat"),
-    (110, "Frühstück", "fruehstueck"),
-    (120, "Fertiggerichte", "fertiggerichte"),
-    (130, "Drogerie", "drogerie"),
-    (140, "Haushalt", "haushalt"),
-    (150, "Tiernahrung", "tiernahrung"),
-    (999, "Sonstiges", "sonstiges"),
-]
+from .product_taxonomy import PRODUCT_TAXONOMY
 
 LEGACY_CATEGORY_SLUGS = {
     "molkerei-kuehlung",
@@ -27,6 +9,7 @@ LEGACY_CATEGORY_SLUGS = {
     "backwaren",
     "suesswaren-snacks",
     "vorrat-grundnahrung",
+    "vorrat",
     "haushalt-drogerie",
 }
 
@@ -47,7 +30,8 @@ def seed_admin_catalog(db: Session):
     by_slug = {row.slug: row for row in rows}
     by_name = {row.name: row for row in rows}
 
-    for sort_order, name, slug in DEFAULT_CATEGORIES:
+    for spec in PRODUCT_TAXONOMY:
+        sort_order, name, slug = spec.sort_order, spec.name, spec.slug
         row = by_slug.get(slug)
 
         # Production-safe legacy migration: reuse a row with the desired display
@@ -70,6 +54,11 @@ def seed_admin_catalog(db: Session):
         row.name = name
         row.sort_order = sort_order
         row.active = True
+
+    db.flush()
+    for spec in PRODUCT_TAXONOMY:
+        row = by_slug[spec.slug]
+        row.parent_id = by_slug[spec.parent_slug].id if spec.parent_slug else None
 
     for slug in LEGACY_CATEGORY_SLUGS:
         row = by_slug.get(slug)

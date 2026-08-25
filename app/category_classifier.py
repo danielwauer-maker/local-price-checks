@@ -1,93 +1,59 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.orm import Session
 
 from .models import MasterProduct, ProductAdminData, ProductCategory
+from .product_taxonomy import CLASSIFICATION_RULES, matching_family, normalize_search_text
 
-# Order matters: specific product families must win before broad ingredient words.
-# The slugs intentionally mirror the frozen Lokero frontend category ids.
-CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("fisch", (
-        "fisch", "lachs", "thunfisch", "garnelen", "garnele", "forelle", "kabeljau", "seelachs", "matjes",
-        "hering", "makrele", "dorade", "pangasius", "scampi", "meeresfrüchte", "fischstäbchen", "räucherlachs",
-    )),
-    ("kaese", (
-        "käse", "gouda", "emmentaler", "mozzarella", "feta", "camembert", "brie", "parmesan", "grana padano",
-        "bergkäse", "frischkäse", "hirtenkäse", "scheibenkäse", "reibekäse", "cheddar", "maasdamer",
-    )),
-    ("fleisch-wurst", (
-        "fleisch", "rind", "schwein", "hähnchen", "huhn", "pute", "hack", "steak", "schnitzel", "braten",
-        "wurst", "salami", "schinken", "speck", "würstchen", "bratwurst", "aufschnitt", "leberwurst", "mortadella",
-        "frikadelle", "cevapcici", "gyros",
-    )),
-    ("fertiggerichte", (
-        "fertiggericht", "fertigmenü", " fix ", "instant", "topfgericht", "eintopf", "air fryer", "pfannengericht",
-        "lasagne", "ravioli", "maultaschen", "dosenravioli", "currywurst mit", "menü", "ready to eat",
-    )),
-    ("suesswaren", (
-        "schokolade", "schoko", "keks", "kekse", "waffel", "bonbon", "gummi", "chips", "cracker", "nüsse", "nuss",
-        "snack", "riegel", "praline", "lakritz", "popcorn", "fruchtgummi", "nachos", "salzstangen", "gebäck",
-    )),
-    ("getraenke", (
-        "wasser", "quelle", "cola", "limonade", "limo", "saft", "nektar", "smoothie", "bier", "pils", "radler",
-        "wein", "sekt", "prosecco", "vodka", "wodka", "whisky", " gin ", " rum ", "likör", "getränk", "energy",
-        "eistee", "schorle", "sirup", "tonic", "orangeade", "helles", " hell ", "0,0%", "0.0%",
-    )),
-    ("brot", (
-        "brot", "brötchen", "croissant", "baguette", "toast", "kuchen", "torte", "muffin", "donut", "backware",
-        "brezel", "stuten", "ciabatta", "knäckebrot", "wrap", "tortilla",
-    )),
-    ("molkerei", (
-        "milch", "joghurt", "jogurt", "almighurt", "froop", "ehrmann", "müller", "quark", "butter", "margarine",
-        "sahne", "schmand", "kefir", "pudding", "milchreis", "skyr", "dessert", "eier", " ei ", "creme fraiche",
-        "buttermilch", "ayran",
-    )),
-    ("obst-gemuese", (
-        "apfel", "äpfel", "banane", "birne", "erdbe", "himbeer", "heidelbeer", "traube", "orange", "mandarine",
-        "zitrone", "limette", "mango", "ananas", "kiwi", "melone", "pfirsich", "nektarine", "kirsche", "pflaume",
-        "tomate", "gurke", "paprika", "kartoffel", "zwiebel", "knoblauch", "salat", "möhre", "karotte", "brokkoli",
-        "blumenkohl", "zucchini", "aubergine", "champignon", "gemüse", "obst", "avocado", "radieschen", "spargel",
-    )),
-    ("fruehstueck", (
-        "müsli", "haferflocken", "cornflakes", "cerealien", "marmelade", "konfitüre", "honig", "nuss-nougat",
-        "frühstück", "kaffee", "espresso", "cappuccino", "kaffeebohnen", "filterkaffee", "tee ", "teebeutel",
-    )),
-    ("tiefkuehl", (
-        "tiefkühl", "tiefgekühlt", " tk ", "pizza", "pommes", "eiscreme", "speiseeis", "stieleis", "eis am stiel",
-        "tiefkühlgemüse", "backofen pommes",
-    )),
-    ("vorrat", (
-        "nudel", "pasta", "reis", "mehl", "zucker", "salz", "öl", "essig", "konserve", "dose", "soße", "sauce",
-        "ketchup", "senf", "mayonnaise", "mayo", "gewürz", "suppe", "brühe", "aufstrich", "tomatenmark", "pesto",
-        "hülsenfrüchte", "bohnen", "linsen", "couscous", "bulgur", "backmischung", "hefe",
-    )),
-    ("drogerie", (
-        "zahnpasta", "zahnbürste", "shampoo", "duschgel", "deo", "seife", "bodylotion", "hautcreme", "gesichtscreme",
-        "windel", "tampon", "binde", "rasierer", "rasiergel", "haarspray", "haarfarbe", "mundspülung", "pflege",
-    )),
-    ("haushalt", (
-        "waschmittel", "spülmittel", "reiniger", "toilettenpapier", "küchenrolle", "taschentücher", "müllbeutel", "haushalt",
-        "geschirrspül", "allzweckreiniger", "weichspüler", "backpapier", "alufolie", "frischhaltefolie", "schwamm",
-    )),
-    ("tiernahrung", (
-        "katzen", "katze", "hunde", "hund ", "tierfutter", "tier-nahrung", "hundefutter", "katzenfutter", "leckerl", "napf",
-        "sheba", "whiskas", "pedigree", "felix", "purina",
-    )),
-]
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    category_slug: str
+    family_slug: str | None
+    reason: str
+    confidence: str
+
+
+@dataclass(frozen=True)
+class ReclassificationEntry:
+    product_id: int
+    product_name: str
+    old_category: str | None
+    new_category: str
+    reason: str
+    status: str
+
+
+@dataclass(frozen=True)
+class ReclassificationSummary:
+    inspected: int
+    changed: int
+    unchanged: int
+    locked: int
+    unknown: int
+    entries: tuple[ReclassificationEntry, ...]
+
+
+def classify_product(product: MasterProduct) -> ClassificationResult:
+    haystack = normalize_search_text(" ".join(filter(None, (product.brand, product.name, product.package_size))))
+    for rule in CLASSIFICATION_RULES:
+        if any(normalize_search_text(term) in haystack for term in rule.terms):
+            family = matching_family(haystack, rule.slug)
+            return ClassificationResult(rule.slug, family.slug if family else None, rule.reason, "high")
+    return ClassificationResult("sonstiges", None, "keine sichere Taxonomie-Regel", "unknown")
 
 
 def infer_category_slug(product: MasterProduct) -> str:
-    # Spaces around the normalized haystack make phrase checks such as " fix " reliable.
-    haystack = f" {' '.join(filter(None, [product.brand, product.name, product.package_size])).lower()} "
-    for slug, keywords in CATEGORY_KEYWORDS:
-        if any(keyword in haystack for keyword in keywords):
-            return slug
-    return "sonstiges"
+    """Compatibility wrapper used by collectors and existing callers."""
+
+    return classify_product(product).category_slug
 
 
 def ensure_auto_category(db: Session, product: MasterProduct, *, force_unlocked: bool = False) -> ProductAdminData:
     meta = db.query(ProductAdminData).filter(ProductAdminData.master_product_id == product.id).first()
-    if meta and meta.category_locked and meta.category_id is not None:
+    if meta and meta.category_locked:
         return meta
     if not meta:
         meta = ProductAdminData(master_product_id=product.id)
@@ -99,27 +65,76 @@ def ensure_auto_category(db: Session, product: MasterProduct, *, force_unlocked:
         if current and current.slug != "sonstiges" and current.active:
             return meta
 
-    slug = infer_category_slug(product)
-    category = db.query(ProductCategory).filter(ProductCategory.slug == slug, ProductCategory.active.is_(True)).first()
+    result = classify_product(product)
+    category = (
+        db.query(ProductCategory)
+        .filter(ProductCategory.slug == result.category_slug, ProductCategory.active.is_(True))
+        .first()
+    )
     if category:
         meta.category_id = category.id
     return meta
 
 
-def backfill_auto_categories(db: Session, *, force_unlocked: bool = True) -> int:
-    """Reclassify all non-locked products into the current Lokero taxonomy.
+def reclassify_products(db: Session, *, apply: bool = False) -> ReclassificationSummary:
+    category_rows = db.query(ProductCategory).filter(ProductCategory.active.is_(True)).all()
+    categories = {row.slug: row for row in category_rows}
+    categories_by_id = {row.id: row for row in category_rows}
+    products = db.query(MasterProduct).order_by(MasterProduct.id).all()
+    metadata = (
+        {
+            row.master_product_id: row
+            for row in db.query(ProductAdminData)
+            .filter(ProductAdminData.master_product_id.in_([product.id for product in products]))
+            .all()
+        }
+        if products
+        else {}
+    )
 
-    Manual category corrections stay untouched. `force_unlocked=True` is important
-    during taxonomy upgrades so products previously assigned to broad legacy
-    categories are moved into the new store-like categories.
-    """
-    changed = 0
-    products = db.query(MasterProduct).all()
+    changed = unchanged = locked = unknown = 0
+    entries: list[ReclassificationEntry] = []
     for product in products:
-        before = db.query(ProductAdminData).filter(ProductAdminData.master_product_id == product.id).first()
-        before_id = before.category_id if before else None
-        meta = ensure_auto_category(db, product, force_unlocked=force_unlocked)
-        if meta.category_id != before_id:
+        meta = metadata.get(product.id)
+        old = categories_by_id.get(meta.category_id) if meta and meta.category_id else None
+        result = classify_product(product)
+        target = categories.get(result.category_slug)
+        if meta and meta.category_locked:
+            locked += 1
+            status = "locked"
+        elif target is None or result.confidence == "unknown":
+            unknown += 1
+            status = "unknown"
+        elif old and old.id == target.id:
+            unchanged += 1
+            status = "unchanged"
+        else:
             changed += 1
-    db.commit()
-    return changed
+            status = "changed"
+            if apply:
+                if meta is None:
+                    meta = ProductAdminData(master_product_id=product.id)
+                    db.add(meta)
+                    metadata[product.id] = meta
+                meta.category_id = target.id
+        entries.append(
+            ReclassificationEntry(
+                product.id,
+                product.name,
+                old.name if old else None,
+                target.name if target else "Sonstiges",
+                result.reason,
+                status,
+            )
+        )
+    if apply:
+        db.commit()
+    return ReclassificationSummary(len(products), changed, unchanged, locked, unknown, tuple(entries))
+
+
+def backfill_auto_categories(db: Session, *, force_unlocked: bool = True) -> int:
+    """Explicit compatibility API; callers must opt in to applying changes."""
+
+    if not force_unlocked:
+        return 0
+    return reclassify_products(db, apply=True).changed

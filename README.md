@@ -108,8 +108,27 @@ uvicorn app.main:app --reload --host 0.0.0.0
 python -m pytest -q
 ```
 
+## Produkttaxonomie und Suche
+
+Die deterministische Backend-Suche versteht Produktnamen, Marken,
+Kategoriehierarchie, Synonyme und die bestehenden semantischen
+Produktfamilien. `GET /api/products?q=Fisch` nutzt dieselbe zentrale Logik wie
+die Lokero-Suche; optional kann mit `category=<slug>` gefiltert werden.
+
+Eine Reklassifizierung bestehender Produkte ist ausschließlich explizit und
+standardmäßig ein Dry Run:
+
+```bash
+python scripts/reclassify_products.py
+python scripts/reclassify_products.py --apply
+```
+
+Admin-gesperrte Kategorien werden nie überschrieben. Taxonomie, Ranking,
+Familienabgrenzung und Migration sind in
+**`docs/PRODUCT_TAXONOMY_AND_SEARCH.md`** beschrieben.
+
 ## Repository-Regeln
 
 Nicht versioniert werden: produktive SQLite-Datenbanken, Prospekt-PDFs, Support-Exports, Cookies/Browserprofile, `.env`, lokale Zertifikate und Logs.
 
-Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.
+Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/PRODUCT_TAXONOMY_AND_SEARCH.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.

@@ -14,6 +14,9 @@ def test_admin_categories_seed_once():
     second = db.query(ProductCategory).count()
     assert first >= 10
     assert second == first
+    cheese = db.query(ProductCategory).filter_by(slug="kaese").one()
+    mozzarella = db.query(ProductCategory).filter_by(slug="mozzarella").one()
+    assert mozzarella.parent_id == cheese.id
     db.close()
 
 

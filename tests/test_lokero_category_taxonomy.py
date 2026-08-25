@@ -1,8 +1,9 @@
-from app.admin_seed import DEFAULT_CATEGORIES, LEGACY_CATEGORY_SLUGS
+from app.admin_seed import LEGACY_CATEGORY_SLUGS
+from app.product_taxonomy import PRODUCT_TAXONOMY
 
 
 def test_default_category_catalog_matches_final_lokero_taxonomy():
-    slugs = [slug for _order, _name, slug in DEFAULT_CATEGORIES]
+    slugs = [category.slug for category in PRODUCT_TAXONOMY if category.parent_slug is None]
     assert slugs == [
         "obst-gemuese",
         "fleisch-wurst",
@@ -10,15 +11,20 @@ def test_default_category_catalog_matches_final_lokero_taxonomy():
         "kaese",
         "molkerei",
         "brot",
+        "fruehstueck",
         "getraenke",
+        "alkohol",
         "suesswaren",
         "tiefkuehl",
-        "vorrat",
-        "fruehstueck",
         "fertiggerichte",
-        "drogerie",
+        "nudeln-reis",
+        "kochen-wuerzen",
+        "vegetarisch-vegan",
+        "baby-kind",
         "haushalt",
+        "drogerie",
         "tiernahrung",
+        "non-food",
         "sonstiges",
     ]
 
@@ -30,5 +36,16 @@ def test_legacy_broad_categories_are_retired():
         "backwaren",
         "suesswaren-snacks",
         "vorrat-grundnahrung",
+        "vorrat",
         "haushalt-drogerie",
     }
+
+
+def test_every_subcategory_references_an_existing_root_category():
+    roots = {category.slug for category in PRODUCT_TAXONOMY if category.parent_slug is None}
+    assert roots
+    assert all(
+        category.parent_slug in roots
+        for category in PRODUCT_TAXONOMY
+        if category.parent_slug is not None
+    )
