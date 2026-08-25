@@ -21,6 +21,8 @@ def _catalog():
         MasterProduct(name="Pepsi Max", brand="Pepsi", normalized_key="pepsi-max"),
         MasterProduct(name="Junger Gouda", brand="Milbona", normalized_key="junger-gouda"),
         MasterProduct(name="Büffel Mozzarella", brand="Galbani", normalized_key="bueffel-mozzarella"),
+        MasterProduct(name="Pangasiusfilets", brand="Ocean Sea", normalized_key="pangasiusfilets"),
+        MasterProduct(name="Schafkäse natur", brand="Milbona", normalized_key="schafkaese-natur"),
         MasterProduct(name="Rahm-Spinat", brand="Iglo", normalized_key="iglo-rahm-spinat"),
         MasterProduct(name="Toilettenpapier", brand="Hakle", normalized_key="toilettenpapier"),
     ]
@@ -39,11 +41,11 @@ def _names(db, query: str, category: str | None = None) -> list[str]:
 def test_semantic_category_family_synonym_brand_and_partial_search():
     _, db = _catalog()
 
-    assert {"ASC Lachsfilet", "15 Fischstäbchen"}.issubset(_names(db, "Fisch"))
+    assert {"ASC Lachsfilet", "15 Fischstäbchen", "Pangasiusfilets"}.issubset(_names(db, "Fisch"))
     assert "ASC Lachsfilet" in _names(db, "Lachs")
     assert {"Coca-Cola Zero", "Pepsi Max"}.issubset(_names(db, "Cola"))
     assert "Coca-Cola Zero" in _names(db, "Coke")
-    assert {"Junger Gouda", "Büffel Mozzarella"}.issubset(_names(db, "Käse"))
+    assert {"Junger Gouda", "Büffel Mozzarella", "Schafkäse natur"}.issubset(_names(db, "Käse"))
     assert "Büffel Mozzarella" in _names(db, "Mozzarella")
     assert {"Coca-Cola Zero", "Pepsi Max"}.issubset(_names(db, "Getränke"))
     assert {"15 Fischstäbchen", "Rahm-Spinat"}.issubset(_names(db, "Iglo"))

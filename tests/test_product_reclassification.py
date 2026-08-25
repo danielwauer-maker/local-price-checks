@@ -40,3 +40,30 @@ def test_reclassification_is_dry_run_first_and_respects_admin_lock():
     assert db.query(ProductAdminData).filter_by(master_product_id=locked.id).one().category_id == sonstiges.id
     assert db.query(ProductAdminData).filter_by(master_product_id=unknown.id).first() is None
     db.close()
+
+
+def test_unknown_reclassification_preserves_existing_plausible_category():
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    seed_admin_catalog(db)
+    product = MasterProduct(name="Mystery Spezialität 123", normalized_key="preserve-category")
+    db.add(product)
+    db.flush()
+    fish = db.query(ProductCategory).filter_by(slug="fisch-produkte").one()
+    db.add(ProductAdminData(master_product_id=product.id, category_id=fish.id))
+    db.commit()
+
+    dry_run = reclassify_products(db)
+    entry = dry_run.entries[0]
+    assert dry_run.unknown == 1
+    assert dry_run.changed == 0
+    assert entry.status == "unknown"
+    assert entry.old_category == fish.name
+    assert entry.new_category == fish.name
+    assert "bleibt erhalten" in entry.reason
+
+    applied = reclassify_products(db, apply=True)
+    assert applied.unknown == 1
+    assert db.query(ProductAdminData).filter_by(master_product_id=product.id).one().category_id == fish.id
+    db.close()

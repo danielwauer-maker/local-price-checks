@@ -8,6 +8,7 @@ from .models import MasterProduct, ProductAdminData, ProductCategory
 from .product_taxonomy import (
     CLASSIFICATION_RULES,
     compound_head_matches,
+    ingredient_list_matches,
     matching_family,
     normalize_search_text,
     taxonomy_term_matches,
@@ -44,6 +45,13 @@ class ReclassificationSummary:
 
 def classify_product(product: MasterProduct) -> ClassificationResult:
     haystack = normalize_search_text(" ".join(filter(None, (product.brand, product.name, product.package_size))))
+    if ingredient_list_matches(product.name):
+        return ClassificationResult(
+            "sonstiges",
+            None,
+            "nur Zutatenliste erkannt; kein sicherer Produkttyp",
+            "unknown",
+        )
     for rule in CLASSIFICATION_RULES:
         if (
             any(taxonomy_term_matches(haystack, term) for term in rule.terms)
@@ -126,13 +134,18 @@ def reclassify_products(db: Session, *, apply: bool = False) -> Reclassification
                     db.add(meta)
                     metadata[product.id] = meta
                 meta.category_id = target.id
+        proposed_name = target.name if target else "Sonstiges"
+        reason = result.reason
+        if status == "unknown" and old and old.slug != "sonstiges":
+            proposed_name = old.name
+            reason = f"{reason}; bestehende plausible Kategorie {old.name!r} bleibt erhalten"
         entries.append(
             ReclassificationEntry(
                 product.id,
                 product.name,
                 old.name if old else None,
-                target.name if target else "Sonstiges",
-                result.reason,
+                proposed_name,
+                reason,
                 status,
             )
         )

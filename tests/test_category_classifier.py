@@ -1,3 +1,5 @@
+import pytest
+
 from app.category_classifier import classify_product, infer_category_slug
 from app.product_taxonomy import matching_family
 from app.models import MasterProduct
@@ -75,3 +77,113 @@ def test_product_family_matching_is_phrase_and_token_aware():
     assert matching_family("Abwasserpumpe") is None
     assert matching_family("Coca-Cola").slug == "cola"
     assert matching_family("Pepsi").slug == "cola"
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Heinz Curry Mango Sauce", "saucen"),
+        ("Corny Müsliriegel Milch Classic", "muesli"),
+        ("Bresso Kräuter der Provence", "frischkaese"),
+        ("Mirée Französische Kräuter", "frischkaese"),
+        ("Knorr Salat Krönung", "saucen"),
+        ("Dr. Oetker Ristorante Pizza/Bistro Flammkuchen Elsässer Art", "tiefkuehlpizza"),
+        ("Ritter Sport Jamaica Rum Knusperstück", "schokolade"),
+        ("Sensodyne ProSchmelz Zahnfleisch Plus", "zahnpflege"),
+        ("Frosta Butter Chicken", "tiefkuehlgerichte"),
+        ("Original Wagner Steinofen Pizza Salami", "tiefkuehlpizza"),
+        ("LIKEMEAT Vegane Fleischalternative", "fleischersatz"),
+        ("Planted Veganes Steak", "fleischersatz"),
+        ("Vitakraft Menü mit Huhn", "tiernahrung"),
+        ("SONDEY Jaffa Cake Orange XXL", "kekse"),
+        ("MIKADO Schokostäbchen Milchschokolade", "schokolade"),
+        ("Nadler Sahne Heringsfilets", "fisch-produkte"),
+    ),
+)
+def test_production_reclassification_product_type_precedence(name, category_slug):
+    result = classify_product(product(name))
+    assert result.category_slug == category_slug
+    assert result.confidence == "high"
+    assert result.reason
+
+
+def test_ingredient_only_fragment_remains_unknown_instead_of_becoming_fruit():
+    result = classify_product(product("mit Zwiebel, Gurke und Apfel"))
+    assert result.category_slug == "sonstiges"
+    assert result.confidence == "unknown"
+    assert "Zutatenliste" in result.reason
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "ASC Lachsfilets",
+        "Matjesfilets nordische Art",
+        "Pangasiusfilets",
+        "Garnelen natur",
+        "Rotbarschfilets",
+    ),
+)
+def test_explicit_fish_product_terms_do_not_degrade_to_unknown(name):
+    result = classify_product(product(name))
+    assert result.category_slug in {
+        "fisch-produkte",
+        "raeucherfisch",
+        "meeresfruechte",
+    }
+    assert result.confidence == "high"
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "Schafkäse natur",
+        "Grillkäse Kräuter",
+        "Käsescheiben mild",
+        "Frischkäsecreme Gartenkräuter",
+    ),
+)
+def test_explicit_cheese_product_terms_do_not_degrade_to_unknown(name):
+    result = classify_product(product(name))
+    assert result.category_slug in {
+        "kaese",
+        "schnittkaese",
+        "hartkaese",
+        "frischkaese",
+        "feta-hirtenkaese",
+    }
+    assert result.confidence == "high"
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Zitronen", "obst"),
+        ("Orangen", "obst"),
+        ("Möhren", "gemuese"),
+        ("Tomaten", "gemuese"),
+        ("Zwiebeln", "gemuese"),
+        ("Melonen", "obst"),
+        ("Nektarinen", "obst"),
+        ("Zwetschgen", "obst"),
+        ("Champignons", "pilze"),
+        ("Chicorée", "gemuese"),
+    ),
+)
+def test_explicit_fruit_and_vegetable_products_are_recognized(name, category_slug):
+    assert infer_category_slug(product(name)) == category_slug
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Krombacher Pilsener", "bier"),
+        ("Paulaner Weißbier", "bier"),
+        ("Mosel Riesling", "wein"),
+        ("Grauburgunder trocken", "wein"),
+        ("Sierra Tequila", "spirituosen"),
+        ("Asbach Cognac", "spirituosen"),
+    ),
+)
+def test_clear_alcohol_product_descriptions_are_recognized(name, category_slug):
+    assert infer_category_slug(product(name)) == category_slug

@@ -32,12 +32,16 @@ they must never be blindly stamped or upgraded from the empty baseline.
 
 ## Classification
 
-Rules are ordered from specific to broad. For example, Fischstäbchen are
-classified before generic fish, Frischkäse before dairy terms, Cola before
-generic drinks and Buttercroissants before butter. A result contains category,
-product family, reason and a small confidence label. If no reliable rule
-matches, the product remains effectively unknown/`sonstiges`; the classifier
-does not force an unrelated category.
+`CLASSIFICATION_RULES` remains the single deterministic rule engine. Its order
+now expresses three explicit precedence levels: reliable product type and
+context, then ingredient/flavour, then broad tokens. For example, fish and
+cheese products precede dairy or herb ingredients, pizza precedes toppings,
+sweets precede flavours, sauce/dressing precedes listed fruit and vegetables,
+and animal food precedes its contained meat species. Vegan or vegetarian
+alternative phrases precede meat terms. A result contains category, product
+family, a human-readable precedence reason and a small confidence label. If no
+reliable rule matches, the product remains effectively unknown/`sonstiges`;
+the classifier does not force an unrelated category.
 
 Classification and product-family terms use normalized tokens and contiguous
 phrases, not arbitrary substrings. Hyphens and punctuation become separators,
@@ -47,6 +51,15 @@ handle common German heads such as `Wurst` in `Bierwurst`; undeclared word
 fragments never gain substring semantics.
 Interactive user search deliberately remains substring-capable, preserving
 queries such as `Thun` → `Thunfisch`.
+
+No fuzzy matching or second classifier was introduced. New production
+regressions use explicit product phrases and complete singular/plural tokens.
+The deliberately narrow ingredient-fragment guard recognizes a leading `mit`
+plus multiple complete ingredient tokens; such a fragment remains `unknown`
+instead of being classified from one ingredient. The unsafe generic compound
+head `fleisch` is not enabled, so `Zahnfleisch` cannot match meat, while
+explicitly allowed German heads such as `wurst`, `steak` and `braten` preserve
+the established compound regressions.
 
 Newly collected products continue to use `ensure_auto_category`. Existing
 products are never mass-reclassified at application startup.
@@ -112,6 +125,13 @@ The output contains product ID/name, previous category, proposed category,
 status and matching rule plus totals for `inspected`, `changed`, `unchanged`,
 `locked` and `unknown`.
 
+Unknown preservation is fail-safe: if the classifier has no high-confidence
+result and an unlocked product already has an active category other than
+`Sonstiges`, the dry run reports `unknown`, proposes that existing category and
+states the preservation decision in `reason`. `--apply` leaves the assignment
+unchanged. Products without such an assignment remain unknown; no application
+startup performs reclassification.
+
 Apply only after reviewing the dry run:
 
 ```bash
@@ -119,7 +139,9 @@ python scripts/reclassify_products.py --apply
 ```
 
 The command never changes locked products. There is no automatic startup
-backfill.
+backfill. The script adds its repository root from its own resolved path, so
+the same direct command works in the standard `/app` container without a
+manual `PYTHONPATH=/app` environment override.
 
 ## Historical SQLite Alembic onboarding
 
