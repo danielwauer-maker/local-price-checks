@@ -187,3 +187,41 @@ def test_explicit_fruit_and_vegetable_products_are_recognized(name, category_slu
 )
 def test_clear_alcohol_product_descriptions_are_recognized(name, category_slug):
     assert infer_category_slug(product(name)) == category_slug
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "Rügenwalder Vegane Mühlen Salami oder Veganer Schinken Spicker Mortadella",
+        "Vegane Salami",
+        "Veganer Schinken",
+        "Vegetarische Bratwurst",
+    ),
+)
+def test_vegan_or_vegetarian_context_blocks_later_meat_rules(name):
+    result = classify_product(product(name))
+    assert result.category_slug == "fleischersatz"
+    assert result.confidence == "high"
+    assert "Kontext verhindert" in result.reason
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Rumpsteak", "fleisch"),
+        ("Schweine-Lachsbraten", "fleisch"),
+        ("Kasseler Lachsbraten", "fleisch"),
+        ("Frischer Hähnchen-Schenkel", "gefluegel"),
+        ("Bierwurst", "wurst"),
+        ("Schwarzwälder Schinken", "schinken"),
+    ),
+)
+def test_real_meat_products_remain_meat_without_vegetarian_context(name, category_slug):
+    assert infer_category_slug(product(name)) == category_slug
+
+
+def test_kefir_uses_safe_general_dairy_category_and_never_sahne():
+    result = classify_product(product("MILRAM Kefir Drink"))
+    assert result.category_slug == "molkerei"
+    assert result.category_slug != "sahne"
+    assert result.reason == "Kefir als allgemeines Milchprodukt"

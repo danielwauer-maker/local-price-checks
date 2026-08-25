@@ -102,6 +102,30 @@ def ingredient_list_matches(value: str | None) -> bool:
     return len(ingredients.intersection(tokens)) >= 2
 
 
+VEGETARIAN_CONTEXT_TERMS: tuple[str, ...] = (
+    "vegan",
+    "vegane",
+    "veganer",
+    "veganes",
+    "veganen",
+    "vegetarisch",
+    "vegetarische",
+    "vegetarischer",
+    "vegetarisches",
+    "vegetarischen",
+)
+
+VEGETARIAN_MEAT_BLOCKED_SLUGS = frozenset(
+    {"fleisch", "grillfleisch", "hackfleisch", "wurst", "schinken", "gefluegel"}
+)
+
+
+def vegetarian_context_matches(value: str | None) -> bool:
+    """Match an explicit vegan/vegetarian token, including German inflection."""
+
+    return any(taxonomy_term_matches(value, term) for term in VEGETARIAN_CONTEXT_TERMS)
+
+
 def _category(slug: str, name: str, order: int, parent: str | None = None, *terms: str) -> CategorySpec:
     return CategorySpec(slug, name, order, parent, tuple(terms))
 
@@ -246,7 +270,7 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     # Product-type and context rules. Their reason strings are also surfaced by
     # the reclassification dry run, so precedence decisions remain auditable.
     TaxonomyRule("pflanzendrinks", ("haferdrink", "hafermilch", "sojadrink", "sojamilch", "mandeldrink", "pflanzendrink"), "Pflanzendrink"),
-    TaxonomyRule("fleischersatz", ("fleischersatz", "fleischalternative", "vegane fleischalternative", "vegetarische fleischalternative", "veganes steak", "vegetarisches steak", "veganes schnitzel", "vegetarisches schnitzel", "vegane wurst", "vegetarische wurst", "likemeat"), "veganer/vegetarischer Fleischersatz hat Vorrang vor Fleischbegriffen"),
+    TaxonomyRule("fleischersatz", ("fleischersatz", "fleischalternative", "likemeat"), "expliziter Fleischersatz-Produkttyp"),
     TaxonomyRule("katzenfutter", ("katzenfutter", "katzennahrung", "sheba", "whiskas", "felix"), "Katzenfutter hat Vorrang vor enthaltenen Tierarten"),
     TaxonomyRule("hundefutter", ("hundefutter", "hundenahrung", "pedigree", "cesar"), "Hundefutter hat Vorrang vor enthaltenen Tierarten"),
     TaxonomyRule("tiernahrung", ("tiernahrung", "tierfutter", "vitakraft"), "Tiernahrung hat Vorrang vor enthaltenen Tierarten"),
@@ -296,7 +320,8 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     # toppings cannot take over the category.
     TaxonomyRule("joghurt", ("joghurt", "jogurt", "yoghurt", "almighurt", "froop"), "Joghurt"),
     TaxonomyRule("quark", ("quark", "skyr"), "Quark"),
-    TaxonomyRule("sahne", ("sahne", "schmand", "creme fraiche", "kefir"), "Sahneprodukt"),
+    TaxonomyRule("molkerei", ("kefir",), "Kefir als allgemeines Milchprodukt"),
+    TaxonomyRule("sahne", ("sahne", "schmand", "creme fraiche"), "Sahneprodukt"),
     TaxonomyRule("butter", ("butter", "margarine"), "Butter/Streichfett"),
     TaxonomyRule("molkerei-dessert", ("pudding", "milchreis", "molkereidessert"), "Molkereidessert"),
     TaxonomyRule("milch", ("vollmilch", "fettarme milch", "buttermilch", "milch"), "Milch"),

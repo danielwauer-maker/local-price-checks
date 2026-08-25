@@ -67,3 +67,48 @@ def test_unknown_reclassification_preserves_existing_plausible_category():
     assert applied.unknown == 1
     assert db.query(ProductAdminData).filter_by(master_product_id=product.id).one().category_id == fish.id
     db.close()
+
+
+def test_reclassification_corrects_vegan_meat_terms_and_kefir_sahne():
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    seed_admin_catalog(db)
+    vegan = MasterProduct(name="Vegetarische Bratwurst", normalized_key="vegetarische-bratwurst")
+    kefir = MasterProduct(name="MILRAM Kefir Drink", normalized_key="milram-kefir")
+    db.add_all([vegan, kefir])
+    db.flush()
+    wurst = db.query(ProductCategory).filter_by(slug="wurst").one()
+    sahne = db.query(ProductCategory).filter_by(slug="sahne").one()
+    db.add_all(
+        [
+            ProductAdminData(master_product_id=vegan.id, category_id=wurst.id),
+            ProductAdminData(master_product_id=kefir.id, category_id=sahne.id),
+        ]
+    )
+    db.commit()
+
+    dry_run = reclassify_products(db)
+    proposed = {entry.product_name: entry.new_category for entry in dry_run.entries}
+    assert dry_run.changed == 2
+    assert proposed == {
+        "Vegetarische Bratwurst": "Fleischersatz",
+        "MILRAM Kefir Drink": "Milchprodukte",
+    }
+
+    applied = reclassify_products(db, apply=True)
+    assigned = {
+        product.name: category.slug
+        for product, category in (
+            db.query(MasterProduct, ProductCategory)
+            .join(ProductAdminData, ProductAdminData.master_product_id == MasterProduct.id)
+            .join(ProductCategory, ProductCategory.id == ProductAdminData.category_id)
+            .all()
+        )
+    }
+    assert applied.changed == 2
+    assert assigned == {
+        "Vegetarische Bratwurst": "fleischersatz",
+        "MILRAM Kefir Drink": "molkerei",
+    }
+    db.close()

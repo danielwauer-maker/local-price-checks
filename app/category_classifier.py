@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from .models import MasterProduct, ProductAdminData, ProductCategory
 from .product_taxonomy import (
     CLASSIFICATION_RULES,
+    VEGETARIAN_MEAT_BLOCKED_SLUGS,
     compound_head_matches,
     ingredient_list_matches,
     matching_family,
     normalize_search_text,
     taxonomy_term_matches,
+    vegetarian_context_matches,
 )
 
 
@@ -52,11 +54,20 @@ def classify_product(product: MasterProduct) -> ClassificationResult:
             "nur Zutatenliste erkannt; kein sicherer Produkttyp",
             "unknown",
         )
+    vegetarian_context = vegetarian_context_matches(haystack)
     for rule in CLASSIFICATION_RULES:
-        if (
+        matches = (
             any(taxonomy_term_matches(haystack, term) for term in rule.terms)
             or any(compound_head_matches(haystack, head) for head in rule.compound_heads)
-        ):
+        )
+        if matches:
+            if vegetarian_context and rule.slug in VEGETARIAN_MEAT_BLOCKED_SLUGS:
+                return ClassificationResult(
+                    "fleischersatz",
+                    None,
+                    f"veganer/vegetarischer Kontext verhindert {rule.slug}-Klassifikation",
+                    "high",
+                )
             family = matching_family(haystack, rule.slug)
             return ClassificationResult(rule.slug, family.slug if family else None, rule.reason, "high")
     return ClassificationResult("sonstiges", None, "keine sichere Taxonomie-Regel", "unknown")

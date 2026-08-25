@@ -23,6 +23,8 @@ def _catalog():
         MasterProduct(name="Büffel Mozzarella", brand="Galbani", normalized_key="bueffel-mozzarella"),
         MasterProduct(name="Pangasiusfilets", brand="Ocean Sea", normalized_key="pangasiusfilets"),
         MasterProduct(name="Schafkäse natur", brand="Milbona", normalized_key="schafkaese-natur"),
+        MasterProduct(name="Vegane Salami", brand="Rügenwalder", normalized_key="vegane-salami"),
+        MasterProduct(name="Kefir Drink", brand="MILRAM", normalized_key="kefir-drink"),
         MasterProduct(name="Rahm-Spinat", brand="Iglo", normalized_key="iglo-rahm-spinat"),
         MasterProduct(name="Toilettenpapier", brand="Hakle", normalized_key="toilettenpapier"),
     ]
@@ -52,6 +54,8 @@ def test_semantic_category_family_synonym_brand_and_partial_search():
     assert "Thunfisch in eigenem Saft" in _names(db, "Thun")
     assert "Toilettenpapier" not in _names(db, "Fisch")
     assert "ASC Lachsfilet" in _names(db, "", category="fisch")
+    assert "Vegane Salami" in _names(db, "", category="vegetarisch-vegan")
+    assert "Kefir Drink" in _names(db, "", category="molkerei")
     db.close()
 
 

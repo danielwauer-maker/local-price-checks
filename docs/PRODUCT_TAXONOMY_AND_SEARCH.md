@@ -37,8 +37,10 @@ now expresses three explicit precedence levels: reliable product type and
 context, then ingredient/flavour, then broad tokens. For example, fish and
 cheese products precede dairy or herb ingredients, pizza precedes toppings,
 sweets precede flavours, sauce/dressing precedes listed fruit and vegetables,
-and animal food precedes its contained meat species. Vegan or vegetarian
-alternative phrases precede meat terms. A result contains category, product
+and animal food precedes its contained meat species. An explicit vegan or
+vegetarian token context suppresses later meat, sausage, ham and poultry rules
+when those terms describe an alternative; this is contextual matching rather
+than a phrase whitelist. A result contains category, product
 family, a human-readable precedence reason and a small confidence label. If no
 reliable rule matches, the product remains effectively unknown/`sonstiges`;
 the classifier does not force an unrelated category.
@@ -60,6 +62,10 @@ instead of being classified from one ingredient. The unsafe generic compound
 head `fleisch` is not enabled, so `Zahnfleisch` cannot match meat, while
 explicitly allowed German heads such as `wurst`, `steak` and `braten` preserve
 the established compound regressions.
+
+Kefir has no dedicated leaf category. It is therefore assigned to the existing
+general `molkerei` category and is deliberately excluded from the semantically
+incorrect `sahne` rule.
 
 Newly collected products continue to use `ensure_auto_category`. Existing
 products are never mass-reclassified at application startup.
