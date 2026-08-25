@@ -8,13 +8,17 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.orm import Session
 
+from app.admin_seed import seed_admin_catalog
+from app.category_classifier import ensure_auto_category
 from app.client_models import AccountClientLink, AccountIdentity, ClientDevice, UserClient
 from app.config import database_url
 from app.db import Base, create_database_engine
 from app.db_transfer import MigrationSafetyError, migrate_sqlite_to_postgres, verify_migration
 from app.model_registry import metadata
 from app.models import FavoriteProduct, FavoriteStore, MasterProduct, ShoppingItem, Store, UserProfile
+from app.product_search import search_products
 
 
 def test_database_configuration_supports_sqlite_and_psycopg():
@@ -42,6 +46,40 @@ def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):
         assert set(metadata().tables) <= set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
+
+
+def test_category_hierarchy_migration_preserves_existing_ids_and_assignment(tmp_path: Path):
+    target = tmp_path / "category-upgrade.sqlite3"
+    env = {**os.environ, "DATABASE_URL": f"sqlite:///{target.as_posix()}"}
+    subprocess.run([os.sys.executable, "-m", "alembic", "upgrade", "20260825_01"], check=True, env=env)
+    with sqlite3.connect(target) as connection:
+        connection.execute(
+            "INSERT INTO master_products (id, brand, name, package_size, normalized_key) VALUES (7, NULL, 'Gouda', NULL, 'gouda')"
+        )
+        connection.execute(
+            "INSERT INTO product_categories (id, name, slug, active, sort_order) VALUES (11, 'Käse', 'kaese', 1, 40)"
+        )
+        connection.execute(
+            """
+            INSERT INTO product_admin_data
+                (id, master_product_id, category_id, name_locked, category_locked, notes, updated_at)
+            VALUES (13, 7, 11, 0, 1, NULL, '2026-08-25 00:00:00')
+            """
+        )
+        connection.commit()
+
+    subprocess.run([os.sys.executable, "-m", "alembic", "upgrade", "head"], check=True, env=env)
+    with sqlite3.connect(target) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(product_categories)")}
+        assignment = connection.execute(
+            "SELECT master_product_id, category_id FROM product_admin_data WHERE id = 13"
+        ).fetchone()
+        category = connection.execute(
+            "SELECT id, slug, parent_id FROM product_categories WHERE id = 11"
+        ).fetchone()
+    assert "parent_id" in columns
+    assert assignment == (7, 11)
+    assert category == (11, "kaese", None)
 
 
 def test_sqlite_backup_helper_is_consistent_and_never_overwrites(tmp_path: Path):
@@ -239,3 +277,26 @@ def test_backend_starts_and_serves_health_against_postgres(postgres_database: st
         "client.__exit__(None, None, None)"
     )
     subprocess.run([os.sys.executable, "-c", code], check=True, env=env)
+
+
+@pytest.mark.postgres
+def test_taxonomy_search_matches_on_postgresql(postgres_database: str):
+    engine = create_engine(postgres_database)
+    with Session(engine) as session:
+        seed_admin_catalog(session)
+        products = [
+            MasterProduct(name="PostgreSQL Lachsfilet", normalized_key="postgres-search-lachs"),
+            MasterProduct(name="PostgreSQL Fischstäbchen", normalized_key="postgres-search-fischstaebchen"),
+            MasterProduct(name="PostgreSQL Pepsi", normalized_key="postgres-search-pepsi"),
+        ]
+        session.add_all(products)
+        session.flush()
+        for product in products:
+            ensure_auto_category(session, product)
+        session.commit()
+
+        fish = {match.product.name for match in search_products(session, query="Fisch")}
+        cola = {match.product.name for match in search_products(session, query="Cola")}
+        assert {"PostgreSQL Lachsfilet", "PostgreSQL Fischstäbchen"}.issubset(fish)
+        assert "PostgreSQL Pepsi" in cola
+    engine.dispose()

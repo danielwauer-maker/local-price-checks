@@ -53,7 +53,6 @@ from .prospect_routes import router as prospect_router
 from .offer_review_routes import router as offer_review_router
 from .upcoming_routes import router as upcoming_router
 from .admin_seed import seed_admin_catalog
-from .category_classifier import backfill_auto_categories
 from .normal_prices import backfill_explicit_references
 from .db import SessionLocal
 
@@ -127,7 +126,6 @@ def startup_admin_catalog():
     db = SessionLocal()
     try:
         seed_admin_catalog(db)
-        backfill_auto_categories(db)
         seed_initial_coverage(db)
         backfill_explicit_references(db)
     finally:

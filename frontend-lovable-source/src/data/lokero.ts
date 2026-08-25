@@ -14,13 +14,21 @@ export type CategoryId =
   | "molkerei"
   | "brot"
   | "getraenke"
+  | "alkohol"
   | "suesswaren"
   | "tiefkuehl"
   | "vorrat"
+  | "nudeln-reis"
+  | "kochen-wuerzen"
   | "fruehstueck"
   | "fertiggerichte"
+  | "vegetarisch-vegan"
+  | "baby-kind"
   | "drogerie"
-  | "haushalt";
+  | "haushalt"
+  | "tiernahrung"
+  | "non-food"
+  | "sonstiges";
 
 export type DietTag = "vegan" | "vegetarisch" | "glutenfrei" | "bio";
 
@@ -40,13 +48,21 @@ export const CATEGORIES: Category[] = [
   { id: "molkerei", label: "Milch & Molkerei", icon: "milk", synonyms: ["milch", "joghurt", "quark", "butter"] },
   { id: "brot", label: "Brot & Backwaren", icon: "bread", synonyms: ["brot", "brötchen", "toast"] },
   { id: "getraenke", label: "Getränke", icon: "drink", synonyms: ["getränk", "cola", "wasser", "saft"] },
+  { id: "alkohol", label: "Alkoholische Getränke", icon: "drink", synonyms: ["bier", "wein", "sekt", "spirituosen"] },
   { id: "suesswaren", label: "Süßwaren & Snacks", icon: "candy", synonyms: ["schokolade", "chips", "snack"] },
   { id: "tiefkuehl", label: "Tiefkühl", icon: "snow", synonyms: ["tiefkühl", "tk", "pizza", "fischstäbchen"] },
   { id: "vorrat", label: "Vorrat", icon: "wheat", synonyms: ["nudeln", "reis", "mehl", "konserve"] },
+  { id: "nudeln-reis", label: "Nudeln, Reis & Beilagen", icon: "wheat", synonyms: ["nudeln", "reis", "pasta"] },
+  { id: "kochen-wuerzen", label: "Kochen & Würzen", icon: "soup", synonyms: ["öl", "essig", "gewürze", "sauce"] },
   { id: "fruehstueck", label: "Frühstück", icon: "coffee", synonyms: ["müsli", "kaffee", "marmelade"] },
   { id: "fertiggerichte", label: "Fertiggerichte", icon: "soup", synonyms: ["fertig", "suppe"] },
+  { id: "vegetarisch-vegan", label: "Vegetarisch & Vegan", icon: "apple", synonyms: ["vegan", "vegetarisch", "pflanzlich"] },
+  { id: "baby-kind", label: "Baby & Kind", icon: "package", synonyms: ["baby", "windeln", "babynahrung"] },
   { id: "drogerie", label: "Drogerie", icon: "sparkles", synonyms: ["shampoo", "zahnpasta"] },
   { id: "haushalt", label: "Haushalt", icon: "home", synonyms: ["papier", "waschmittel", "reiniger"] },
+  { id: "tiernahrung", label: "Tiernahrung", icon: "package", synonyms: ["katzenfutter", "hundefutter"] },
+  { id: "non-food", label: "Non-Food", icon: "package", synonyms: ["haushaltswaren", "zubehör"] },
+  { id: "sonstiges", label: "Sonstiges", icon: "package", synonyms: [] },
 ];
 
 /** Chips auf dem Startscreen (Reihenfolge wie im Design). */

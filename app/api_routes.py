@@ -24,7 +24,8 @@ from .models import (
     Store,
 )
 from .optimizer import optimize_shopping
-from .product_media import preferred_product_media
+from .product_media import preferred_product_media, preferred_product_media_map
+from .product_search import search_products
 from .promotion_rules import parse_multibuy, promotion_payload
 from .services import current_user, favorite_store_ids, selected_store_ids
 
@@ -107,18 +108,28 @@ def _market(db: Session, store: Store) -> dict:
     }
 
 
-def _product(db: Session, product: MasterProduct, barcode: str = "") -> dict:
-    meta = db.query(ProductAdminData).filter(ProductAdminData.master_product_id == product.id).first()
-    category = meta.category.name if meta and meta.category else "Sonstiges"
+def _product(
+    db: Session,
+    product: MasterProduct,
+    barcode: str = "",
+    *,
+    category_name: str | None = None,
+    image_url: str | None = None,
+    preloaded: bool = False,
+) -> dict:
+    if not preloaded:
+        meta = db.query(ProductAdminData).filter(ProductAdminData.master_product_id == product.id).first()
+        category_name = meta.category.name if meta and meta.category else "Sonstiges"
+        image_url = _primary_media(db, kind="product", product_id=product.id)
     return {
         "id": str(product.id),
         "name": product.name,
         "brand": product.brand or "",
-        "category": category,
+        "category": category_name or "Sonstiges",
         "unit": product.package_size or "",
         "ean": barcode,
         "emoji": "🏷️",
-        "imageUrl": _primary_media(db, kind="product", product_id=product.id),
+        "imageUrl": image_url,
     }
 
 
@@ -316,11 +327,19 @@ def shopping_plan(max_stores: int = 2, db: Session = Depends(get_db)):
 
 
 @router.get("/products")
-def product_search(q: str = "", db: Session = Depends(get_db)):
-    query = db.query(MasterProduct)
-    if q.strip():
-        query = query.filter(MasterProduct.name.ilike(f"%{q.strip()}%"))
-    return [_product(db, p) for p in query.order_by(MasterProduct.name).limit(50).all()]
+def product_search(q: str = "", category: str | None = None, db: Session = Depends(get_db)):
+    matches = search_products(db, query=q, category_slug=category, limit=50)
+    media = preferred_product_media_map(db, [match.product.id for match in matches])
+    return [
+        _product(
+            db,
+            match.product,
+            category_name=match.category.name if match.category else "Sonstiges",
+            image_url=_media_url(media.get(match.product.id)),
+            preloaded=True,
+        )
+        for match in matches
+    ]
 
 
 @router.get("/stores/{store_id}/offers")

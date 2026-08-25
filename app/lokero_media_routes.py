@@ -16,6 +16,7 @@ from .geo import haversine_km
 from .lokero_models import FavoriteProductFamily, FavoriteProductPreference
 from .models import FavoriteProduct, MasterProduct, Offer, ProductAdminData, ProductCategory, Store
 from .product_media import preferred_product_media
+from .product_taxonomy import matching_family, public_product_families, root_category_slug
 from .services import current_user
 
 router = APIRouter(prefix="/api/lokero", tags=["lokero-media"])
@@ -31,44 +32,22 @@ CATEGORY_ICONS = {
     "getraenke": "drink",
     "suesswaren": "candy",
     "tiefkuehl": "snow",
-    "vorrat": "wheat",
+    "nudeln-reis": "wheat",
+    "kochen-wuerzen": "soup",
     "fruehstueck": "coffee",
     "fertiggerichte": "soup",
+    "alkohol": "drink",
+    "vegetarisch-vegan": "apple",
+    "baby-kind": "package",
     "drogerie": "sparkles",
     "haushalt": "home",
     "tiernahrung": "package",
     "sonstiges": "package",
 }
 
-PRODUCT_FAMILIES = [
-    {"slug": "bier", "label": "Bier", "category": "getraenke", "keywords": ["bier", "pils", "pilsener", "helles", "weizen", "radler", "kölsch"]},
-    {"slug": "cola", "label": "Cola", "category": "getraenke", "keywords": ["cola", "coca-cola", "pepsi", "freeway"]},
-    {"slug": "wasser", "label": "Wasser", "category": "getraenke", "keywords": ["wasser", "mineralwasser", "sprudel"]},
-    {"slug": "kaffee", "label": "Kaffee", "category": "fruehstueck", "keywords": ["kaffee", "espresso", "cappuccino"]},
-    {"slug": "fisch", "label": "Fisch", "category": "fisch", "keywords": ["fisch", "lachs", "thunfisch", "hering", "forelle", "garnelen"]},
-    {"slug": "kaese", "label": "Käse", "category": "kaese", "keywords": ["käse", "gouda", "mozzarella", "feta", "camembert", "emmentaler"]},
-    {"slug": "joghurt", "label": "Joghurt", "category": "molkerei", "keywords": ["joghurt", "yoghurt"]},
-    {"slug": "milch", "label": "Milch", "category": "molkerei", "keywords": ["milch", "vollmilch", "fettarme milch"]},
-    {"slug": "chips", "label": "Chips", "category": "suesswaren", "keywords": ["chips", "crisps", "nachos"]},
-    {"slug": "schokolade", "label": "Schokolade", "category": "suesswaren", "keywords": ["schokolade", "schoko", "pralinen"]},
-    {"slug": "katzenfutter", "label": "Katzenfutter", "category": "tiernahrung", "keywords": ["katzenfutter", "katze", "sheba", "whiskas", "felix"]},
-    {"slug": "hundefutter", "label": "Hundefutter", "category": "tiernahrung", "keywords": ["hundefutter", "hund", "pedigree", "cesar"]},
-]
+PRODUCT_FAMILIES = public_product_families()
 FAMILY_BY_SLUG = {row["slug"]: row for row in PRODUCT_FAMILIES}
 
-# Conservative product-family hints. Alternatives are suggested only when the
-# products share one of these families or a meaningful product-name token.
-FAMILY_TERMS = (
-    "cola", "wasser", "mineralwasser", "saft", "eistee", "bier", "wein",
-    "gouda", "mozzarella", "feta", "camembert", "frischkäse",
-    "milch", "joghurt", "quark", "butter", "margarine",
-    "lachs", "thunfisch", "fischstäbchen",
-    "hackfleisch", "hähnchenbrust", "schnitzel", "salami", "schinken",
-    "toast", "brötchen", "baguette",
-    "spaghetti", "nudeln", "reis", "kaffee",
-    "chips", "schokolade", "toilettenpapier", "waschmittel",
-    "katzenfutter", "hundefutter",
-)
 STOPWORDS = {
     "original", "classic", "klassik", "frisch", "frische", "mild", "natur",
     "premium", "bio", "extra", "sorten", "verschiedene", "stück", "packung",
@@ -93,7 +72,7 @@ def _asset_is_serveable(asset) -> bool:
 def _category_slug(db: Session, product_id: int) -> str:
     meta = db.query(ProductAdminData).filter(ProductAdminData.master_product_id == product_id).first()
     if meta and meta.category and meta.category.active:
-        return meta.category.slug
+        return root_category_slug(meta.category.slug)
     return "sonstiges"
 
 
@@ -153,11 +132,8 @@ def _offer_view_payload(db: Session, user, offer: Offer) -> dict:
 
 
 def _family(text: str) -> str | None:
-    normalized = text.lower().replace("-", " ")
-    for term in FAMILY_TERMS:
-        if term in normalized:
-            return term
-    return None
+    family = matching_family(text)
+    return family.slug if family else None
 
 
 def _tokens(text: str) -> set[str]:
@@ -189,10 +165,8 @@ def _store_is_in_user_radius(user, store: Store) -> bool:
 
 
 def _matches_family(product: MasterProduct, family: dict, category_slug: str) -> bool:
-    if category_slug != family["category"]:
-        return False
-    text = f"{product.brand or ''} {product.name}".lower()
-    return any(keyword in text for keyword in family["keywords"])
+    candidate = matching_family(f"{product.brand or ''} {product.name}", category_slug)
+    return candidate is not None and candidate.slug == family["slug"]
 
 
 @router.get("/product-media/{product_id}")
@@ -215,28 +189,31 @@ def product_media(product_id: int, db: Session = Depends(get_db)):
 
 @router.get("/categories")
 def categories(db: Session = Depends(get_db)):
-    rows = (
-        db.query(
-            ProductCategory.id,
-            ProductCategory.name,
-            ProductCategory.slug,
-            ProductCategory.sort_order,
-            func.count(ProductAdminData.id).label("product_count"),
-        )
-        .outerjoin(ProductAdminData, ProductAdminData.category_id == ProductCategory.id)
-        .filter(ProductCategory.active.is_(True))
-        .group_by(ProductCategory.id)
-        .order_by(ProductCategory.sort_order.asc(), ProductCategory.name.asc())
+    rows = db.query(ProductCategory).filter(ProductCategory.active.is_(True)).all()
+    by_id = {row.id: row for row in rows}
+    counts = {row.id: 0 for row in rows}
+    for category_id, product_count in (
+        db.query(ProductAdminData.category_id, func.count(ProductAdminData.id))
+        .filter(ProductAdminData.category_id.is_not(None))
+        .group_by(ProductAdminData.category_id)
         .all()
+    ):
+        current = by_id.get(category_id)
+        while current is not None:
+            counts[current.id] += int(product_count)
+            current = by_id.get(current.parent_id)
+    roots = sorted(
+        (row for row in rows if row.parent_id is None),
+        key=lambda row: (row.sort_order, row.name, row.id),
     )
     return [
         {
             "id": row.slug,
             "label": row.name,
             "icon": CATEGORY_ICONS.get(row.slug, "package"),
-            "count": int(row.product_count or 0),
+            "count": counts[row.id],
         }
-        for row in rows
+        for row in roots
     ]
 
 

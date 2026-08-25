@@ -23,7 +23,6 @@ from .models import (
     Offer,
     OfferOccurrence,
     ProductAdminData,
-    ProductAlias,
     ProductCategory,
     ShoppingItem,
     Store,
@@ -31,6 +30,8 @@ from .models import (
 from .normal_prices import add_normal_price_observation, reference_price_for_offer
 from .offer_review_routes import QuickReviewPayload, offer_review_metadata, quick_review_offer
 from .optimizer import optimize_shopping
+from .product_search import search_products
+from .product_taxonomy import root_category_slug
 from .reviewer_auth import (
     lock_reviewer_device,
     require_reviewer,
@@ -78,18 +79,18 @@ def _category_slug(db: Session, product: MasterProduct) -> str:
         .first()
     )
     if meta and meta.category and meta.category.active:
-        return meta.category.slug
+        return root_category_slug(meta.category.slug)
     return "sonstiges"
 
 
-def _product_payload(db: Session, product: MasterProduct) -> dict:
+def _product_payload(db: Session, product: MasterProduct, *, category_slug: str | None = None) -> dict:
     return {
         "id": str(product.id),
         "name": product.name,
         "brand": product.brand or "",
         "amount": product.package_size or "",
         "detail": product.package_size or "",
-        "category": _category_slug(db, product),
+        "category": category_slug if category_slug is not None else _category_slug(db, product),
         "ean": "",
         "tags": [],
     }
@@ -385,43 +386,35 @@ def search(q: str = "", db: Session = Depends(get_db)):
     needle = q.strip()
     if not needle:
         return {"categories": [], "products": []}
+    matches = search_products(db, query=needle, limit=30)
+    root_slugs = {
+        root_category_slug(match.category.slug)
+        for match in matches
+        if match.category is not None
+    }
     category_rows = (
         db.query(ProductCategory)
-        .filter(ProductCategory.active.is_(True), ProductCategory.name.ilike(f"%{needle}%"))
-        .limit(8)
+        .filter(ProductCategory.slug.in_(root_slugs), ProductCategory.active.is_(True))
+        .order_by(ProductCategory.sort_order.asc(), ProductCategory.name.asc())
         .all()
+        if root_slugs
+        else []
     )
-    aliases = (
-        db.query(ProductAlias)
-        .filter(ProductAlias.alias_key.ilike(f"%{needle.lower()}%"))
-        .limit(30)
-        .all()
-    )
-    alias_ids = {row.master_product_id for row in aliases}
-    products = (
-        db.query(MasterProduct)
-        .filter(
-            or_(
-                MasterProduct.name.ilike(f"%{needle}%"),
-                MasterProduct.brand.ilike(f"%{needle}%"),
-                MasterProduct.id.in_(alias_ids) if alias_ids else False,
-            )
-        )
-        .order_by(MasterProduct.name)
-        .limit(30)
-        .all()
-    )
-    if category_rows:
-        category_ids = {row.id for row in category_rows}
-        metas = db.query(ProductAdminData).filter(ProductAdminData.category_id.in_(category_ids)).limit(50).all()
-        for meta in metas:
-            if meta.product not in products:
-                products.append(meta.product)
     categories = [
         {"id": row.slug, "label": row.name, "icon": "tag", "synonyms": []}
-        for row in category_rows
+        for row in category_rows[:8]
     ]
-    return {"categories": categories, "products": [_product_payload(db, p) for p in products[:30]]}
+    return {
+        "categories": categories,
+        "products": [
+            _product_payload(
+                db,
+                match.product,
+                category_slug=root_category_slug(match.category.slug if match.category else None),
+            )
+            for match in matches
+        ],
+    }
 
 
 @router.get("/regions/status")

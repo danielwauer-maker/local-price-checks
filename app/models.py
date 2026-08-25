@@ -181,8 +181,10 @@ class ProductCategory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("product_categories.id"), nullable=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=100)
+    parent: Mapped[ProductCategory | None] = relationship(remote_side="ProductCategory.id")
 
 
 class ProductAdminData(Base):

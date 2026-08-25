@@ -110,7 +110,7 @@ export type ReviewOffer = {
   auditUrl?: string;
 };
 
-const DEFAULT_CATEGORY: CategoryId = "vorrat";
+const DEFAULT_CATEGORY: CategoryId = "sonstiges";
 const KNOWN_CATEGORY_IDS = new Set(CATEGORIES.map((c) => c.id));
 const KNOWN_CHAINS = new Set(["REWE", "Lidl", "ALDI SÜD", "Netto", "EDEKA"]);
 

@@ -88,10 +88,17 @@ oder zusätzliche Tabellen/Spalten sowie Drift bei Typen, Nullable, Primary/
 Foreign Keys, Unique Constraints oder Indizes führen zu einem sicheren Abbruch
 bzw. `RESULT: FAIL`; Legacy-Daten werden nicht stillschweigend ignoriert.
 
-Alembic-Kommandos: `python -m alembic current`, `python -m alembic upgrade head`
-und nach sorgfältigem Schemaabgleich einer bereits bestehenden SQLite-DB
-`python -m alembic stamp 20260825_01`. Backup, Restore, Stamping, Cutover und
-Rollback sind in **`docs/POSTGRESQL_MIGRATION_RUNBOOK.md`** beschrieben.
+Neue Datenbanken werden mit `python -m alembic upgrade head` aufgebaut. Eine
+historische SQLite ohne `alembic_version` darf dagegen niemals blind gestempelt
+werden. Dafür gibt es einen strikten Dry-Run und einen expliziten Apply-Pfad:
+
+```bash
+python scripts/prepare_existing_sqlite_for_alembic.py --sqlite-path /path/to/local_price_checks.sqlite3
+python scripts/prepare_existing_sqlite_for_alembic.py --sqlite-path /path/to/local_price_checks.sqlite3 --apply --backup-path /secure-backups/pre-alembic.sqlite3
+```
+
+Backup, Schema-Preflight, kontrolliertes Stamping, Upgrade und Rollback sind in
+**`docs/POSTGRESQL_MIGRATION_RUNBOOK.md`** beschrieben.
 
 ## Ohne Docker
 
@@ -108,8 +115,27 @@ uvicorn app.main:app --reload --host 0.0.0.0
 python -m pytest -q
 ```
 
+## Produkttaxonomie und Suche
+
+Die deterministische Backend-Suche versteht Produktnamen, Marken,
+Kategoriehierarchie, Synonyme und die bestehenden semantischen
+Produktfamilien. `GET /api/products?q=Fisch` nutzt dieselbe zentrale Logik wie
+die Lokero-Suche; optional kann mit `category=<slug>` gefiltert werden.
+
+Eine Reklassifizierung bestehender Produkte ist ausschließlich explizit und
+standardmäßig ein Dry Run:
+
+```bash
+python scripts/reclassify_products.py
+python scripts/reclassify_products.py --apply
+```
+
+Admin-gesperrte Kategorien werden nie überschrieben. Taxonomie, Ranking,
+Familienabgrenzung und Migration sind in
+**`docs/PRODUCT_TAXONOMY_AND_SEARCH.md`** beschrieben.
+
 ## Repository-Regeln
 
 Nicht versioniert werden: produktive SQLite-Datenbanken, Prospekt-PDFs, Support-Exports, Cookies/Browserprofile, `.env`, lokale Zertifikate und Logs.
 
-Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.
+Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/PRODUCT_TAXONOMY_AND_SEARCH.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.

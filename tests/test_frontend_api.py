@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
 
 import app.api_routes as api_routes
+from app.admin_seed import seed_admin_catalog
 from app.api_main import app
+from app.category_classifier import ensure_auto_category
 from app.db import Base, SessionLocal, engine
 from app.models import FavoriteStore, MasterProduct, ShoppingItem, Store, UserProfile
 from app.seed import seed_stores
@@ -39,6 +41,34 @@ def test_bootstrap_exposes_real_app_state():
     assert "prices" in payload
     assert "basket" in payload
     assert "activeSelected" in payload
+
+
+def test_product_api_uses_taxonomy_synonyms_and_category_filter():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    seed_admin_catalog(db)
+    rows = [
+        MasterProduct(name="API Sprint C Lachs", normalized_key="api-sprint-c-lachs"),
+        MasterProduct(name="API Sprint C Fischstäbchen", normalized_key="api-sprint-c-fischstaebchen"),
+    ]
+    for row in rows:
+        existing = db.query(MasterProduct).filter_by(normalized_key=row.normalized_key).first()
+        if existing is None:
+            db.add(row)
+            db.flush()
+            ensure_auto_category(db, row)
+    db.commit()
+    db.close()
+
+    client = TestClient(app)
+    by_query = client.get("/api/products", params={"q": "Fisch"})
+    assert by_query.status_code == 200
+    assert {"API Sprint C Lachs", "API Sprint C Fischstäbchen"}.issubset(
+        {row["name"] for row in by_query.json()}
+    )
+    by_category = client.get("/api/products", params={"category": "fisch"})
+    assert by_category.status_code == 200
+    assert "API Sprint C Lachs" in {row["name"] for row in by_category.json()}
 
 
 def test_basket_api_persists_quantity():
