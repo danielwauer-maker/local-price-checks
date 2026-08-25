@@ -12,6 +12,8 @@ from .product_taxonomy import (
     ingredient_list_matches,
     matching_family,
     normalize_search_text,
+    pizza_product_context_matches,
+    pizza_utensil_context_matches,
     taxonomy_term_matches,
     vegetarian_context_matches,
 )
@@ -54,11 +56,19 @@ def classify_product(product: MasterProduct) -> ClassificationResult:
             "nur Zutatenliste erkannt; kein sicherer Produkttyp",
             "unknown",
         )
+    if pizza_utensil_context_matches(haystack):
+        return ClassificationResult(
+            "sonstiges",
+            None,
+            "Pizza-Token beschreibt ein Küchenutensil, kein Lebensmittel",
+            "unknown",
+        )
     vegetarian_context = vegetarian_context_matches(haystack)
     for rule in CLASSIFICATION_RULES:
         matches = (
             any(taxonomy_term_matches(haystack, term) for term in rule.terms)
             or any(compound_head_matches(haystack, head) for head in rule.compound_heads)
+            or (rule.slug == "tiefkuehlpizza" and pizza_product_context_matches(haystack))
         )
         if matches:
             if vegetarian_context and rule.slug in VEGETARIAN_MEAT_BLOCKED_SLUGS:

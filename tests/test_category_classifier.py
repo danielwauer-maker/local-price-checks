@@ -225,3 +225,90 @@ def test_kefir_uses_safe_general_dairy_category_and_never_sahne():
     assert result.category_slug == "molkerei"
     assert result.category_slug != "sahne"
     assert result.reason == "Kefir als allgemeines Milchprodukt"
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "Original Wagner Steinofen Pizza Salami",
+        "Gustavo Gusto Pizza Margherita",
+        "Dr. Oetker Pizza Tradizionale Salame Romano",
+        "Original Wagner Flammkuchen Elsässer Art",
+    ),
+)
+def test_real_pizza_and_flammkuchen_products_keep_product_type_priority(name):
+    assert infer_category_slug(product(name)) == "tiefkuehlpizza"
+
+
+def test_pizza_token_does_not_turn_utensils_or_fleischkaese_into_pizza():
+    utensil = classify_product(product("SILVERCREST Pizza-Backformen-Set"))
+    assert utensil.category_slug == "sonstiges"
+    assert utensil.confidence == "unknown"
+    assert "Küchenutensil" in utensil.reason
+
+    fleischkaese = classify_product(product("Pizza- oder Röstzwiebel-Fleischkäse"))
+    assert fleischkaese.category_slug == "wurst"
+    assert fleischkaese.category_slug != "tiefkuehlpizza"
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Corny Müsliriegel Schoko", "muesli"),
+        ("Corny Müsliriegel Milch Classic", "muesli"),
+        ("Müsliriegel Schokolade", "muesli"),
+        ("Schokolade", "schokolade"),
+        ("Milka Schokolade", "schokolade"),
+        ("Müller Milch Reis", "molkerei-dessert"),
+        ("Müller Milchreis", "molkerei-dessert"),
+        ("High Protein Pudding", "molkerei-dessert"),
+        ("Vollmilch", "milch"),
+        ("Quarkbällchen", "gebaeck"),
+        ("Quark-Bällchen", "gebaeck"),
+        ("Quarkbällchen mit Zucker", "gebaeck"),
+        ("Exquisa Quark", "quark"),
+        ("Magerquark", "quark"),
+        ("Tante Fanny Butter Blätterteig", "backzutaten"),
+        ("Butter", "butter"),
+        ("Kerrygold Irische Butter", "butter"),
+    ),
+)
+def test_final_product_type_precedence_regressions(name, category_slug):
+    assert infer_category_slug(product(name)) == category_slug
+
+
+@pytest.mark.parametrize(
+    ("name", "category_slug"),
+    (
+        ("Heinz Curry Mango Sauce", "saucen"),
+        ("Bresso Kräuter der Provence", "frischkaese"),
+        ("Mirée Französische Kräuter", "frischkaese"),
+        ("Knorr Salat Krönung", "saucen"),
+        ("Ritter Sport Jamaica Rum Knusperstück", "schokolade"),
+        ("Sensodyne ProSchmelz Zahnfleisch Plus", "zahnpflege"),
+        ("Frosta Butter Chicken", "tiefkuehlgerichte"),
+        ("LIKEMEAT Vegane Fleischalternative", "fleischersatz"),
+        ("Planted Veganes Steak", "fleischersatz"),
+        ("Rügenwalder Vegane Mühlen Salami oder Veganer Schinken Spicker Mortadella", "fleischersatz"),
+        ("Vitakraft Bonas Kaustangen mit Huhn XXL", "tiernahrung"),
+        ("SONDEY Jaffa Cake Orange XXL", "kekse"),
+        ("MIKADO Schokostäbchen Milchschokolade", "schokolade"),
+        ("Nadler Sahne Heringsfilets", "fisch-produkte"),
+        ("Schweine-Lachsbraten", "fleisch"),
+        ("Kasseler Lachsbraten", "fleisch"),
+        ("Bierwurst-Kugel", "wurst"),
+        ("Coca-Cola", "cola"),
+        ("Pepsi", "cola"),
+        ("Weintrauben", "obst"),
+        ("Kefir", "molkerei"),
+    ),
+)
+def test_previously_fixed_production_cases_remain_stable(name, category_slug):
+    assert infer_category_slug(product(name)) == category_slug
+
+
+@pytest.mark.parametrize("name", ("Ginger Ale", "Abwasserpumpe"))
+def test_previously_fixed_negative_cases_remain_unknown(name):
+    result = classify_product(product(name))
+    assert result.category_slug == "sonstiges"
+    assert result.confidence == "unknown"

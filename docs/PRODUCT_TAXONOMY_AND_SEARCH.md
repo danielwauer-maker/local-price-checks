@@ -63,9 +63,19 @@ head `fleisch` is not enabled, so `Zahnfleisch` cannot match meat, while
 explicitly allowed German heads such as `wurst`, `steak` and `braten` preserve
 the established compound regressions.
 
+Product-type guards are intentionally narrow and token based. A standalone
+`pizza` token identifies food only when no kitchen-utensil or competing
+Fleischkäse product context is present. Strong food phrases such as
+`Steinofen Pizza` and `Flammkuchen` remain pizza products, while a
+`Pizza-Backform` stays unknown so reclassification can preserve an existing
+plausible Non-Food category. Müsliriegel precedes chocolate or milk flavour,
+milk-rice/pudding dessert precedes the milk ingredient, and Quarkbällchen or
+Blätterteig precede their quark/butter ingredients.
+
 Kefir has no dedicated leaf category. It is therefore assigned to the existing
 general `molkerei` category and is deliberately excluded from the semantically
-incorrect `sahne` rule.
+incorrect `sahne` rule. Blätterteig likewise uses the existing `backzutaten`
+leaf; this hotfix adds no category or schema migration.
 
 Newly collected products continue to use `ensure_auto_category`. Existing
 products are never mass-reclassified at application startup.

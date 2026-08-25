@@ -112,3 +112,71 @@ def test_reclassification_corrects_vegan_meat_terms_and_kefir_sahne():
         "MILRAM Kefir Drink": "molkerei",
     }
     db.close()
+
+
+def test_final_precedence_dry_run_is_read_only_and_apply_isolated():
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    seed_admin_catalog(db)
+    cases = (
+        ("SILVERCREST Pizza-Backformen-Set", "kuechenartikel"),
+        ("Pizza- oder Röstzwiebel-Fleischkäse", "tiefkuehlpizza"),
+        ("Corny Müsliriegel Schoko", "schokolade"),
+        ("Müller Milch Reis", "milch"),
+        ("Quarkbällchen", "quark"),
+        ("Tante Fanny Butter Blätterteig", "butter"),
+        ("Gustavo Gusto Pizza Margherita", "tiefkuehlpizza"),
+    )
+    categories = {row.slug: row for row in db.query(ProductCategory).all()}
+    products = []
+    for index, (name, old_slug) in enumerate(cases, start=1):
+        product = MasterProduct(name=name, normalized_key=f"final-precedence-{index}")
+        db.add(product)
+        db.flush()
+        db.add(ProductAdminData(master_product_id=product.id, category_id=categories[old_slug].id))
+        products.append(product)
+    db.commit()
+
+    before = tuple(
+        db.query(ProductAdminData.master_product_id, ProductAdminData.category_id)
+        .order_by(ProductAdminData.master_product_id)
+        .all()
+    )
+    dry_run = reclassify_products(db)
+    after = tuple(
+        db.query(ProductAdminData.master_product_id, ProductAdminData.category_id)
+        .order_by(ProductAdminData.master_product_id)
+        .all()
+    )
+    entries = {entry.product_name: entry for entry in dry_run.entries}
+
+    assert before == after
+    assert dry_run.inspected == 7
+    assert dry_run.changed == 5
+    assert dry_run.unchanged == 1
+    assert dry_run.unknown == 1
+    assert entries["SILVERCREST Pizza-Backformen-Set"].new_category == "Küchenartikel"
+    assert "bleibt erhalten" in entries["SILVERCREST Pizza-Backformen-Set"].reason
+
+    applied = reclassify_products(db, apply=True)
+    assigned = {
+        product.name: category.slug
+        for product, category in (
+            db.query(MasterProduct, ProductCategory)
+            .join(ProductAdminData, ProductAdminData.master_product_id == MasterProduct.id)
+            .join(ProductCategory, ProductCategory.id == ProductAdminData.category_id)
+            .all()
+        )
+    }
+    assert applied.changed == 5
+    assert assigned == {
+        "SILVERCREST Pizza-Backformen-Set": "kuechenartikel",
+        "Pizza- oder Röstzwiebel-Fleischkäse": "wurst",
+        "Corny Müsliriegel Schoko": "muesli",
+        "Müller Milch Reis": "molkerei-dessert",
+        "Quarkbällchen": "gebaeck",
+        "Tante Fanny Butter Blätterteig": "backzutaten",
+        "Gustavo Gusto Pizza Margherita": "tiefkuehlpizza",
+    }
+    db.close()
