@@ -28,14 +28,16 @@ isolierten Staging-Umgebung erfolgreich geprobt werden.
    vorhandene Orphans nicht. Alle Befunde müssen deshalb vor der Migration
    geklärt werden. Nur `integrity_check = ok` und null Zeilen aus
    `foreign_key_check` erlauben den nächsten Schritt.
-4. Der Dry Run führt den automatisierten, strikten Schema-Preflight gegen die
+4. Der Legacy-SQLite-Dry-Run führt den automatisierten, strikten Schema-
+   Preflight gegen die
    vollständige SQLAlchemy-/Alembic-Baseline aus. Er vergleicht die exakte
    Tabellen- und Spaltenmenge, normalisierte Typen/Längen, Nullable, Primary und
    Foreign Keys, Unique Constraints sowie Indexsignaturen auf Quelle und Ziel.
    Fehlende oder zusätzliche Legacy-Strukturen sind ein Safety-Fehler und
    müssen vor dem Stamping bewusst migriert oder verworfen werden. Eine
    vorhandene SQLite-DB darf nur bei bestandenem Preflight gestempelt werden.
-   `alembic stamp 20260825_01` erzeugt kein Schema und ist kein Reparaturwerkzeug.
+   Kein manuelles/blindes `alembic stamp` verwenden; das kontrollierte Script
+   führt den Stamp ausschließlich auf einer geprüften Staging-Kopie aus.
 5. Staging-Probe mit demselben Snapshot durchführen: Baseline, Dry Run,
    Transfer, Verifikation und API-Smoke-Tests.
 6. Verantwortliche Person, Wartungsfenster, Abbruchzeitpunkt und Rollback-
@@ -111,6 +113,8 @@ Transaktion ab.
 
 ## 5. Schema erstellen
 
+### A) Neue Datenbank
+
 ```bash
 export DATABASE_URL='postgresql+psycopg://...'
 export AUTO_CREATE_SCHEMA=false
@@ -118,16 +122,38 @@ python -m alembic upgrade head
 python -m alembic current
 ```
 
-Auf einer bereits bestehenden, verifizierten SQLite-Installation wird die
-Baseline ausschließlich nach Backup und exaktem Schemaabgleich gestempelt:
+### B) Historische SQLite ohne Alembic-Version
+
+Die App, Worker und Scheduler müssen gestoppt sein. Zuerst ausschließlich den
+read-only Dry Run ausführen:
 
 ```bash
-export DATABASE_URL='sqlite:////srv/lokero/data/local_price_checks.sqlite3'
-python -m alembic stamp 20260825_01
+python scripts/prepare_existing_sqlite_for_alembic.py \
+  --sqlite-path /srv/lokero/data/local_price_checks.sqlite3
 ```
 
-Nicht `upgrade` auf eine volle, unstamped Baseline-Datenbank anwenden: die
-Baseline versucht Tabellen zu erzeugen und muss dann fehlschlagen.
+Nur bei `integrity_check = ok`, null FK-Befunden und exakter semantischer
+Übereinstimmung mit `20260825_01` darf Apply folgen:
+
+```bash
+python scripts/prepare_existing_sqlite_for_alembic.py \
+  --sqlite-path /srv/lokero/data/local_price_checks.sqlite3 \
+  --apply \
+  --backup-path /secure-backups/lokero-pre-alembic-YYYYMMDD-HHMM.sqlite3
+```
+
+Das Script überschreibt kein Backup. Es erstellt eine konsistente Sicherung,
+prüft Quelle und Backup erneut und arbeitet anschließend ausschließlich auf
+einer Staging-Kopie. Nur wenn Stamp `20260825_01`, Upgrade auf `20260825_02`,
+`integrity_check`, `foreign_key_check` und aktueller Schemaabgleich erfolgreich
+sind, ersetzt die Staging-Datei atomar die Quelle. Bei Drift, beschädigter DB,
+unbekannten FK-Problemen, unbekannter Revision oder aktivem WAL bricht es ohne
+Änderung der Quelle ab. Bereits auf `20260825_02` befindliche Datenbanken werden
+idempotent als aktuell gemeldet.
+
+Nicht `upgrade` auf eine volle, ungestempelte Baseline-Datenbank anwenden: die
+Baseline versucht Tabellen zu erzeugen und muss dann fehlschlagen. Stamping ist
+kein Reparaturwerkzeug und darf außerhalb des geprüften Scripts nicht erfolgen.
 
 ## 6. Dry Run und Datenmigration
 

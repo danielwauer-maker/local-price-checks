@@ -88,10 +88,17 @@ oder zusätzliche Tabellen/Spalten sowie Drift bei Typen, Nullable, Primary/
 Foreign Keys, Unique Constraints oder Indizes führen zu einem sicheren Abbruch
 bzw. `RESULT: FAIL`; Legacy-Daten werden nicht stillschweigend ignoriert.
 
-Alembic-Kommandos: `python -m alembic current`, `python -m alembic upgrade head`
-und nach sorgfältigem Schemaabgleich einer bereits bestehenden SQLite-DB
-`python -m alembic stamp 20260825_01`. Backup, Restore, Stamping, Cutover und
-Rollback sind in **`docs/POSTGRESQL_MIGRATION_RUNBOOK.md`** beschrieben.
+Neue Datenbanken werden mit `python -m alembic upgrade head` aufgebaut. Eine
+historische SQLite ohne `alembic_version` darf dagegen niemals blind gestempelt
+werden. Dafür gibt es einen strikten Dry-Run und einen expliziten Apply-Pfad:
+
+```bash
+python scripts/prepare_existing_sqlite_for_alembic.py --sqlite-path /path/to/local_price_checks.sqlite3
+python scripts/prepare_existing_sqlite_for_alembic.py --sqlite-path /path/to/local_price_checks.sqlite3 --apply --backup-path /secure-backups/pre-alembic.sqlite3
+```
+
+Backup, Schema-Preflight, kontrolliertes Stamping, Upgrade und Rollback sind in
+**`docs/POSTGRESQL_MIGRATION_RUNBOOK.md`** beschrieben.
 
 ## Ohne Docker
 

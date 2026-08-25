@@ -174,12 +174,12 @@ def _index_signatures_from_inspector(rows: list[dict[str, Any]]) -> set[tuple[tu
     }
 
 
-def schema_differences(connection: Connection) -> list[str]:
-    """Return semantic schema drift against the complete application metadata."""
+def schema_differences(connection: Connection, *, expected_metadata: MetaData | None = None) -> list[str]:
+    """Return semantic schema drift against supplied or current metadata."""
 
     inspector = inspect(connection)
-    expected_metadata = application_metadata()
-    expected_names = set(expected_metadata.tables)
+    expected = expected_metadata if expected_metadata is not None else application_metadata()
+    expected_names = set(expected.tables)
     actual_names = set(inspector.get_table_names())
     differences: list[str] = []
     missing = expected_names - actual_names
@@ -190,7 +190,7 @@ def schema_differences(connection: Connection) -> list[str]:
         differences.append(f"unexpected tables={sorted(unexpected)}")
 
     for table_name in sorted(expected_names & actual_names):
-        expected_table = expected_metadata.tables[table_name]
+        expected_table = expected.tables[table_name]
         actual_columns = {row["name"]: row for row in inspector.get_columns(table_name)}
         expected_columns = {column.name: column for column in expected_table.columns}
         missing_columns = set(expected_columns) - set(actual_columns)

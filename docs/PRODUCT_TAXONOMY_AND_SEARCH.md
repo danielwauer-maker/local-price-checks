@@ -25,9 +25,10 @@ include products assigned to every descendant. The migration
 `20260825_02_product_category_hierarchy` adds the nullable self-reference
 without changing category IDs or existing product assignments.
 
-Deployments must run `python -m alembic upgrade head` before starting the
-application. The batch migration is exercised on SQLite and PostgreSQL; it is
-additive and preserves existing category rows and assignments on both engines.
+Fresh databases use `python -m alembic upgrade head` before application start.
+Historical SQLite databases that already contain the baseline schema but no
+`alembic_version` must instead use the guarded onboarding CLI described below;
+they must never be blindly stamped or upgraded from the empty baseline.
 
 ## Classification
 
@@ -37,6 +38,15 @@ generic drinks and Buttercroissants before butter. A result contains category,
 product family, reason and a small confidence label. If no reliable rule
 matches, the product remains effectively unknown/`sonstiges`; the classifier
 does not force an unrelated category.
+
+Classification and product-family terms use normalized tokens and contiguous
+phrases, not arbitrary substrings. Hyphens and punctuation become separators,
+so `Coca-Cola` matches `coca cola`, while `rum` in `Rumpsteak` and `gin` in
+`Ginger` do not match. Explicit compound-head declarations on selected rules
+handle common German heads such as `Wurst` in `Bierwurst`; undeclared word
+fragments never gain substring semantics.
+Interactive user search deliberately remains substring-capable, preserving
+queries such as `Thun` → `Thunfisch`.
 
 Newly collected products continue to use `ensure_auto_category`. Existing
 products are never mass-reclassified at application startup.
@@ -110,3 +120,32 @@ python scripts/reclassify_products.py --apply
 
 The command never changes locked products. There is no automatic startup
 backfill.
+
+## Historical SQLite Alembic onboarding
+
+For an existing SQLite database created historically through `create_all()`,
+first stop every app, worker and scheduler. The default command is read-only:
+
+```bash
+python scripts/prepare_existing_sqlite_for_alembic.py \
+  --sqlite-path /srv/lokero/data/local_price_checks.sqlite3
+```
+
+It requires `integrity_check = ok`, zero `foreign_key_check` rows, and an exact
+semantic match with revision `20260825_01` before proposing a baseline stamp.
+Schema drift, corruption, unknown revisions and FK problems abort.
+
+After reviewing the dry run, apply with an explicit backup destination:
+
+```bash
+python scripts/prepare_existing_sqlite_for_alembic.py \
+  --sqlite-path /srv/lokero/data/local_price_checks.sqlite3 \
+  --apply \
+  --backup-path /secure-backups/lokero-pre-alembic.sqlite3
+```
+
+Apply first creates and verifies the backup, then stamps and upgrades a staging
+copy. Only a staging copy at `20260825_02` that passes integrity, foreign-key
+and current-schema checks atomically replaces the source. An already-current
+database is reported without changes. The process is never run at application
+startup or as an implicit deployment action.
