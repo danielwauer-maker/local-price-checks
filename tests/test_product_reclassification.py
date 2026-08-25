@@ -180,3 +180,46 @@ def test_final_precedence_dry_run_is_read_only_and_apply_isolated():
         "Gustavo Gusto Pizza Margherita": "tiefkuehlpizza",
     }
     db.close()
+
+
+def test_ocr_edgecase_dry_run_is_read_only_and_preserves_unknown_category():
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    seed_admin_catalog(db)
+    cases = (
+        ("SILVERCREST Pizza-Back- formen-Set", None, "kuechenartikel"),
+        ("Gebratene Nudeln", "ASIA TASTE", "fleisch"),
+        ("Pizza Margherita", None, "tiefkuehlpizza"),
+        ("Rumpsteak", None, "fleisch"),
+    )
+    categories = {row.slug: row for row in db.query(ProductCategory).all()}
+    for index, (name, brand, old_slug) in enumerate(cases, start=1):
+        product = MasterProduct(name=name, brand=brand, normalized_key=f"ocr-edgecase-{index}")
+        db.add(product)
+        db.flush()
+        db.add(ProductAdminData(master_product_id=product.id, category_id=categories[old_slug].id))
+    db.commit()
+
+    before = tuple(
+        db.query(ProductAdminData.master_product_id, ProductAdminData.category_id)
+        .order_by(ProductAdminData.master_product_id)
+        .all()
+    )
+    dry_run = reclassify_products(db)
+    after = tuple(
+        db.query(ProductAdminData.master_product_id, ProductAdminData.category_id)
+        .order_by(ProductAdminData.master_product_id)
+        .all()
+    )
+    entries = {entry.product_name: entry for entry in dry_run.entries}
+
+    assert before == after
+    assert dry_run.inspected == 4
+    assert dry_run.changed == 1
+    assert dry_run.unchanged == 2
+    assert dry_run.unknown == 1
+    assert entries["SILVERCREST Pizza-Back- formen-Set"].new_category == "Küchenartikel"
+    assert "bleibt erhalten" in entries["SILVERCREST Pizza-Back- formen-Set"].reason
+    assert entries["Gebratene Nudeln"].new_category == "Nudeln"
+    db.close()

@@ -1,7 +1,7 @@
 import pytest
 
 from app.category_classifier import classify_product, infer_category_slug
-from app.product_taxonomy import matching_family
+from app.product_taxonomy import compound_head_matches, matching_family, normalize_search_text
 from app.models import MasterProduct
 
 
@@ -312,3 +312,58 @@ def test_previously_fixed_negative_cases_remain_unknown(name):
     result = classify_product(product(name))
     assert result.category_slug == "sonstiges"
     assert result.confidence == "unknown"
+
+
+def test_ocr_hyphenation_is_rejoined_without_changing_normal_hyphen_tokens():
+    assert normalize_search_text("Pizza-Back- formen-Set") == "pizza backformen set"
+    assert normalize_search_text("Pizza-Back-\nformen-Set") == "pizza backformen set"
+    assert normalize_search_text("Coca-Cola") == "coca cola"
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "SILVERCREST Pizza-Backformen-Set",
+        "SILVERCREST Pizza-Back- formen-Set",
+        "Pizza-Back form",
+    ),
+)
+def test_pizza_utensils_with_ocr_variants_never_become_pizza(name):
+    result = classify_product(product(name))
+    assert result.category_slug == "sonstiges"
+    assert result.confidence == "unknown"
+    assert "Küchenutensil" in result.reason
+
+
+@pytest.mark.parametrize("name", ("Pizza Margherita", "Steinofen Pizza Salami"))
+def test_real_pizza_remains_pizza_after_ocr_normalization(name):
+    assert infer_category_slug(product(name)) == "tiefkuehlpizza"
+
+
+def test_gebratene_is_not_a_braten_compound_but_real_compounds_remain_valid():
+    assert compound_head_matches("Gebratene", "braten") is False
+    assert compound_head_matches("Lachsbraten", "braten") is True
+    assert compound_head_matches("Rumpsteak", "steak") is True
+    assert compound_head_matches("Bierwurst", "wurst") is True
+
+
+@pytest.mark.parametrize(
+    ("name", "brand"),
+    (
+        ("ASIA TASTE Gebratene Nudeln", None),
+        ("Gebratene Nudeln", None),
+        ("Gebratene Nudeln", "ASIA TASTE"),
+    ),
+)
+def test_gebratene_nudeln_never_matches_fleisch(name, brand):
+    result = classify_product(product(name, brand=brand))
+    assert result.category_slug == "nudeln"
+    assert result.category_slug != "fleisch"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("Rumpsteak", "Schweine-Lachsbraten", "Kasseler Lachsbraten"),
+)
+def test_true_meat_compounds_survive_compound_boundary_hardening(name):
+    assert infer_category_slug(product(name)) == "fleisch"

@@ -29,6 +29,7 @@ def _catalog():
         MasterProduct(name="Müller Milch Reis", brand="Müller", normalized_key="mueller-milch-reis"),
         MasterProduct(name="Quarkbällchen", brand=None, normalized_key="quarkbaellchen"),
         MasterProduct(name="Butter Blätterteig", brand="Tante Fanny", normalized_key="butter-blaetterteig"),
+        MasterProduct(name="Gebratene Nudeln", brand="ASIA TASTE", normalized_key="asia-taste-nudeln"),
         MasterProduct(name="Rahm-Spinat", brand="Iglo", normalized_key="iglo-rahm-spinat"),
         MasterProduct(name="Toilettenpapier", brand="Hakle", normalized_key="toilettenpapier"),
     ]
@@ -63,6 +64,7 @@ def test_semantic_category_family_synonym_brand_and_partial_search():
     assert "Corny Müsliriegel Schoko" in _names(db, "", category="fruehstueck")
     assert "Müller Milch Reis" in _names(db, "", category="molkerei")
     assert {"Quarkbällchen", "Butter Blätterteig"}.issubset(_names(db, "", category="brot"))
+    assert "Gebratene Nudeln" in _names(db, "", category="nudeln-reis")
     db.close()
 
 
