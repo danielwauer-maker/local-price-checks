@@ -126,6 +126,38 @@ def vegetarian_context_matches(value: str | None) -> bool:
     return any(taxonomy_term_matches(value, term) for term in VEGETARIAN_CONTEXT_TERMS)
 
 
+PIZZA_UTENSIL_TERMS: tuple[str, ...] = (
+    "backform",
+    "backformen",
+    "backblech",
+    "pizzablech",
+    "pizzaschneider",
+    "pizzaheber",
+    "pizzastein",
+    "pizzaofen",
+)
+
+PIZZA_COMPETING_PRODUCT_TERMS: tuple[str, ...] = ("fleischkase", "leberkase")
+
+
+def pizza_utensil_context_matches(value: str | None) -> bool:
+    """Reject a Pizza token that labels a kitchen utensil instead of food."""
+
+    return taxonomy_term_matches(value, "pizza") and any(
+        taxonomy_term_matches(value, term) for term in PIZZA_UTENSIL_TERMS
+    )
+
+
+def pizza_product_context_matches(value: str | None) -> bool:
+    """Accept generic Pizza only when no stronger non-pizza product context exists."""
+
+    return (
+        taxonomy_term_matches(value, "pizza")
+        and not pizza_utensil_context_matches(value)
+        and not any(taxonomy_term_matches(value, term) for term in PIZZA_COMPETING_PRODUCT_TERMS)
+    )
+
+
 def _category(slug: str, name: str, order: int, parent: str | None = None, *terms: str) -> CategorySpec:
     return CategorySpec(slug, name, order, parent, tuple(terms))
 
@@ -288,19 +320,22 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("hartkaese", ("parmesan", "grana padano", "bergkase", "hartkase", "emmentaler", "grillkase"), "Hartkäse"),
     TaxonomyRule("schnittkaese", ("gouda", "edamer", "maasdamer", "cheddar", "schnittkase", "scheibenkase", "kasescheibe", "kasescheiben"), "Schnittkäse"),
     TaxonomyRule("kaese", ("kase", "kaseprodukt"), "eindeutiger Käse-Produkttyp"),
-    TaxonomyRule("tiefkuehlpizza", ("tiefkuhlpizza", "tk pizza", "pizza", "steinofen pizza", "steinofenpizza", "flammkuchen"), "Pizza/Fertiggericht hat Vorrang vor Belag oder Wortbestandteilen"),
+    TaxonomyRule("wurst", ("fleischkase", "leberkase"), "Fleischkäse-Produkttyp hat Vorrang vor Sorte/Geschmack"),
+    TaxonomyRule("tiefkuehlpizza", ("tiefkuhlpizza", "tk pizza", "steinofen pizza", "steinofenpizza", "flammkuchen"), "Pizza/Fertiggericht hat Vorrang vor Belag oder Wortbestandteilen"),
     TaxonomyRule("tiefkuehlgerichte", ("tiefkuhlgericht", "tk gericht", "butter chicken", "frosta butter chicken"), "Tiefkühl-/Fertiggericht hat Vorrang vor Zutaten"),
     TaxonomyRule("instantgerichte", ("fertiggericht", "fertigmenu", "instant", "knorr fix", "maggi fix", "air fryer", "dosenravioli"), "Instant-/Fertiggericht hat Vorrang vor Zutaten"),
     TaxonomyRule("fertigmenues", ("lasagne", "ravioli", "maultaschen", "pfannengericht", "menu"), "Fertiggericht hat Vorrang vor Zutaten"),
+    TaxonomyRule("muesli", ("musli", "haferflocken", "musliriegel"), "Müsli-/Riegel-Produkttyp hat Vorrang vor Zutaten oder Geschmack"),
+    TaxonomyRule("molkerei-dessert", ("pudding", "milchreis", "milch reis", "molkereidessert"), "Molkereidessert hat Vorrang vor Milchbestandteilen"),
+    TaxonomyRule("gebaeck", ("croissant", "buttercroissant", "quarkballchen", "quark ballchen"), "Gebäck-Produkttyp hat Vorrang vor Zutaten"),
+    TaxonomyRule("backzutaten", ("blatterteig", "blatter teig"), "Teig-Produkttyp hat Vorrang vor Zutaten"),
     TaxonomyRule("chips", ("chips", "nachos", "salzstangen", "cracker"), "salziger Snack hat Vorrang vor Geschmacksrichtung"),
     TaxonomyRule("schokolade", ("schokolade", "milchschokolade", "schoko", "schokostabchen", "praline", "ritter sport"), "Schokolade/Süßware hat Vorrang vor Aroma oder Zutat"),
     TaxonomyRule("bonbons", ("bonbon", "fruchtgummi", "lakritz", "gummibarchen"), "Bonbons/Fruchtgummi"),
     TaxonomyRule("kekse", ("keks", "waffel", "jaffa cake"), "Keks/Süßware hat Vorrang vor Fruchtgeschmack"),
     TaxonomyRule("nuesse", ("nusse", "nussmix", "erdnusse"), "Nüsse"),
     TaxonomyRule("eis", ("eiscreme", "speiseeis", "stieleis", "eis am stiel"), "Speiseeis"),
-    TaxonomyRule("muesli", ("musli", "haferflocken", "musliriegel"), "Müsli-/Riegel-Produkttyp hat Vorrang vor Zutaten"),
     TaxonomyRule("saucen", ("ketchup", "senf", "mayonnaise", "mayo", "sauce", "sosse", "dressing", "salat kronung"), "Sauce/Dressing hat Vorrang vor enthaltenem Obst oder Gemüse"),
-    TaxonomyRule("gebaeck", ("croissant", "buttercroissant"), "Gebäck hat Vorrang vor Zutaten"),
 
     # Beverages are explicit product descriptions, never substrings.
     TaxonomyRule("cola", ("coca cola", "coca-cola", "coke", "pepsi", "afri cola", "fritz cola", "freeway cola", "cola"), "Cola-Familie"),
@@ -319,11 +354,10 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     # Dairy and meat follow prepared-product contexts so ingredients and
     # toppings cannot take over the category.
     TaxonomyRule("joghurt", ("joghurt", "jogurt", "yoghurt", "almighurt", "froop"), "Joghurt"),
-    TaxonomyRule("quark", ("quark", "skyr"), "Quark"),
+    TaxonomyRule("quark", ("quark", "magerquark", "skyr"), "Quark"),
     TaxonomyRule("molkerei", ("kefir",), "Kefir als allgemeines Milchprodukt"),
     TaxonomyRule("sahne", ("sahne", "schmand", "creme fraiche"), "Sahneprodukt"),
     TaxonomyRule("butter", ("butter", "margarine"), "Butter/Streichfett"),
-    TaxonomyRule("molkerei-dessert", ("pudding", "milchreis", "molkereidessert"), "Molkereidessert"),
     TaxonomyRule("milch", ("vollmilch", "fettarme milch", "buttermilch", "milch"), "Milch"),
     TaxonomyRule("tiefkuehlgemuese", ("tiefkuhlgemuse", "tk gemuse"), "Tiefkühlgemüse"),
     TaxonomyRule("tiefkuehlfisch", ("tiefkuhlfisch", "tk fisch"), "Tiefkühlfisch"),
