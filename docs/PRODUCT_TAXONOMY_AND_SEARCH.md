@@ -72,6 +72,15 @@ plausible Non-Food category. Müsliriegel precedes chocolate or milk flavour,
 milk-rice/pudding dessert precedes the milk ingredient, and Quarkbällchen or
 Blätterteig precede their quark/butter ingredients.
 
+OCR/PDF soft line-break hyphens are rejoined during the shared search-text
+normalization, so `Back- formen` becomes the same complete token as
+`Backformen`; ordinary hyphens such as `Coca-Cola` remain token separators.
+Explicit compound-head matching also requires at least a three-character
+compound prefix. This keeps Bierwurst, Rumpsteak and Lachsbraten working while
+preventing the grammatical `ge` prefix in `gebratene` from impersonating a
+Braten product. The explicit plural `nudeln` then identifies gebratene Nudeln
+as the actual product type.
+
 Kefir has no dedicated leaf category. It is therefore assigned to the existing
 general `molkerei` category and is deliberately excluded from the semantically
 incorrect `sahne` rule. Blätterteig likewise uses the existing `backzutaten`

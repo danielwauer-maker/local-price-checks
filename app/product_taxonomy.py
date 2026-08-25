@@ -31,9 +31,15 @@ class ProductFamilySpec:
 
 
 def normalize_search_text(value: str | None) -> str:
+    raw = (value or "").casefold()
+    # PDF/OCR extraction can split one word as ``Back- formen`` or with a
+    # newline after the hyphen. Rejoin only a hyphen followed by whitespace
+    # (plus Unicode soft hyphens); ordinary compounds such as Coca-Cola keep
+    # their token boundary.
+    raw = re.sub(r"(?<=[^\W\d_])(?:\u00ad\s*|-\s+)(?=[^\W\d_])", "", raw)
     folded = "".join(
         character
-        for character in unicodedata.normalize("NFKD", (value or "").casefold())
+        for character in unicodedata.normalize("NFKD", raw)
         if not unicodedata.combining(character)
     )
     return re.sub(r"[^a-z0-9]+", " ", folded).strip()
@@ -80,7 +86,16 @@ def compound_head_matches(value: str | None, head_term: str) -> bool:
         return False
     head = head_tokens[0]
     endings = (head, f"{head}e", f"{head}en", f"{head}n", f"{head}s")
-    return any(token.endswith(endings) for token in tokenize_search_text(value))
+    for token in tokenize_search_text(value):
+        for ending in endings:
+            if token == ending:
+                return True
+            # A compound needs a substantive prefix. This preserves
+            # Bierwurst/Rumpsteak/Lachsbraten but rejects the grammatical
+            # ``ge`` prefix in ``gebratene`` as a fake Braten compound.
+            if token.endswith(ending) and len(token) - len(ending) >= 3:
+                return True
+    return False
 
 
 def ingredient_list_matches(value: str | None) -> bool:
@@ -128,6 +143,7 @@ def vegetarian_context_matches(value: str | None) -> bool:
 
 PIZZA_UTENSIL_TERMS: tuple[str, ...] = (
     "backform",
+    "back form",
     "backformen",
     "backblech",
     "pizzablech",
@@ -379,7 +395,7 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("brotaufstrich", ("brotaufstrich", "nuss nougat", "nuss-nougat"), "Brotaufstrich"),
     TaxonomyRule("suppen", ("suppe", "eintopf", "bruhe"), "Suppe/Eintopf"),
     TaxonomyRule("konserven", ("konserve", "dose"), "Konserve"),
-    TaxonomyRule("nudeln", ("nudel", "pasta", "spaghetti", "penne"), "Nudeln"),
+    TaxonomyRule("nudeln", ("nudel", "nudeln", "pasta", "spaghetti", "penne"), "Nudeln"),
     TaxonomyRule("reis", ("reis", "couscous", "bulgur"), "Reis/Beilage"),
     TaxonomyRule("kartoffelprodukte", ("pommes", "kroketten", "kartoffelpuree"), "Kartoffelprodukt"),
     TaxonomyRule("huelsenfruechte", ("linsen", "bohnen", "hulsenfruchte"), "Hülsenfrucht"),
