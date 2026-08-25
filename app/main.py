@@ -17,6 +17,7 @@ from .freshness import market_freshness
 from .geo import haversine_km, resolve_center
 from .models import FavoriteProduct, FavoriteStore, MasterProduct, ProductBarcode, ShoppingItem, Store
 from .optimizer import optimize_shopping
+from .product_search import search_products
 from .scheduler import run_verified_market_collection, start_scheduler, stop_scheduler
 from .seed import seed_stores
 from .services import current_user, offers_for_selected_stores, selected_store_ids
@@ -131,10 +132,7 @@ def toggle_store(store_id: int, db: Session = Depends(get_db)):
 @app.get("/produkte")
 def products_page(request: Request, q: str = "", db: Session = Depends(get_db)):
     user = current_user(db)
-    query = db.query(MasterProduct)
-    if q.strip():
-        query = query.filter(MasterProduct.name.ilike(f"%{q.strip()}%"))
-    products = query.order_by(MasterProduct.name).limit(100).all()
+    products = [match.product for match in search_products(db, query=q, limit=100)]
     fav_ids = {x.master_product_id for x in db.query(FavoriteProduct).filter(FavoriteProduct.user_id == user.id).all()}
 
     current_by_product = {}
@@ -204,14 +202,7 @@ def shopping_page(
 
     suggestions = []
     if q.strip():
-        term = f"%{q.strip()}%"
-        suggestions = (
-            db.query(MasterProduct)
-            .filter((MasterProduct.name.ilike(term)) | (MasterProduct.brand.ilike(term)))
-            .order_by(MasterProduct.name)
-            .limit(8)
-            .all()
-        )
+        suggestions = [match.product for match in search_products(db, query=q, limit=8)]
 
     grouped = []
     for store in plan.stores:
@@ -360,7 +351,7 @@ def scanner_search(request: Request, barcode: str = Form(...), q: str = Form(...
     code = normalize_gtin(barcode)
     if not valid_gtin(code):
         return templates.TemplateResponse("scanner.html", {"request": request, "barcode": code, "error": "Ungültige GTIN/EAN-Prüfziffer.", "result": None})
-    candidates = db.query(MasterProduct).filter(MasterProduct.name.ilike(f"%{q.strip()}%")).limit(30).all() if q.strip() else []
+    candidates = [match.product for match in search_products(db, query=q, limit=30)] if q.strip() else []
     return templates.TemplateResponse("scanner.html", {"request": request, "result": None, "barcode": code, "q": q, "candidates": candidates})
 
 

@@ -40,6 +40,14 @@ def media_source_for_asset(db: Session, asset: MediaAsset) -> str:
     return "admin_curated"
 
 
+def _inferred_media_source(asset: MediaAsset) -> str:
+    if (asset.source_url or "").startswith("prospect-crop:"):
+        return "prospect_crop"
+    if (asset.source_url or "").startswith(("http://", "https://")):
+        return "retailer_cdn"
+    return "admin_curated"
+
+
 def _set_media_metadata(
     db: Session,
     asset: MediaAsset,
@@ -66,30 +74,53 @@ def _set_media_metadata(
 
 
 def preferred_product_media(db: Session, product_id: int, *, purpose: str = "public") -> MediaAsset | None:
-    assets = db.query(MediaAsset).filter(
-        MediaAsset.kind == "product",
-        MediaAsset.master_product_id == product_id,
-        MediaAsset.active.is_(True),
-    ).all()
-    if not assets:
-        return None
-    metadata = {
-        row.media_asset_id: row
-        for row in db.query(MediaAssetMetadata).filter(
-            MediaAssetMetadata.media_asset_id.in_([asset.id for asset in assets])
+    return preferred_product_media_map(db, [product_id], purpose=purpose).get(product_id)
+
+
+def preferred_product_media_map(
+    db: Session,
+    product_ids: list[int],
+    *,
+    purpose: str = "public",
+) -> dict[int, MediaAsset]:
+    """Resolve preferred media for many products with two bounded queries."""
+
+    if not product_ids:
+        return {}
+    assets = (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "product",
+            MediaAsset.master_product_id.in_(product_ids),
+            MediaAsset.active.is_(True),
         )
-    }
+        .all()
+    )
+    metadata = (
+        {
+            row.media_asset_id: row
+            for row in db.query(MediaAssetMetadata)
+            .filter(MediaAssetMetadata.media_asset_id.in_([asset.id for asset in assets]))
+            .all()
+        }
+        if assets
+        else {}
+    )
 
     def rank(asset: MediaAsset) -> tuple[int, int, int, int]:
         meta = metadata.get(asset.id)
-        source = meta.media_source if meta else media_source_for_asset(db, asset)
+        source = meta.media_source if meta else _inferred_media_source(asset)
         priority = meta.priority if meta else MEDIA_SOURCE_PRIORITY[source]
         audit = bool(meta.audit_relevant) if meta else source == "prospect_crop"
         if purpose == "audit":
             return (int(audit), int(source == "prospect_crop"), priority, asset.id)
         return (priority, int(asset.is_primary), int(not audit), asset.id)
 
-    return max(assets, key=rank)
+    grouped: dict[int, list[MediaAsset]] = {}
+    for asset in assets:
+        if asset.master_product_id is not None:
+            grouped.setdefault(asset.master_product_id, []).append(asset)
+    return {product_id: max(rows, key=rank) for product_id, rows in grouped.items()}
 
 
 def _refresh_product_primary(db: Session, product_id: int) -> None:
