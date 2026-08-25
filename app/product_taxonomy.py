@@ -83,6 +83,49 @@ def compound_head_matches(value: str | None, head_term: str) -> bool:
     return any(token.endswith(endings) for token in tokenize_search_text(value))
 
 
+def ingredient_list_matches(value: str | None) -> bool:
+    """Recognize an ingredient-only fragment without guessing its product type.
+
+    Production imports occasionally contain fragments such as ``mit Zwiebel,
+    Gurke und Apfel`` instead of a product name.  Requiring the leading ``mit``
+    plus at least two complete ingredient tokens keeps this guard narrow and
+    prevents one listed ingredient from becoming the product category.
+    """
+
+    tokens = tokenize_search_text(value)
+    if not tokens or tokens[0] != "mit":
+        return False
+    ingredients = {
+        "apfel", "gurke", "karotte", "knoblauch", "mohre", "orange",
+        "paprika", "tomate", "zwiebel",
+    }
+    return len(ingredients.intersection(tokens)) >= 2
+
+
+VEGETARIAN_CONTEXT_TERMS: tuple[str, ...] = (
+    "vegan",
+    "vegane",
+    "veganer",
+    "veganes",
+    "veganen",
+    "vegetarisch",
+    "vegetarische",
+    "vegetarischer",
+    "vegetarisches",
+    "vegetarischen",
+)
+
+VEGETARIAN_MEAT_BLOCKED_SLUGS = frozenset(
+    {"fleisch", "grillfleisch", "hackfleisch", "wurst", "schinken", "gefluegel"}
+)
+
+
+def vegetarian_context_matches(value: str | None) -> bool:
+    """Match an explicit vegan/vegetarian token, including German inflection."""
+
+    return any(taxonomy_term_matches(value, term) for term in VEGETARIAN_CONTEXT_TERMS)
+
+
 def _category(slug: str, name: str, order: int, parent: str | None = None, *terms: str) -> CategorySpec:
     return CategorySpec(slug, name, order, parent, tuple(terms))
 
@@ -220,24 +263,46 @@ PRODUCT_TAXONOMY: tuple[CategorySpec, ...] = (
 CATEGORY_BY_SLUG = {category.slug: category for category in PRODUCT_TAXONOMY}
 
 
-# Specific rules precede broad rules. Uncertain products deliberately fall back
-# to Sonstiges instead of receiving a forced but misleading assignment.
+# Rules are one deliberately ordered engine: reliable product types and context
+# precede ingredients/flavours, which precede broad tokens. Uncertain products
+# deliberately fall back to unknown instead of receiving a forced assignment.
 CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
-    TaxonomyRule("gebaeck", ("croissant", "buttercroissant"), "Gebäck"),
+    # Product-type and context rules. Their reason strings are also surfaced by
+    # the reclassification dry run, so precedence decisions remain auditable.
     TaxonomyRule("pflanzendrinks", ("haferdrink", "hafermilch", "sojadrink", "sojamilch", "mandeldrink", "pflanzendrink"), "Pflanzendrink"),
+    TaxonomyRule("fleischersatz", ("fleischersatz", "fleischalternative", "likemeat"), "expliziter Fleischersatz-Produkttyp"),
+    TaxonomyRule("katzenfutter", ("katzenfutter", "katzennahrung", "sheba", "whiskas", "felix"), "Katzenfutter hat Vorrang vor enthaltenen Tierarten"),
+    TaxonomyRule("hundefutter", ("hundefutter", "hundenahrung", "pedigree", "cesar"), "Hundefutter hat Vorrang vor enthaltenen Tierarten"),
+    TaxonomyRule("tiernahrung", ("tiernahrung", "tierfutter", "vitakraft"), "Tiernahrung hat Vorrang vor enthaltenen Tierarten"),
+    TaxonomyRule("zahnpflege", ("zahnpasta", "zahnburste", "mundspulung", "zahnfleisch", "sensodyne", "proschmelz"), "Zahnpflege-Produkttyp"),
     TaxonomyRule("fisch-paniert", ("fischstabchen", "backfisch", "panierter fisch", "fischfilet paniert"), "panierter Fisch"),
     TaxonomyRule("fischkonserven", ("thunfisch", "sardinen", "fischkonserve"), "Fischkonserve"),
-    TaxonomyRule("raeucherfisch", ("raucherlachs", "raucherfisch", "matjes", "rauchforelle"), "Räucherfisch"),
-    TaxonomyRule("meeresfruechte", ("garnele", "scampi", "meeresfruchte", "muscheln", "calamari"), "Meeresfrüchte"),
-    TaxonomyRule("fisch-produkte", ("lachs", "lachsfilet", "seelachs", "kabeljau", "forelle", "hering", "makrele", "dorade", "pangasius", "fisch"), "Fischart"),
-    TaxonomyRule("frischkaese", ("frischkase", "cream cheese"), "Frischkäse"),
+    TaxonomyRule("raeucherfisch", ("raucherlachs", "raucherfisch", "matjes", "matjesfilet", "matjesfilets", "rauchforelle"), "Räucherfisch"),
+    TaxonomyRule("meeresfruechte", ("garnele", "garnelen", "scampi", "meeresfruchte", "muscheln", "calamari"), "Meeresfrüchte"),
+    TaxonomyRule("fisch-produkte", ("lachs", "lachsfilet", "lachsfilets", "seelachs", "kabeljau", "forelle", "hering", "heringsfilet", "heringsfilets", "makrele", "dorade", "pangasius", "pangasiusfilet", "pangasiusfilets", "rotbarsch", "rotbarschfilet", "rotbarschfilets", "fisch"), "eindeutiger Fisch-Produkttyp"),
+    TaxonomyRule("frischkaese", ("frischkase", "frischkasecreme", "cream cheese", "bresso", "miree"), "Frischkäse-Produkttyp hat Vorrang vor Kräutern"),
     TaxonomyRule("mozzarella", ("mozzarella",), "Mozzarella"),
-    TaxonomyRule("feta-hirtenkaese", ("feta", "hirtenkase", "salatkase"), "Feta/Hirtenkäse"),
+    TaxonomyRule("feta-hirtenkaese", ("feta", "hirtenkase", "salatkase", "schafkase"), "Feta/Hirtenkäse"),
     TaxonomyRule("reibekaese", ("reibekase", "geriebener kase", "gratinkase"), "Reibekäse"),
     TaxonomyRule("weichkaese", ("camembert", "brie", "weichkase", "geramont"), "Weichkäse"),
-    TaxonomyRule("hartkaese", ("parmesan", "grana padano", "bergkase", "hartkase", "emmentaler"), "Hartkäse"),
-    TaxonomyRule("schnittkaese", ("gouda", "edamer", "maasdamer", "cheddar", "schnittkase", "scheibenkase"), "Schnittkäse"),
-    TaxonomyRule("kaese", ("kase",), "allgemeiner Käsebegriff"),
+    TaxonomyRule("hartkaese", ("parmesan", "grana padano", "bergkase", "hartkase", "emmentaler", "grillkase"), "Hartkäse"),
+    TaxonomyRule("schnittkaese", ("gouda", "edamer", "maasdamer", "cheddar", "schnittkase", "scheibenkase", "kasescheibe", "kasescheiben"), "Schnittkäse"),
+    TaxonomyRule("kaese", ("kase", "kaseprodukt"), "eindeutiger Käse-Produkttyp"),
+    TaxonomyRule("tiefkuehlpizza", ("tiefkuhlpizza", "tk pizza", "pizza", "steinofen pizza", "steinofenpizza", "flammkuchen"), "Pizza/Fertiggericht hat Vorrang vor Belag oder Wortbestandteilen"),
+    TaxonomyRule("tiefkuehlgerichte", ("tiefkuhlgericht", "tk gericht", "butter chicken", "frosta butter chicken"), "Tiefkühl-/Fertiggericht hat Vorrang vor Zutaten"),
+    TaxonomyRule("instantgerichte", ("fertiggericht", "fertigmenu", "instant", "knorr fix", "maggi fix", "air fryer", "dosenravioli"), "Instant-/Fertiggericht hat Vorrang vor Zutaten"),
+    TaxonomyRule("fertigmenues", ("lasagne", "ravioli", "maultaschen", "pfannengericht", "menu"), "Fertiggericht hat Vorrang vor Zutaten"),
+    TaxonomyRule("chips", ("chips", "nachos", "salzstangen", "cracker"), "salziger Snack hat Vorrang vor Geschmacksrichtung"),
+    TaxonomyRule("schokolade", ("schokolade", "milchschokolade", "schoko", "schokostabchen", "praline", "ritter sport"), "Schokolade/Süßware hat Vorrang vor Aroma oder Zutat"),
+    TaxonomyRule("bonbons", ("bonbon", "fruchtgummi", "lakritz", "gummibarchen"), "Bonbons/Fruchtgummi"),
+    TaxonomyRule("kekse", ("keks", "waffel", "jaffa cake"), "Keks/Süßware hat Vorrang vor Fruchtgeschmack"),
+    TaxonomyRule("nuesse", ("nusse", "nussmix", "erdnusse"), "Nüsse"),
+    TaxonomyRule("eis", ("eiscreme", "speiseeis", "stieleis", "eis am stiel"), "Speiseeis"),
+    TaxonomyRule("muesli", ("musli", "haferflocken", "musliriegel"), "Müsli-/Riegel-Produkttyp hat Vorrang vor Zutaten"),
+    TaxonomyRule("saucen", ("ketchup", "senf", "mayonnaise", "mayo", "sauce", "sosse", "dressing", "salat kronung"), "Sauce/Dressing hat Vorrang vor enthaltenem Obst oder Gemüse"),
+    TaxonomyRule("gebaeck", ("croissant", "buttercroissant"), "Gebäck hat Vorrang vor Zutaten"),
+
+    # Beverages are explicit product descriptions, never substrings.
     TaxonomyRule("cola", ("coca cola", "coca-cola", "coke", "pepsi", "afri cola", "fritz cola", "freeway cola", "cola"), "Cola-Familie"),
     TaxonomyRule("energy", ("energy drink", "energydrink", "red bull", "monster energy"), "Energy-Drink"),
     TaxonomyRule("eistee", ("eistee", "ice tea"), "Eistee"),
@@ -246,68 +311,59 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("saft", ("saft", "nektar", "smoothie", "schorle"), "Saft"),
     TaxonomyRule("kaffee", ("kaffee", "espresso", "cappuccino", "kaffeebohnen"), "Kaffee"),
     TaxonomyRule("tee", ("teebeutel", "schwarztee", "gruntee", "krautertee"), "Tee"),
-    TaxonomyRule("bier", ("bier", "pils", "radler", "helles", "weizenbier", "schmackes hell", "0 0 hell"), "Bier"),
+    TaxonomyRule("bier", ("bier", "pils", "pilsener", "radler", "helles", "lagerbier", "exportbier", "weizenbier", "weissbier", "bockbier", "kellerbier", "schmackes hell", "0 0 hell"), "eindeutige Bierbezeichnung"),
     TaxonomyRule("sekt", ("sekt", "prosecco", "champagner"), "Sekt"),
-    TaxonomyRule("spirituosen", ("vodka", "wodka", "whisky", "whiskey", "gin", "rum", "likor"), "Spirituose"),
-    TaxonomyRule("wein", ("rotwein", "weisswein", "wein"), "Wein"),
+    TaxonomyRule("spirituosen", ("vodka", "wodka", "whisky", "whiskey", "gin", "rum", "likor", "korn", "ouzo", "tequila", "brandy", "cognac", "schnaps"), "eindeutige Spirituosenbezeichnung"),
+    TaxonomyRule("wein", ("rotwein", "weisswein", "rosewein", "wein", "riesling", "grauburgunder", "weissburgunder", "spatburgunder", "dornfelder", "chardonnay"), "eindeutige Weinbezeichnung"),
+
+    # Dairy and meat follow prepared-product contexts so ingredients and
+    # toppings cannot take over the category.
     TaxonomyRule("joghurt", ("joghurt", "jogurt", "yoghurt", "almighurt", "froop"), "Joghurt"),
     TaxonomyRule("quark", ("quark", "skyr"), "Quark"),
-    TaxonomyRule("sahne", ("sahne", "schmand", "creme fraiche", "kefir"), "Sahneprodukt"),
+    TaxonomyRule("molkerei", ("kefir",), "Kefir als allgemeines Milchprodukt"),
+    TaxonomyRule("sahne", ("sahne", "schmand", "creme fraiche"), "Sahneprodukt"),
     TaxonomyRule("butter", ("butter", "margarine"), "Butter/Streichfett"),
     TaxonomyRule("molkerei-dessert", ("pudding", "milchreis", "molkereidessert"), "Molkereidessert"),
     TaxonomyRule("milch", ("vollmilch", "fettarme milch", "buttermilch", "milch"), "Milch"),
-    TaxonomyRule("chips", ("chips", "nachos", "salzstangen", "cracker"), "salziger Snack"),
-    TaxonomyRule("schokolade", ("schokolade", "schoko", "praline"), "Schokolade"),
-    TaxonomyRule("bonbons", ("bonbon", "fruchtgummi", "lakritz", "gummibarchen"), "Bonbons/Fruchtgummi"),
-    TaxonomyRule("kekse", ("keks", "waffel"), "Keks/Waffel"),
-    TaxonomyRule("nuesse", ("nusse", "nussmix", "erdnusse"), "Nüsse"),
-    TaxonomyRule("eis", ("eiscreme", "speiseeis", "stieleis", "eis am stiel"), "Speiseeis"),
-    TaxonomyRule("tiefkuehlpizza", ("tiefkuhlpizza", "tk pizza"), "Tiefkühlpizza"),
     TaxonomyRule("tiefkuehlgemuese", ("tiefkuhlgemuse", "tk gemuse"), "Tiefkühlgemüse"),
     TaxonomyRule("tiefkuehlfisch", ("tiefkuhlfisch", "tk fisch"), "Tiefkühlfisch"),
-    TaxonomyRule("tiefkuehlgerichte", ("tiefkuhlgericht", "tk gericht"), "Tiefkühlgericht"),
     TaxonomyRule("gefluegel", ("hahnchen", "huhn", "pute", "geflugel"), "Geflügel"),
     TaxonomyRule("hackfleisch", ("hackfleisch", "rinderhack", "hack"), "Hackfleisch"),
     TaxonomyRule("schinken", ("schinken", "speck"), "Schinken"),
     TaxonomyRule("wurst", ("wurst", "salami", "bratwurst", "aufschnitt", "mortadella"), "Wurst", ("wurst",)),
     TaxonomyRule("grillfleisch", ("grillfleisch", "grillsteak", "cevapcici", "grillspies"), "Grillfleisch"),
-    TaxonomyRule("fleisch", ("fleisch", "rind", "schwein", "steak", "schnitzel", "braten"), "Fleisch", ("fleisch", "steak", "schnitzel", "braten")),
+    TaxonomyRule("fleisch", ("fleisch", "rindfleisch", "schweinefleisch", "rind", "schwein", "steak", "schnitzel", "braten"), "Fleisch", ("steak", "schnitzel", "braten")),
     TaxonomyRule("gebaeck", ("croissant", "geback", "donut", "muffin"), "Gebäck"),
     TaxonomyRule("toast", ("toast",), "Toast"),
     TaxonomyRule("broetchen", ("brotchen", "semmel", "baguette", "brezel", "ciabatta"), "Brötchen/kleine Backware"),
     TaxonomyRule("kuchen", ("kuchen", "torte"), "Kuchen"),
     TaxonomyRule("backzutaten", ("backmischung", "hefe", "backpulver"), "Backzutat"),
     TaxonomyRule("brot-produkte", ("brot", "knackebrot"), "Brot"),
-    TaxonomyRule("muesli", ("musli", "haferflocken"), "Müsli"),
     TaxonomyRule("cornflakes", ("cornflakes", "cerealien"), "Cornflakes"),
     TaxonomyRule("marmelade", ("marmelade", "konfiture"), "Marmelade"),
     TaxonomyRule("honig", ("honig",), "Honig"),
     TaxonomyRule("brotaufstrich", ("brotaufstrich", "nuss nougat", "nuss-nougat"), "Brotaufstrich"),
-    TaxonomyRule("instantgerichte", ("fertiggericht", "fertigmenu", "instant", "knorr fix", "maggi fix", "air fryer", "dosenravioli"), "Instant-/Fertiggericht"),
     TaxonomyRule("suppen", ("suppe", "eintopf", "bruhe"), "Suppe/Eintopf"),
     TaxonomyRule("konserven", ("konserve", "dose"), "Konserve"),
-    TaxonomyRule("fertigmenues", ("lasagne", "ravioli", "maultaschen", "pfannengericht", "menu"), "Fertiggericht"),
     TaxonomyRule("nudeln", ("nudel", "pasta", "spaghetti", "penne"), "Nudeln"),
     TaxonomyRule("reis", ("reis", "couscous", "bulgur"), "Reis/Beilage"),
     TaxonomyRule("kartoffelprodukte", ("pommes", "kroketten", "kartoffelpuree"), "Kartoffelprodukt"),
     TaxonomyRule("huelsenfruechte", ("linsen", "bohnen", "hulsenfruchte"), "Hülsenfrucht"),
-    TaxonomyRule("pilze", ("champignon", "pilze", "pfifferling"), "Pilz"),
+    # Produce requires explicit singular/plural product tokens. Ingredient-only
+    # fragments are rejected by ``ingredient_list_matches`` before this stage.
+    TaxonomyRule("pilze", ("champignon", "champignons", "pilz", "pilze", "pfifferling", "pfifferlinge"), "Pilz-Grundprodukt"),
     TaxonomyRule("kartoffeln", ("kartoffel",), "Kartoffel"),
     TaxonomyRule("salat", ("salat",), "Salat"),
     TaxonomyRule("kraeuter", ("krauter", "basilikum", "petersilie", "schnittlauch"), "Kräuter"),
-    TaxonomyRule("obst", ("apfel", "banane", "birne", "erdbeer", "traube", "orange", "mango", "ananas", "kiwi", "melone"), "Obst", ("apfel", "beere", "traube")),
-    TaxonomyRule("gemuese", ("tomate", "gurke", "paprika", "zwiebel", "knoblauch", "mohre", "karotte", "brokkoli", "blumenkohl", "zucchini", "aubergine", "gemuse"), "Gemüse"),
-    TaxonomyRule("fleischersatz", ("fleischersatz", "veganes schnitzel", "vegane wurst"), "Fleischersatz"),
+    TaxonomyRule("obst", ("apfel", "banane", "bananen", "birne", "birnen", "erdbeere", "erdbeeren", "traube", "trauben", "weintraube", "weintrauben", "orange", "orangen", "mango", "mangos", "ananas", "kiwi", "kiwis", "melone", "melonen", "zitrone", "zitronen", "nektarine", "nektarinen", "zwetschge", "zwetschgen"), "Obst-Grundprodukt", ("apfel", "beere", "traube")),
+    TaxonomyRule("gemuese", ("tomate", "tomaten", "gurke", "gurken", "paprika", "zwiebel", "zwiebeln", "knoblauch", "mohre", "mohren", "karotte", "karotten", "brokkoli", "blumenkohl", "zucchini", "aubergine", "gemuse", "chicoree"), "Gemüse-Grundprodukt"),
     TaxonomyRule("babynahrung", ("babynahrung", "babybrei", "quetschie"), "Babynahrung"),
     TaxonomyRule("windeln", ("windel", "pampers"), "Windeln"),
-    TaxonomyRule("katzenfutter", ("katzenfutter", "katzennahrung", "sheba", "whiskas", "felix"), "Katzenfutter"),
-    TaxonomyRule("hundefutter", ("hundefutter", "hundenahrung", "pedigree", "cesar"), "Hundefutter"),
     TaxonomyRule("waschmittel", ("waschmittel", "weichspuler"), "Waschmittel"),
     TaxonomyRule("spuelmittel", ("spulmittel", "geschirrspul"), "Spülmittel"),
     TaxonomyRule("papierwaren", ("toilettenpapier", "kuchenrolle", "taschentucher"), "Papierware"),
     TaxonomyRule("muellbeutel", ("mullbeutel",), "Müllbeutel"),
     TaxonomyRule("reinigungsmittel", ("reiniger", "putzmittel"), "Reinigungsmittel"),
-    TaxonomyRule("zahnpflege", ("zahnpasta", "zahnburste", "mundspulung"), "Zahnpflege"),
     TaxonomyRule("shampoo", ("shampoo",), "Shampoo"),
     TaxonomyRule("duschgel", ("duschgel",), "Duschgel"),
     TaxonomyRule("deo", ("deodorant", "deo"), "Deo"),
@@ -319,7 +375,6 @@ CLASSIFICATION_RULES: tuple[TaxonomyRule, ...] = (
     TaxonomyRule("salz", ("salz",), "Salz"),
     TaxonomyRule("zucker", ("zucker",), "Zucker"),
     TaxonomyRule("mehl", ("mehl",), "Mehl"),
-    TaxonomyRule("saucen", ("ketchup", "senf", "mayonnaise", "mayo", "sauce", "sosse"), "Sauce/Würzmittel"),
 )
 
 

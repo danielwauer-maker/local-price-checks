@@ -464,7 +464,7 @@ Produktion bekommt in diesem Rollout **ausschließlich den Dry Run**. Kein
 
 ```bash
 cd "$REPO_DIR"
-docker compose exec -T -e PYTHONPATH=/app app python scripts/reclassify_products.py \
+docker compose exec -T app python scripts/reclassify_products.py \
   | tee "$EVIDENCE_DIR/reclassification-dry-run.txt"
 ```
 
