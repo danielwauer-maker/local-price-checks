@@ -167,12 +167,35 @@ Service-Definition stoppen:
 cd "$REPO_DIR"
 docker compose stop gateway frontend app
 docker compose ps | tee "$EVIDENCE_DIR/compose.stopped.txt"
-if lsof "$DB_PATH"; then echo 'STOP: DB ist noch geöffnet' >&2; exit 1; fi
+assert_no_sqlite_handles() {
+  local found=0
+  local candidate
+  if command -v lsof >/dev/null 2>&1; then
+    for candidate in "$DB_PATH" "$DB_PATH-wal" "$DB_PATH-shm"; do
+      if test -e "$candidate" && lsof "$candidate"; then found=1; fi
+    done
+  elif command -v fuser >/dev/null 2>&1; then
+    for candidate in "$DB_PATH" "$DB_PATH-wal" "$DB_PATH-shm"; do
+      if test -e "$candidate" && fuser "$candidate"; then found=1; fi
+    done
+  else
+    echo 'STOP: weder lsof noch fuser für den Handle-Preflight verfügbar' >&2
+    return 1
+  fi
+  if test "$found" -ne 0; then
+    echo 'STOP: SQLite-Datei oder Sidecar ist noch geöffnet' >&2
+    return 1
+  fi
+}
+assert_no_sqlite_handles 2>&1 | tee "$EVIDENCE_DIR/sqlite-handles.after-stop.txt"
 ```
 
 Es darf kein Container, Systemd-Dienst, Cronjob oder manueller Prozess mehr
-schreiben. Der Script-interne Race-Check (Dateiidentität, Größe, mtime und
-SHA-256) ist eine zweite Sicherung, kein Ersatz für den Schreibstopp.
+die DB, das WAL oder SHM geöffnet halten. Die Python-Library hängt bewusst
+nicht von `lsof`/`fuser` ab und kann fremde Prozess-Handles nicht
+plattformübergreifend sicher erkennen. Der manuelle Handle-Preflight ist daher
+Pflicht. Der Script-interne Race-Check (Dateiidentität, Größe, mtime und
+SHA-256) ist eine zweite Sicherung, kein Ersatz dafür.
 
 ## 5. WAL checkpoint
 
@@ -185,23 +208,26 @@ for sidecar in "$DB_PATH-wal" "$DB_PATH-shm"; do
   if test -e "$sidecar"; then stat -c 'path=%n size=%s uid=%u gid=%g mode=%a' "$sidecar"; else echo "absent: $sidecar"; fi
 done | tee "$EVIDENCE_DIR/db.sidecars.checkpointed.txt"
 if test -s "$DB_PATH-wal"; then echo 'STOP: WAL ist nicht leer' >&2; exit 1; fi
-if test -s "$DB_PATH-shm"; then echo 'STOP: SHM zeigt noch einen SQLite-Nutzer' >&2; exit 1; fi
 ```
 
 Erwartung für den Checkpoint ist `0|0|0`. Ein nichtleeres WAL ist immer STOP.
-Ein nichtleeres SHM ist ebenfalls STOP, weil der Helper daraus fail-closed auf
-einen noch aktiven SQLite-Nutzer schließt. Sidecars nicht blind löschen.
+Eine vorhandene/nonzero `-shm`-Datei ist nach sauberem SQLite-Stopp kein
+alleiniger Stop-Grund. Entscheidend sind gestoppte Nutzer/Handles und ein
+vollständig geleertes WAL. SHM ist ein rekonstruierbarer WAL-Index und darf als
+Restartefakt bestehen bleiben; weder SHM noch andere Sidecars blind löschen.
 
 ## 6. Legacy Alembic Dry Run
 
-Der Dry Run ist read-only, prüft Integrity, FKs, Revision, WAL/SHM und den
-exakten Baseline-Schemaabgleich. Nach dem Sidecar-Preflight werden seine
+Der Dry Run ist read-only, prüft Integrity, FKs, Revision, ein vollständig
+leeres WAL und den exakten Baseline-Schemaabgleich. SHM-Größe allein ist kein
+Blocker. Nach dem Handle-/Sidecar-Preflight werden seine
 Prüfverbindungen mit SQLite `immutable=1` geöffnet, damit die WAL-Datenbank
 nicht allein durch Lesen wieder eine SHM-Datei erhält. Hash vor/nach muss
 gleich sein; kein Backup entsteht:
 
 ```bash
 cd "$RELEASE_DIR"
+assert_no_sqlite_handles 2>&1 | tee "$EVIDENCE_DIR/sqlite-handles.pre-dry-run.txt"
 sha256sum "$DB_PATH" > "$EVIDENCE_DIR/db.sha256.pre-dry-run.txt"
 test ! -e "$BACKUP_PATH"
 "$PYTHON_BIN" scripts/prepare_existing_sqlite_for_alembic.py \
@@ -222,6 +248,8 @@ Nur nach expliziter Freigabe der Dry-Run-Ausgabe:
 
 ```bash
 cd "$RELEASE_DIR"
+assert_no_sqlite_handles 2>&1 | tee "$EVIDENCE_DIR/sqlite-handles.pre-apply.txt"
+if test -s "$DB_PATH-wal"; then echo 'STOP: WAL ist vor Apply nicht leer' >&2; exit 1; fi
 "$PYTHON_BIN" scripts/prepare_existing_sqlite_for_alembic.py \
   --sqlite-path "$DB_PATH" \
   --apply \
@@ -241,6 +269,14 @@ Besitzer und Gruppe werden vor dem Austausch übernommen; kann das nicht
 erfolgen, bricht Apply vor dem Austausch ab. Backup-Ziel darf auf einem anderen
 Dateisystem liegen, muss aber geschützt, beschreibbar und ausreichend groß
 sein.
+
+Eine vor Apply vorhandene stale `-shm`-Datei wird vom Helper absichtlich nicht
+gelöscht und kann nach `os.replace` weiterhin neben der neuen DB liegen. Ohne
+offene Handles und ohne WAL ist sie kein Teil des dauerhaften Datenbestands;
+SQLite darf den WAL-Index beim nächsten normalen Öffnen validieren bzw.
+rekonstruieren. Die folgende normale SQLite-Validierung muss deshalb bestehen.
+Bei einem Sidecar-/I/O-Fehler: STOP, App nicht starten und SHM nicht ad hoc
+löschen.
 
 ## 8. DB validation
 
@@ -333,6 +369,7 @@ Start erneut über `docker compose config` prüfen.
 cd "$REPO_DIR"
 docker compose config > "$EVIDENCE_DIR/compose.target.yml"
 grep -nE 'DATABASE_URL|AUTO_CREATE_SCHEMA|SCHEDULER_ENABLED' "$EVIDENCE_DIR/compose.target.yml"
+assert_no_sqlite_handles 2>&1 | tee "$EVIDENCE_DIR/sqlite-handles.pre-start.txt"
 docker compose up -d --no-deps app
 docker compose ps app
 docker compose up -d --no-deps frontend
@@ -486,7 +523,7 @@ zweite `mv` atomar ist. Die fehlgeschlagene neue DB wird nicht gelöscht.
 ```bash
 cd "$REPO_DIR"
 docker compose stop gateway frontend app
-if lsof "$DB_PATH"; then echo 'STOP: DB ist noch geöffnet' >&2; exit 1; fi
+assert_no_sqlite_handles
 git switch --detach "$OLD_GIT_SHA"
 docker compose build app frontend
 ```
@@ -518,7 +555,7 @@ Sofort **STOP – nicht weiterdeployen**, wenn mindestens eines gilt:
 - unbekannte/mehrdeutige Alembic-Revision oder Schema-Drift;
 - Dry Run verändert SHA oder erzeugt ein Backup;
 - Backup-Erzeugung/-Validierung scheitert oder Ziel existiert bereits;
-- Writer/File-Handles bleiben aktiv, WAL ist nicht checkpointed oder Source
+- Writer/File-Handles bleiben aktiv, WAL ist nonzero/nicht checkpointed oder Source
   ändert sich während Apply;
 - freier Speicher unterschreitet die Preflight-Grenze;
 - Besitzer, Gruppe oder Modus ändern sich unerwartet;
@@ -529,6 +566,10 @@ Sofort **STOP – nicht weiterdeployen**, wenn mindestens eines gilt:
   `user_clients`;
 - Logs zeigen DB-, FK-, Schema-, Alembic-, SQLAlchemy- oder Startup-Fehler;
 - Rollback-Zeitfenster, Beobachtungsfähigkeit oder Freigabe ist nicht mehr gegeben.
+
+Eine nonzero SHM-Datei **allein** ist kein Stop-Kriterium. Sie wird zum Stop,
+wenn der verpflichtende `lsof`/`fuser`-Preflight einen Nutzer/Handle zeigt oder
+die normale SQLite-Validierung nach dem Austausch scheitert.
 
 Bei STOP: Writer gestoppt lassen, Beweise sichern, nichts automatisch
 reparieren und anhand Abschnitt 17 entscheiden. Insbesondere weder manuell

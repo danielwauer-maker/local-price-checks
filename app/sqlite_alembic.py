@@ -196,16 +196,19 @@ def _default_backup_path(source: Path) -> Path:
     return source.with_name(f"{source.name}.pre-alembic-{stamp}.bak")
 
 
-def _assert_no_active_wal(source: Path) -> None:
+def _assert_no_noncheckpointed_wal(source: Path) -> None:
+    """Fail closed on WAL content; SHM alone is not proof of an active user.
+
+    Open-handle detection is deliberately an operator precondition: Python has
+    no portable, reliable way to enumerate other processes using a SQLite
+    database. A stale SHM WAL-index can remain after a clean shutdown and must
+    neither block preparation by itself nor be deleted automatically.
+    """
+
     wal_path = Path(f"{source}-wal")
     if wal_path.exists() and wal_path.stat().st_size:
         raise MigrationSafetyError(
             f"Active/non-checkpointed WAL detected at {wal_path}; stop the application and checkpoint SQLite first"
-        )
-    shm_path = Path(f"{source}-shm")
-    if shm_path.exists() and shm_path.stat().st_size:
-        raise MigrationSafetyError(
-            f"Active SQLite shared-memory file detected at {shm_path}; stop every database user before continuing"
         )
 
 
@@ -241,7 +244,7 @@ def prepare_existing_sqlite_for_alembic(
     source = Path(sqlite_path).expanduser().resolve()
     if not source.is_file():
         raise MigrationSafetyError(f"SQLite database does not exist or is not a file: {source}")
-    _assert_no_active_wal(source)
+    _assert_no_noncheckpointed_wal(source)
     initial_stat = source.stat()
     initial_revision = _validate(source)
     if initial_revision == TARGET_REVISION:
