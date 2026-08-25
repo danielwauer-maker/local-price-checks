@@ -47,6 +47,7 @@ from .client_context import (
 )
 from .config import settings
 from .coverage_service import seed_initial_coverage
+from .postcode_coverage_service import seed_initial_postcode_coverage
 from .media_routes import router as media_router
 from .ux_routes import router as ux_router
 from .prospect_routes import router as prospect_router
@@ -127,6 +128,7 @@ def startup_admin_catalog():
     try:
         seed_admin_catalog(db)
         seed_initial_coverage(db)
+        seed_initial_postcode_coverage(db)
         backfill_explicit_references(db)
     finally:
         db.close()
