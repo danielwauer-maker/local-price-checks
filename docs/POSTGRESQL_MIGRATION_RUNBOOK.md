@@ -24,10 +24,14 @@ isolierten Staging-Umgebung erfolgreich geprobt werden.
 2. Genauen SQLite-Pfad, freien Speicher, PostgreSQL-Version und Zugang prüfen.
 3. `PRAGMA integrity_check;` und `PRAGMA foreign_key_check;` auf einer Kopie
    ausführen. Alle Befunde vor der Migration klären.
-4. Anwendungstabelle gegen die Baseline vergleichen. Eine vorhandene SQLite-DB
-   darf nur gestempelt werden, wenn ihre Tabellen, Spalten, Indizes und
-   Constraints der Baseline entsprechen. `alembic stamp 20260825_01` erzeugt
-   kein Schema und ist kein Reparaturwerkzeug.
+4. Der Dry Run führt den automatisierten, strikten Schema-Preflight gegen die
+   vollständige SQLAlchemy-/Alembic-Baseline aus. Er vergleicht die exakte
+   Tabellen- und Spaltenmenge, normalisierte Typen/Längen, Nullable, Primary und
+   Foreign Keys, Unique Constraints sowie Indexsignaturen auf Quelle und Ziel.
+   Fehlende oder zusätzliche Legacy-Strukturen sind ein Safety-Fehler und
+   müssen vor dem Stamping bewusst migriert oder verworfen werden. Eine
+   vorhandene SQLite-DB darf nur bei bestandenem Preflight gestempelt werden.
+   `alembic stamp 20260825_01` erzeugt kein Schema und ist kein Reparaturwerkzeug.
 5. Staging-Probe mit demselben Snapshot durchführen: Baseline, Dry Run,
    Transfer, Verifikation und API-Smoke-Tests.
 6. Verantwortliche Person, Wartungsfenster, Abbruchzeitpunkt und Rollback-
@@ -104,10 +108,12 @@ python scripts/migrate_sqlite_to_postgres.py \
   --postgres-url "$DATABASE_URL"
 ```
 
-Der Kopierer verlangt alle aktuellen Anwendungstabellen auf Quelle und Ziel,
-kopiert in Foreign-Key-Reihenfolge, erhält explizite Primary Keys und NULLs,
-arbeitet in einer PostgreSQL-Transaktion und setzt anschließend alle erkannten
-Serial-Sequences auf `MAX(id)`. Bei einem Fehler wird die Zieltransaktion
+Der Kopierer verlangt den exakten aktuellen Baseline-Schemaabgleich auf Quelle
+und Ziel; zusätzliche Legacy-Tabellen oder -Spalten werden nie ignoriert. Dry
+Run und echter Transfer nutzen denselben Preflight. Danach kopiert er in
+Foreign-Key-Reihenfolge, erhält explizite Primary Keys und NULLs, arbeitet in
+einer PostgreSQL-Transaktion und setzt anschließend alle erkannten Serial-
+Sequences auf `MAX(id)`. Bei einem Fehler wird die Zieltransaktion
 zurückgerollt; die SQLite-Quelle wird read-only verwendet und nie gelöscht.
 
 ## 7. Verifikation
@@ -118,8 +124,11 @@ python scripts/verify_postgres_migration.py \
   --postgres-url "$DATABASE_URL"
 ```
 
-Nur `RESULT: PASS` ist akzeptabel. Geprüft werden Tabellen- und Row-Counts,
-Max-IDs, Sequence-Stände, sämtliche modellierten Foreign Keys sowie explizit:
+Nur `RESULT: PASS` ist akzeptabel. Die Verifikation wiederholt zunächst den
+strikten Schemaabgleich auf SQLite und PostgreSQL und meldet jede Drift als
+`schema:source` oder `schema:target` FAIL. Danach werden Tabellen- und Row-
+Counts, Primary-Key-Werte, Max-IDs, Sequence-Stände, sämtliche modellierten
+Foreign Keys sowie explizit geprüft:
 
 - `UserProfile -> UserClient`
 - `AccountIdentity -> UserProfile`

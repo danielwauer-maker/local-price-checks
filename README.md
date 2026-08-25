@@ -82,6 +82,12 @@ python scripts/migrate_sqlite_to_postgres.py --sqlite-path /path/to/local_price_
 python scripts/verify_postgres_migration.py --sqlite-path /path/to/local_price_checks.sqlite3 --postgres-url "$DATABASE_URL"
 ```
 
+Dry Run, Transfer und Verifikation führen automatisch denselben strikten
+Schema-Preflight gegen die aktuelle SQLAlchemy-/Alembic-Baseline aus. Fehlende
+oder zusätzliche Tabellen/Spalten sowie Drift bei Typen, Nullable, Primary/
+Foreign Keys, Unique Constraints oder Indizes führen zu einem sicheren Abbruch
+bzw. `RESULT: FAIL`; Legacy-Daten werden nicht stillschweigend ignoriert.
+
 Alembic-Kommandos: `python -m alembic current`, `python -m alembic upgrade head`
 und nach sorgfältigem Schemaabgleich einer bereits bestehenden SQLite-DB
 `python -m alembic stamp 20260825_01`. Backup, Restore, Stamping, Cutover und

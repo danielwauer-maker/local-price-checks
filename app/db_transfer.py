@@ -6,7 +6,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from sqlalchemy import Connection, Engine, MetaData, Table, create_engine, func, inspect, select, text
+from sqlalchemy import (
+    Boolean,
+    Connection,
+    Date,
+    DateTime,
+    Engine,
+    Float,
+    Integer,
+    LargeBinary,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    func,
+    inspect,
+    select,
+    text,
+)
 from sqlalchemy.engine import URL, make_url
 
 from .model_registry import metadata as application_metadata
@@ -88,22 +107,139 @@ def _application_table_names() -> list[str]:
     return [table.name for table in application_metadata().sorted_tables]
 
 
-def _ensure_schema(source: Connection, target: Connection) -> None:
-    expected = set(_application_table_names())
-    source_tables = set(inspect(source).get_table_names())
-    target_tables = set(inspect(target).get_table_names())
-    missing_source = expected - source_tables
-    missing_target = expected - target_tables
-    unexpected_target = target_tables - expected - {ALEMBIC_TABLE}
-    if missing_source:
-        raise MigrationSafetyError(f"SQLite source is missing current application tables: {sorted(missing_source)}")
-    if missing_target:
-        raise MigrationSafetyError(
-            "PostgreSQL target schema is incomplete; run 'alembic upgrade head' first. "
-            f"Missing: {sorted(missing_target)}"
+def _type_signature(column_type: Any) -> tuple[str, int | None]:
+    """Normalize SQLAlchemy-reflected types across SQLite and PostgreSQL."""
+
+    if isinstance(column_type, Boolean):
+        return ("boolean", None)
+    if isinstance(column_type, DateTime):
+        return ("datetime", None)
+    if isinstance(column_type, Date):
+        return ("date", None)
+    if isinstance(column_type, Integer):
+        return ("integer", None)
+    if isinstance(column_type, Float):
+        return ("float", None)
+    if isinstance(column_type, LargeBinary):
+        return ("binary", getattr(column_type, "length", None))
+    if isinstance(column_type, Text):
+        return ("text", None)
+    if isinstance(column_type, String):
+        return ("string", column_type.length)
+    return (column_type.__class__.__name__.lower(), getattr(column_type, "length", None))
+
+
+def _foreign_key_signatures_from_metadata(table: Table) -> set[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+    return {
+        (
+            tuple(element.parent.name for element in constraint.elements),
+            constraint.elements[0].column.table.name,
+            tuple(element.column.name for element in constraint.elements),
         )
-    if unexpected_target:
-        raise MigrationSafetyError(f"PostgreSQL target contains unexpected tables: {sorted(unexpected_target)}")
+        for constraint in table.foreign_key_constraints
+    }
+
+
+def _foreign_key_signatures_from_inspector(rows: list[dict[str, Any]]) -> set[tuple[tuple[str, ...], str, tuple[str, ...]]]:
+    return {
+        (tuple(row["constrained_columns"]), row["referred_table"], tuple(row["referred_columns"]))
+        for row in rows
+    }
+
+
+def _unique_signatures_from_metadata(table: Table) -> set[tuple[str, ...]]:
+    return {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+
+def _unique_signatures_from_inspector(rows: list[dict[str, Any]]) -> set[tuple[str, ...]]:
+    return {tuple(row["column_names"]) for row in rows}
+
+
+def _index_signatures_from_metadata(table: Table) -> set[tuple[tuple[str, ...], bool]]:
+    return {
+        (tuple(column.name for column in index.columns), bool(index.unique))
+        for index in table.indexes
+    }
+
+
+def _index_signatures_from_inspector(rows: list[dict[str, Any]]) -> set[tuple[tuple[str, ...], bool]]:
+    return {
+        (tuple(row["column_names"]), bool(row["unique"]))
+        for row in rows
+        if not row.get("duplicates_constraint")
+    }
+
+
+def schema_differences(connection: Connection) -> list[str]:
+    """Return semantic schema drift against the complete application metadata."""
+
+    inspector = inspect(connection)
+    expected_metadata = application_metadata()
+    expected_names = set(expected_metadata.tables)
+    actual_names = set(inspector.get_table_names())
+    differences: list[str] = []
+    missing = expected_names - actual_names
+    unexpected = actual_names - expected_names - {ALEMBIC_TABLE}
+    if missing:
+        differences.append(f"missing tables={sorted(missing)}")
+    if unexpected:
+        differences.append(f"unexpected tables={sorted(unexpected)}")
+
+    for table_name in sorted(expected_names & actual_names):
+        expected_table = expected_metadata.tables[table_name]
+        actual_columns = {row["name"]: row for row in inspector.get_columns(table_name)}
+        expected_columns = {column.name: column for column in expected_table.columns}
+        missing_columns = set(expected_columns) - set(actual_columns)
+        unexpected_columns = set(actual_columns) - set(expected_columns)
+        if missing_columns:
+            differences.append(f"{table_name}: missing columns={sorted(missing_columns)}")
+        if unexpected_columns:
+            differences.append(f"{table_name}: unexpected columns={sorted(unexpected_columns)}")
+        for column_name in sorted(set(expected_columns) & set(actual_columns)):
+            expected_column = expected_columns[column_name]
+            actual_column = actual_columns[column_name]
+            expected_type = _type_signature(expected_column.type)
+            actual_type = _type_signature(actual_column["type"])
+            if expected_type != actual_type:
+                differences.append(f"{table_name}.{column_name}: type expected={expected_type} actual={actual_type}")
+            if bool(expected_column.nullable) != bool(actual_column["nullable"]):
+                differences.append(
+                    f"{table_name}.{column_name}: nullable expected={expected_column.nullable} actual={actual_column['nullable']}"
+                )
+
+        expected_pk = tuple(column.name for column in expected_table.primary_key.columns)
+        actual_pk = tuple(inspector.get_pk_constraint(table_name).get("constrained_columns") or ())
+        if expected_pk != actual_pk:
+            differences.append(f"{table_name}: primary key expected={expected_pk} actual={actual_pk}")
+
+        expected_fks = _foreign_key_signatures_from_metadata(expected_table)
+        actual_fks = _foreign_key_signatures_from_inspector(inspector.get_foreign_keys(table_name))
+        if expected_fks != actual_fks:
+            differences.append(f"{table_name}: foreign keys expected={sorted(expected_fks)!r} actual={sorted(actual_fks)!r}")
+
+        expected_uniques = _unique_signatures_from_metadata(expected_table)
+        actual_uniques = _unique_signatures_from_inspector(inspector.get_unique_constraints(table_name))
+        if expected_uniques != actual_uniques:
+            differences.append(f"{table_name}: unique constraints expected={sorted(expected_uniques)!r} actual={sorted(actual_uniques)!r}")
+
+        expected_indexes = _index_signatures_from_metadata(expected_table)
+        actual_indexes = _index_signatures_from_inspector(inspector.get_indexes(table_name))
+        if expected_indexes != actual_indexes:
+            differences.append(f"{table_name}: indexes expected={sorted(expected_indexes)!r} actual={sorted(actual_indexes)!r}")
+    return differences
+
+
+def _ensure_schema(source: Connection, target: Connection) -> None:
+    source_differences = schema_differences(source)
+    target_differences = schema_differences(target)
+    if source_differences:
+        raise MigrationSafetyError("SQLite source schema differs from the current baseline: " + "; ".join(source_differences))
+    if target_differences:
+        raise MigrationSafetyError("PostgreSQL target schema differs from the current baseline: " + "; ".join(target_differences))
 
 
 def _row_count(connection: Connection, table: Table) -> int:
@@ -270,7 +406,26 @@ def verify_migration(sqlite_path: str | Path, postgres_url_value: str) -> Verifi
     target = target_engine(postgres_url_value)
     try:
         with source.connect() as source_connection, target.connect() as target_connection:
-            _ensure_source_integrity(source_connection)
+            try:
+                _ensure_source_integrity(source_connection)
+            except MigrationSafetyError as exc:
+                report.add("source-integrity", False, str(exc))
+                return report
+            report.add("source-integrity", True, "SQLite integrity_check and foreign_key_check passed")
+            source_schema_differences = schema_differences(source_connection)
+            target_schema_differences = schema_differences(target_connection)
+            report.add(
+                "schema:source",
+                not source_schema_differences,
+                "matches baseline" if not source_schema_differences else "; ".join(source_schema_differences),
+            )
+            report.add(
+                "schema:target",
+                not target_schema_differences,
+                "matches baseline" if not target_schema_differences else "; ".join(target_schema_differences),
+            )
+            if source_schema_differences or target_schema_differences:
+                return report
             expected = set(_application_table_names())
             source_names = set(inspect(source_connection).get_table_names()) & expected
             target_names = set(inspect(target_connection).get_table_names()) & expected

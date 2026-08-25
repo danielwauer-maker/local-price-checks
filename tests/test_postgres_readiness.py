@@ -170,6 +170,42 @@ def test_migration_refuses_nonempty_target(tmp_path: Path, postgres_database: st
 
 
 @pytest.mark.postgres
+def test_schema_preflight_rejects_source_and_target_drift(tmp_path: Path, postgres_database: str):
+    mutations = {
+        "unexpected-column": "ALTER TABLE user_profiles ADD COLUMN legacy_payload TEXT",
+        "missing-column": "ALTER TABLE user_profiles DROP COLUMN city",
+        "unexpected-table": "CREATE TABLE legacy_secrets (id INTEGER PRIMARY KEY, payload TEXT)",
+    }
+    target = create_engine(postgres_database)
+    for label, statement in mutations.items():
+        sqlite_path = tmp_path / f"{label}.sqlite3"
+        _representative_sqlite(sqlite_path)
+        source = create_engine(f"sqlite:///{sqlite_path.as_posix()}")
+        with source.begin() as connection:
+            connection.execute(text(statement))
+        source.dispose()
+
+        with pytest.raises(MigrationSafetyError, match="source schema differs"):
+            migrate_sqlite_to_postgres(sqlite_path, postgres_database, dry_run=True)
+        with pytest.raises(MigrationSafetyError, match="source schema differs"):
+            migrate_sqlite_to_postgres(sqlite_path, postgres_database)
+        with target.connect() as connection:
+            assert connection.execute(select(func.count()).select_from(UserProfile.__table__)).scalar_one() == 0
+        report = verify_migration(sqlite_path, postgres_database)
+        assert not report.passed
+        assert any(name == "schema:source" and not passed for name, passed, _ in report.checks)
+
+    pristine = tmp_path / "pristine.sqlite3"
+    _representative_sqlite(pristine)
+    with target.begin() as connection:
+        connection.execute(text("ALTER TABLE user_profiles ADD COLUMN unexpected_target_data TEXT"))
+    target.dispose()
+    report = verify_migration(pristine, postgres_database)
+    assert not report.passed
+    assert any(name == "schema:target" and not passed for name, passed, _ in report.checks)
+
+
+@pytest.mark.postgres
 def test_verification_detects_intentional_mismatch(tmp_path: Path, postgres_database: str):
     sqlite_path = tmp_path / "source.sqlite3"
     _representative_sqlite(sqlite_path)
