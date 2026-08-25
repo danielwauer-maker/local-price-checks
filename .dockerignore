@@ -6,6 +6,10 @@
 **/*.py[cod]
 **/node_modules
 data
+app/data
+tmp
+ToDos.txt
+frontend-lovable-source
 .env
 *.sqlite
 *.sqlite3

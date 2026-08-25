@@ -22,6 +22,9 @@ browser_profiles/
 *.pem
 *.pdf
 *.zip
+*.dump
+*.backup
+backups/
 support*/
 *.log
 .DS_Store

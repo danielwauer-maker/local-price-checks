@@ -47,6 +47,46 @@ cp .env.example .env
 docker compose up --build
 ```
 
+SQLite bleibt der bequeme Standard. Die zentrale SQLAlchemy-URL wird über
+`DATABASE_URL` gesetzt:
+
+```bash
+# SQLite
+DATABASE_URL=sqlite:////app/data/local_price_checks.sqlite3
+
+# lokales PostgreSQL (psycopg 3)
+DATABASE_URL=postgresql+psycopg://lokero:lokero_dev_only@localhost:5432/lokero
+AUTO_CREATE_SCHEMA=false
+```
+
+Das optionale PostgreSQL-Profil verändert den normalen SQLite-Compose-Start
+nicht:
+
+```bash
+docker compose --profile postgres up -d postgres
+export DATABASE_URL=postgresql+psycopg://lokero:lokero_dev_only@localhost:5432/lokero
+export AUTO_CREATE_SCHEMA=false
+python -m alembic upgrade head
+```
+
+Läuft auch das Backend in Compose, lautet der Hostname in `DATABASE_URL`
+`postgres` statt `localhost`; danach `docker compose --profile postgres up
+--build` verwenden.
+
+Für eine spätere, geplante Datenübernahme (nicht auf Produktion ausführen, bevor
+das Runbook vollständig abgearbeitet wurde):
+
+```bash
+python scripts/migrate_sqlite_to_postgres.py --sqlite-path /path/to/local_price_checks.sqlite3 --postgres-url "$DATABASE_URL" --dry-run
+python scripts/migrate_sqlite_to_postgres.py --sqlite-path /path/to/local_price_checks.sqlite3 --postgres-url "$DATABASE_URL"
+python scripts/verify_postgres_migration.py --sqlite-path /path/to/local_price_checks.sqlite3 --postgres-url "$DATABASE_URL"
+```
+
+Alembic-Kommandos: `python -m alembic current`, `python -m alembic upgrade head`
+und nach sorgfältigem Schemaabgleich einer bereits bestehenden SQLite-DB
+`python -m alembic stamp 20260825_01`. Backup, Restore, Stamping, Cutover und
+Rollback sind in **`docs/POSTGRESQL_MIGRATION_RUNBOOK.md`** beschrieben.
+
 ## Ohne Docker
 
 ```bash
@@ -66,4 +106,4 @@ python -m pytest -q
 
 Nicht versioniert werden: produktive SQLite-Datenbanken, Prospekt-PDFs, Support-Exports, Cookies/Browserprofile, `.env`, lokale Zertifikate und Logs.
 
-Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`.
+Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.

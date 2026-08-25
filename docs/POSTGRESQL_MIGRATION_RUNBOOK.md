@@ -1,0 +1,195 @@
+# PostgreSQL migration runbook
+
+Dieses Runbook bereitet einen späteren, bewusst freigegebenen Produktions-
+Cutover vor. Der Readiness-Sprint selbst migriert keine Produktion. Alle
+Befehle müssen zuerst mit einem aktuellen Produktions-Snapshot in einer
+isolierten Staging-Umgebung erfolgreich geprobt werden.
+
+## Konfiguration und Grundsätze
+
+- SQLite: `sqlite:////absolute/path/local_price_checks.sqlite3`
+- PostgreSQL: `postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE`
+- Secrets gehören in die Deployment-Secret-Verwaltung, nie ins Repository.
+- Auf PostgreSQL ist `AUTO_CREATE_SCHEMA=false`; Alembic besitzt das Schema.
+- `Base.metadata.create_all()` bleibt übergangsweise nur für lokale/legacy
+  SQLite-Starts aktiv. Es verändert keine vorhandenen Spalten und ersetzt
+  Alembic nicht.
+- Die Baseline `20260825_01` enthält alle 42 Tabellen aus
+  `app.model_registry`. Neue Modelle müssen dort registriert sein und eine neue
+  Alembic-Revision erhalten.
+
+## 1. Preflight
+
+1. Change-Freeze für Schema und schreibende Releases vereinbaren.
+2. Genauen SQLite-Pfad, freien Speicher, PostgreSQL-Version und Zugang prüfen.
+3. `PRAGMA integrity_check;` und `PRAGMA foreign_key_check;` auf einer Kopie
+   ausführen. Alle Befunde vor der Migration klären.
+4. Anwendungstabelle gegen die Baseline vergleichen. Eine vorhandene SQLite-DB
+   darf nur gestempelt werden, wenn ihre Tabellen, Spalten, Indizes und
+   Constraints der Baseline entsprechen. `alembic stamp 20260825_01` erzeugt
+   kein Schema und ist kein Reparaturwerkzeug.
+5. Staging-Probe mit demselben Snapshot durchführen: Baseline, Dry Run,
+   Transfer, Verifikation und API-Smoke-Tests.
+6. Verantwortliche Person, Wartungsfenster, Abbruchzeitpunkt und Rollback-
+   Entscheider festlegen.
+
+## 2. Maintenance Window und Schreibstopp
+
+1. Wartungsseite aktivieren oder alle schreibenden API-/Worker-/Scheduler-
+   Instanzen stoppen. `SCHEDULER_ENABLED=false` allein genügt nicht.
+2. Sicherstellen, dass keine offenen Writer mehr existieren.
+3. Erst nach dem bestätigten Schreibstopp den finalen SQLite-Snapshot erzeugen.
+4. Bis zur Cutover-Entscheidung SQLite nicht wieder schreibbar starten.
+
+## 3. SQLite-Backup
+
+Der Helper verwendet die SQLite-Backup-API, überschreibt keine Datei und prüft
+die Sicherung mit `integrity_check`:
+
+```bash
+python scripts/backup_database.py sqlite \
+  --source /srv/lokero/data/local_price_checks.sqlite3 \
+  --output /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sqlite3
+sha256sum /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sqlite3 > /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sha256
+```
+
+Original, Backup und Prüfsumme getrennt aufbewahren. WAL-/SHM-Dateien niemals
+isoliert kopieren; der Helper erzeugt ein konsistentes Einzeldatei-Backup.
+
+## 4. PostgreSQL-Backup und leeres Ziel
+
+Wenn die Zielinstanz bereits existiert, vor Änderungen sichern:
+
+```bash
+python scripts/backup_database.py pg-dump \
+  --postgres-url "$DATABASE_URL" \
+  --output /secure-backups/lokero-postgres-before-YYYYMMDD-HHMM.dump
+```
+
+Für die eigentliche Migration eine neue, leere Datenbank bevorzugen. Der
+Migration-CLI verweigert standardmäßig jedes Ziel mit Anwendungsdaten.
+`--allow-nonempty` ist nur für einen separat geprüften Sonderfall vorgesehen;
+es überschreibt keine Zeilen und Constraint-Konflikte brechen die gesamte
+Transaktion ab.
+
+## 5. Schema erstellen
+
+```bash
+export DATABASE_URL='postgresql+psycopg://...'
+export AUTO_CREATE_SCHEMA=false
+python -m alembic upgrade head
+python -m alembic current
+```
+
+Auf einer bereits bestehenden, verifizierten SQLite-Installation wird die
+Baseline ausschließlich nach Backup und exaktem Schemaabgleich gestempelt:
+
+```bash
+export DATABASE_URL='sqlite:////srv/lokero/data/local_price_checks.sqlite3'
+python -m alembic stamp 20260825_01
+```
+
+Nicht `upgrade` auf eine volle, unstamped Baseline-Datenbank anwenden: die
+Baseline versucht Tabellen zu erzeugen und muss dann fehlschlagen.
+
+## 6. Dry Run und Datenmigration
+
+```bash
+python scripts/migrate_sqlite_to_postgres.py \
+  --sqlite-path /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sqlite3 \
+  --postgres-url "$DATABASE_URL" --dry-run
+
+python scripts/migrate_sqlite_to_postgres.py \
+  --sqlite-path /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sqlite3 \
+  --postgres-url "$DATABASE_URL"
+```
+
+Der Kopierer verlangt alle aktuellen Anwendungstabellen auf Quelle und Ziel,
+kopiert in Foreign-Key-Reihenfolge, erhält explizite Primary Keys und NULLs,
+arbeitet in einer PostgreSQL-Transaktion und setzt anschließend alle erkannten
+Serial-Sequences auf `MAX(id)`. Bei einem Fehler wird die Zieltransaktion
+zurückgerollt; die SQLite-Quelle wird read-only verwendet und nie gelöscht.
+
+## 7. Verifikation
+
+```bash
+python scripts/verify_postgres_migration.py \
+  --sqlite-path /secure-backups/lokero-pre-pg-YYYYMMDD-HHMM.sqlite3 \
+  --postgres-url "$DATABASE_URL"
+```
+
+Nur `RESULT: PASS` ist akzeptabel. Geprüft werden Tabellen- und Row-Counts,
+Max-IDs, Sequence-Stände, sämtliche modellierten Foreign Keys sowie explizit:
+
+- `UserProfile -> UserClient`
+- `AccountIdentity -> UserProfile`
+- `AccountClientLink -> AccountIdentity/UserClient`
+- Favoriten -> Profil/Markt/Produkt
+- Einkaufsliste -> Profil/Produkt
+
+Zusätzlich stichprobenartig bekannte anonyme und account-verknüpfte Clients mit
+ihren exakten IDs, PLZ/Radius, Favoriten und Shopping-Items prüfen. Kein
+zusätzliches `UserProfile` darf entstanden sein.
+
+## 8. Cutover und Smoke Tests
+
+1. Erst nach vollständigem PASS das Deployment-Secret `DATABASE_URL` auf die
+   PostgreSQL-URL setzen; `AUTO_CREATE_SCHEMA=false` bestätigen.
+2. Genau eine App-Instanz ohne Scheduler starten und `/health` prüfen.
+3. Smoke-Tests: anonymer bestehender Client, neuer anonymer Client,
+   Account-Linking über zwei Geräte, Profil/PLZ/Radius, Markt- und Produkt-
+   Favoriten, Einkaufsliste, Lesen aktueller Angebote und Admin-Read-only-
+   Ansichten.
+4. Einen neuen Testdatensatz anlegen und kontrollieren, dass dessen ID größer
+   als die migrierte Max-ID ist.
+5. Danach übrige Instanzen und zuletzt Scheduler/Collector aktivieren.
+
+## 9. Rollback-Kriterien
+
+Sofort zurückrollen bei FAIL der Verifikation, fehlenden/anders zugeordneten
+Nutzerdaten, Constraint-/Sequence-Fehlern, nicht erklärbaren API-Fehlern oder
+überschrittenem Wartungsfenster.
+
+Solange PostgreSQL noch keine neuen Produktionsschreibzugriffe angenommen hat:
+
+1. PostgreSQL-App stoppen.
+2. `DATABASE_URL` auf den unveränderten finalen SQLite-Snapshot zurücksetzen.
+3. SQLite-App und anschließend Worker kontrolliert starten.
+4. Smoke-Tests durchführen und Vorfall dokumentieren.
+
+Nach neuen Schreibzugriffen auf PostgreSQL ist ein einfacher Rückwechsel zur
+alten SQLite-Datei **kein verlustfreier Rollback**. Dann würden neue/aktualisierte
+Profile, Favoriten und Listen fehlen. In diesem Fall Schreibzugriffe erneut
+stoppen und entweder PostgreSQL vorwärts reparieren oder einen separat
+entwickelten, geprüften Reverse-Transfer/Reconciliation-Plan ausführen. Ohne
+einen solchen Plan nicht auf SQLite zurückschalten.
+
+Ein PostgreSQL-Restore in eine leere, isolierte Datenbank erfolgt zum Beispiel:
+
+```bash
+python scripts/backup_database.py pg-restore \
+  --postgres-url 'postgresql+psycopg://.../empty_restore_target' \
+  --input /secure-backups/lokero-postgres-before-YYYYMMDD-HHMM.dump
+```
+
+## 10. Nacharbeiten
+
+1. Direkt nach stabilem Cutover `pg_dump` erstellen, verschlüsselt offsite
+   ablegen und einen isolierten Restore-Test durchführen.
+2. Monitoring für DB-Verbindungen, Fehler, Storage und Backup-Jobs aktivieren.
+3. SQLite-Original und finalen Snapshot mindestens über das vereinbarte
+   Rollback-/Release-Fenster unverändert und read-only behalten.
+4. Die alte SQLite-Datei erst archivieren, wenn PostgreSQL stabil ist, Backups
+   wiederholt erfolgreich waren, ein Restore getestet wurde und Product/Tech
+   den Ablauf formell freigegeben haben. Archivieren bedeutet nicht löschen;
+   Löschung folgt einer separaten Aufbewahrungsrichtlinie.
+
+## Portabilitätsaudit
+
+Der Anwendungscode verwendet SQLAlchemy-Ausdrücke für Queries, `ILIKE`,
+Booleans, Datum/Zeit und Schemazugriff. Die verbleibenden `PRAGMA`-Anweisungen
+sind bewusst ausschließlich am SQLite-Dialekt registrierte Connection-Härtung
+beziehungsweise Backup-Integritätsprüfungen. `check_same_thread` wird ebenfalls
+nur für SQLite gesetzt. Es gibt im Laufzeit-/Migrationspfad kein `INSERT OR
+REPLACE`, `sqlite_master` oder SQLite-spezifisches Upsert. Datei-Pfade werden nur
+für ausdrücklich angegebene SQLite-Quellen verwendet.

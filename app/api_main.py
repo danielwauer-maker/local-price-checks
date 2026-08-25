@@ -21,7 +21,8 @@ from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
 from .lokero_media_routes import router as lokero_media_router
-from .coverage_models import CoverageRegion  # noqa: F401 - registers additive table before startup create_all
+from . import model_registry as model_registry  # noqa: F401 - registers the complete schema
+from .coverage_models import CoverageRegion  # noqa: F401 - imported for existing route references
 from .client_models import (  # noqa: F401 - registers additive tables before startup create_all
     AccountClientLink,
     AccountIdentity,
