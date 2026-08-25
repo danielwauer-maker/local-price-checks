@@ -5,6 +5,7 @@ import argparse
 from app.db import SessionLocal
 from app.engine_v140.product_cleaning import product_name_issue
 from app.models import FavoriteProduct, MasterProduct, Offer, ProductBarcode, ShoppingItem
+from app.offer_cleanup import delete_offer_graph
 
 
 def main() -> None:
@@ -35,7 +36,8 @@ def main() -> None:
             print("Nothing to delete.")
             return
 
-        deleted_offers = db.query(Offer).filter(Offer.master_product_id.in_(ids)).delete(synchronize_session=False)
+        offer_ids = [row[0] for row in db.query(Offer.id).filter(Offer.master_product_id.in_(ids)).all()]
+        offer_result = delete_offer_graph(db, offer_ids)
         deleted_favorites = db.query(FavoriteProduct).filter(FavoriteProduct.master_product_id.in_(ids)).delete(synchronize_session=False)
         deleted_shopping = db.query(ShoppingItem).filter(ShoppingItem.master_product_id.in_(ids)).delete(synchronize_session=False)
         deleted_barcodes = db.query(ProductBarcode).filter(ProductBarcode.master_product_id.in_(ids)).delete(synchronize_session=False)
@@ -44,7 +46,7 @@ def main() -> None:
 
         print(
             "Deleted: "
-            f"products={deleted_products}, offers={deleted_offers}, favorites={deleted_favorites}, "
+            f"products={deleted_products}, offers={offer_result['offers']}, favorites={deleted_favorites}, "
             f"shopping={deleted_shopping}, barcodes={deleted_barcodes}"
         )
     finally:

@@ -21,6 +21,7 @@ from .models import (
     ShoppingItem,
     Store,
 )
+from .offer_cleanup import delete_offer_graph
 from .prospect_models import (
     OfferProvenance,
     Prospect,
@@ -52,33 +53,6 @@ def _remove_product_media_file(row: MediaAsset) -> None:
             path.unlink(missing_ok=True)
     except Exception:
         pass
-
-
-def _delete_offer_graph(db: Session, offer_ids: list[int]) -> dict[str, int]:
-    if not offer_ids:
-        return {"offers": 0, "provenance": 0, "reviews": 0}
-
-    provenance_ids = [
-        row[0]
-        for row in db.query(OfferProvenance.id)
-        .filter(OfferProvenance.offer_id.in_(offer_ids))
-        .all()
-    ]
-    reviews = 0
-    provenance = 0
-    if provenance_ids:
-        reviews = (
-            db.query(ProspectOfferReview)
-            .filter(ProspectOfferReview.offer_provenance_id.in_(provenance_ids))
-            .delete(synchronize_session=False)
-        )
-        provenance = (
-            db.query(OfferProvenance)
-            .filter(OfferProvenance.id.in_(provenance_ids))
-            .delete(synchronize_session=False)
-        )
-    offers = db.query(Offer).filter(Offer.id.in_(offer_ids)).delete(synchronize_session=False)
-    return {"offers": offers, "provenance": provenance, "reviews": reviews}
 
 
 def _prune_orphan_products(db: Session, candidate_ids: set[int]) -> int:
@@ -114,7 +88,7 @@ def reset_store_offers(db: Session, store: Store) -> dict[str, int]:
     rows = db.query(Offer.id, Offer.master_product_id).filter(Offer.store_id == store.id).all()
     offer_ids = [row[0] for row in rows]
     product_ids = {row[1] for row in rows}
-    result = _delete_offer_graph(db, offer_ids)
+    result = delete_offer_graph(db, offer_ids)
     result["quality_snapshots"] = (
         db.query(CollectionQualitySnapshot)
         .filter(CollectionQualitySnapshot.store_id == store.id)
@@ -140,7 +114,7 @@ def reset_store_qa(db: Session, store: Store) -> dict[str, int]:
     offer_ids = [row[0] for row in rows]
     product_ids = {row[1] for row in rows}
 
-    result = _delete_offer_graph(db, offer_ids)
+    result = delete_offer_graph(db, offer_ids)
     result["quality_snapshots"] = (
         db.query(CollectionQualitySnapshot)
         .filter(CollectionQualitySnapshot.store_id == store.id)
@@ -205,10 +179,8 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
         "archives": db.query(ProspectArchive).count(),
     }
 
-    db.query(ProspectOfferReview).delete(synchronize_session=False)
-    db.query(OfferProvenance).delete(synchronize_session=False)
+    delete_offer_graph(db, [row[0] for row in db.query(Offer.id).all()])
     db.query(ProspectMissingItem).delete(synchronize_session=False)
-    db.query(Offer).delete(synchronize_session=False)
     db.query(CollectionQualitySnapshot).delete(synchronize_session=False)
     db.query(CollectionRunProgress).delete(synchronize_session=False)
     db.query(CollectionRun).delete(synchronize_session=False)

@@ -29,7 +29,11 @@ templates = Jinja2Templates(directory=BASE / "templates")
 
 @app.on_event("startup")
 def startup():
-    Base.metadata.create_all(engine)
+    # Transitional compatibility for existing SQLite installations. PostgreSQL
+    # schemas are managed explicitly by Alembic unless an operator opts in.
+    if settings.auto_create_schema:
+        import app.model_registry  # noqa: F401 - complete metadata before create_all
+        Base.metadata.create_all(engine)
     from .db import SessionLocal
     db = SessionLocal()
     try:

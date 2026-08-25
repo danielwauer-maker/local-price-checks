@@ -4,7 +4,10 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.engine import URL, make_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_DATABASE_URL = f"sqlite:///{BASE_DIR / 'data' / 'local_price_checks.sqlite3'}"
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -22,7 +25,11 @@ class Settings:
     data_dir: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
     database_url: str = os.getenv(
         "DATABASE_URL",
-        f"sqlite:///{BASE_DIR / 'data' / 'local_price_checks.sqlite3'}",
+        DEFAULT_DATABASE_URL,
+    )
+    auto_create_schema: bool = _bool_env(
+        "AUTO_CREATE_SCHEMA",
+        os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL).startswith("sqlite"),
     )
     default_radius_km: int = int(os.getenv("DEFAULT_RADIUS_KM", "15"))
     local_date_override: str = os.getenv("LOCAL_DATE_OVERRIDE", "").strip()
@@ -43,3 +50,18 @@ class Settings:
 
 settings = Settings()
 settings.data_dir.mkdir(parents=True, exist_ok=True)
+
+
+def database_url(value: str | None = None) -> URL:
+    """Parse and validate the configured SQLAlchemy database URL.
+
+    Keeping this in one place gives the application, Alembic and maintenance
+    tools identical handling without ever logging credentials.
+    """
+
+    url = make_url(value or settings.database_url)
+    if url.get_backend_name() not in {"sqlite", "postgresql"}:
+        raise ValueError("DATABASE_URL must use SQLite or PostgreSQL")
+    if url.get_backend_name() == "postgresql" and url.drivername != "postgresql+psycopg":
+        raise ValueError("PostgreSQL DATABASE_URL must use postgresql+psycopg://")
+    return url

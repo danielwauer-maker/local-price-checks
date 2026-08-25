@@ -18,6 +18,33 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m pytest -q
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: lokero
+          POSTGRES_USER: lokero
+          POSTGRES_PASSWORD: lokero_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lokero -d lokero"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PYTHONPATH: .
+      POSTGRES_TEST_URL: postgresql+psycopg://lokero:lokero_ci_only@127.0.0.1:5432/lokero
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tests/test_postgres_readiness.py -m postgres
   docker:
     runs-on: ubuntu-latest
     steps:

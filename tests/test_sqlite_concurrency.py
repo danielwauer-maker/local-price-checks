@@ -15,11 +15,7 @@ def test_sqlite_connections_have_concurrency_pragmas():
         journal_mode = connection.execute(text("PRAGMA journal_mode")).scalar_one()
 
     assert busy_timeout >= 30000
-    # Foreign-key enforcement is deliberately not enabled by the concurrency
-    # hook. Enabling it changes schema/migration behavior and must be introduced
-    # as a separate, explicit database-migration change once all referenced
-    # tables are guaranteed to exist during setup and teardown.
-    assert foreign_keys == 0
+    assert foreign_keys == 1
     # NORMAL is 1 in SQLite. The assertion intentionally permits FULL (2) if a
     # platform/database policy has strengthened durability after connection.
     assert synchronous in {1, 2}
