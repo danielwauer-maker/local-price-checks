@@ -1,4 +1,11 @@
-from app.admin_learning import apply_product_correction, resolve_product_alias
+import pytest
+
+from app.admin_learning import (
+    apply_manual_category_correction,
+    apply_product_correction,
+    product_correction_history,
+    resolve_product_alias,
+)
 from app.admin_quality import build_quality_report
 from app.admin_seed import seed_admin_catalog
 from app.db import Base, SessionLocal, engine
@@ -42,6 +49,7 @@ def test_product_correction_creates_learning_alias_and_locked_metadata():
         package_size="500 g",
         category_id=category.id,
         notes="manuell geprüft",
+        actor="category-admin",
     )
     db.commit()
 
@@ -56,7 +64,74 @@ def test_product_correction_creates_learning_alias_and_locked_metadata():
     assert meta.category_id == category.id
     assert alias.master_product_id == product.id
     assert resolve_product_alias(db, key).id == product.id
-    assert db.query(AdminAuditLog).filter(AdminAuditLog.entity_id == str(product.id)).count() >= 1
+
+    history = product_correction_history(db, product.id)
+    assert history
+    assert history[0].actor == "category-admin"
+    assert "category:" in (history[0].details or "")
+    assert "category_locked:" in (history[0].details or "")
+    db.close()
+
+
+def test_manual_category_correction_locks_and_can_be_cleared_without_touching_name():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    seed_admin_catalog(db)
+    key = "manual-category-only-product"
+    product = db.query(MasterProduct).filter_by(normalized_key=key).first()
+    if not product:
+        product = MasterProduct(name="Milch-Schnitte", brand="Kinder", normalized_key=key)
+        db.add(product)
+        db.commit()
+        db.refresh(product)
+
+    category = db.query(ProductCategory).filter_by(slug="gebaeck").first()
+    assert category is not None
+    original_name = product.name
+    original_brand = product.brand
+
+    meta = apply_manual_category_correction(
+        db,
+        product,
+        category_id=category.id,
+        notes="Produkttyp manuell geprüft",
+        actor="admin-reviewer",
+    )
+    db.commit()
+
+    assert product.name == original_name
+    assert product.brand == original_brand
+    assert meta.category_id == category.id
+    assert meta.category_locked is True
+    assert meta.name_locked is False
+    assert resolve_product_alias(db, key).id == product.id
+
+    history = product_correction_history(db, product.id)
+    assert history[0].action == "product_category_corrected"
+    assert history[0].actor == "admin-reviewer"
+    assert "Gebäck" in (history[0].details or "")
+
+    meta = apply_manual_category_correction(db, product, category_id=None, actor="admin-reviewer")
+    db.commit()
+    assert meta.category_id is None
+    assert meta.category_locked is False
+    db.close()
+
+
+def test_manual_category_correction_rejects_unknown_category():
+    Base.metadata.create_all(engine)
+    db = SessionLocal()
+    key = "manual-category-invalid"
+    product = db.query(MasterProduct).filter_by(normalized_key=key).first()
+    if not product:
+        product = MasterProduct(name="Testprodukt", normalized_key=key)
+        db.add(product)
+        db.commit()
+        db.refresh(product)
+
+    with pytest.raises(ValueError, match="Unknown product category"):
+        apply_manual_category_correction(db, product, category_id=999999)
+    db.rollback()
     db.close()
 
 
