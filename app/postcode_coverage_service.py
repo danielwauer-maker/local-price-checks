@@ -3,15 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from hashlib import sha256
 import re
+import unicodedata
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
+from .config import settings
 from .coverage_service import normalize_retailer
 from .geo import haversine_km
 from .models import Store
+from .postcode_geometry import seed_bundled_postcode_geometries
 
 
 INITIAL_B2_POSTCODES: tuple[str, ...] = (
@@ -24,6 +27,16 @@ INITIAL_B2_POSTCODES: tuple[str, ...] = (
     "56316",
     "57610",
 )
+INITIAL_B2_POSTCODE_CITIES = {
+    "65618": "Selters (Taunus)",
+    "65611": "Brechen",
+    "65606": "Villmar",
+    "57614": "Steimel / Oberdreis",
+    "56305": "Puderbach",
+    "56269": "Dierdorf",
+    "56316": "Raubach",
+    "57610": "Altenkirchen (Westerwald)",
+}
 
 _POSTCODE_RE = re.compile(r"^\d{5}$")
 
@@ -34,10 +47,18 @@ def seed_initial_postcode_coverage(db: Session) -> None:
     for postal_code in INITIAL_B2_POSTCODES:
         row = db.query(CoveragePostalCode).filter_by(postal_code=postal_code).first()
         if row is None:
-            db.add(CoveragePostalCode(postal_code=postal_code, enabled=True))
+            db.add(CoveragePostalCode(
+                postal_code=postal_code,
+                city=INITIAL_B2_POSTCODE_CITIES[postal_code],
+                enabled=True,
+            ))
+            changed = True
+        elif not row.city:
+            row.city = INITIAL_B2_POSTCODE_CITIES[postal_code]
             changed = True
     if changed:
         db.commit()
+    seed_bundled_postcode_geometries(db)
 
 
 def set_postcode_enabled(db: Session, postal_code: str, enabled: bool) -> CoveragePostalCode:
@@ -123,6 +144,10 @@ def stage_postcode_candidates(db: Session, postal_code: str) -> tuple[int, int]:
     """Upsert discovered candidates without creating or activating Store rows."""
     created = updated = 0
     for item in discover_postcode_supermarkets(postal_code):
+        if item.get("postal_code") != postal_code:
+            # Provider bugs or mocked/secondary data must never leak a market
+            # from a neighbouring postcode into the selected rollout area.
+            continue
         row = db.query(StoreDiscoveryCandidate).filter_by(discovery_key=item["discovery_key"]).first()
         if row is None:
             row = StoreDiscoveryCandidate(**item)
@@ -140,7 +165,34 @@ def stage_postcode_candidates(db: Session, postal_code: str) -> tuple[int, int]:
     return created, updated
 
 
-def verify_candidate_address_coordinates(candidate: StoreDiscoveryCandidate) -> tuple[bool, bool, str]:
+def normalize_identity_text(value: str | None) -> str:
+    folded = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", (value or "").casefold().replace("ß", "ss"))
+        if not unicodedata.combining(character)
+    )
+    folded = re.sub(r"str(?:asse|\.)?(?=\s|\d|$)", "strasse", folded)
+    return re.sub(r"[^a-z0-9]+", "", folded)
+
+
+def addresses_match(left: str | None, right: str | None) -> bool:
+    return bool(left and right and normalize_identity_text(left) == normalize_identity_text(right))
+
+
+def _cities_match(candidate_city: str, address: dict[str, Any]) -> bool:
+    expected = normalize_identity_text(candidate_city)
+    returned = {
+        normalize_identity_text(address.get(key))
+        for key in ("city", "town", "village", "municipality", "suburb")
+        if address.get(key)
+    }
+    return bool(expected and expected in returned)
+
+
+def verify_candidate_address_coordinates(
+    candidate: StoreDiscoveryCandidate,
+    official_reference: StoreDiscoveryCandidate | None = None,
+) -> tuple[bool, bool, str]:
     """Cross-check the concrete market address against Nominatim.
 
     This validates address/coordinate consistency, but does not replace the
@@ -148,6 +200,31 @@ def verify_candidate_address_coordinates(candidate: StoreDiscoveryCandidate) -> 
     """
     if not candidate.address or not candidate.city or not _POSTCODE_RE.fullmatch(candidate.postal_code or ""):
         return False, False, "vollständige Straße/Hausnummer, Ort oder PLZ fehlt"
+    threshold_m = max(1.0, float(settings.store_coordinate_tolerance_m))
+    if official_reference is not None:
+        postcode_ok = official_reference.postal_code == candidate.postal_code
+        retailer_ok = official_reference.retailer == candidate.retailer
+        city_ok = normalize_identity_text(official_reference.city) == normalize_identity_text(candidate.city)
+        address_ok = addresses_match(official_reference.address, candidate.address)
+        distance_m = haversine_km(
+            candidate.latitude,
+            candidate.longitude,
+            official_reference.latitude,
+            official_reference.longitude,
+        ) * 1000
+        identity_ok = postcode_ok and retailer_ok and city_ok and address_ok
+        coordinates_ok = identity_ok and distance_m <= threshold_m
+        checks = (
+            f"PLZ={'ok' if postcode_ok else 'abweichend'}, "
+            f"Ort={'ok' if city_ok else 'abweichend'}, "
+            f"Händler={'ok' if retailer_ok else 'abweichend'}, "
+            f"Adresse={'ok' if address_ok else 'abweichend'}"
+        )
+        note = f"Offizielle Händlerquelle: {checks}; Pin-Abweichung {distance_m:.0f} m"
+        if distance_m > threshold_m:
+            note += f" (über {threshold_m:.0f} m, manuelle Prüfung erforderlich)"
+        return identity_ok, coordinates_ok, note
+
     try:
         response = httpx.get(
             "https://nominatim.openstreetmap.org/search",
@@ -172,7 +249,14 @@ def verify_candidate_address_coordinates(candidate: StoreDiscoveryCandidate) -> 
     for row in response.json():
         address = row.get("address") or {}
         returned_postcode = str(address.get("postcode") or "")[:5]
-        if returned_postcode != candidate.postal_code:
+        returned_street = " ".join(
+            value for value in (address.get("road"), address.get("house_number")) if value
+        )
+        if (
+            returned_postcode != candidate.postal_code
+            or not _cities_match(candidate.city, address)
+            or not addresses_match(candidate.address, returned_street)
+        ):
             continue
         distance = haversine_km(
             candidate.latitude,
@@ -183,14 +267,14 @@ def verify_candidate_address_coordinates(candidate: StoreDiscoveryCandidate) -> 
         if best is None or distance < best[0]:
             best = (distance, row)
     if best is None:
-        return False, False, "Adresse konnte nicht innerhalb derselben PLZ gegengeprüft werden"
+        return False, False, "Vollständige Adresse, Ort und PLZ konnten nicht gemeinsam bestätigt werden"
 
     distance_km = best[0]
     address_ok = True
-    coordinates_ok = distance_km <= 0.25
+    coordinates_ok = distance_km * 1000 <= threshold_m
     note = f"Adress-Geocode bestätigt; Pin-Abweichung {distance_km * 1000:.0f} m"
     if not coordinates_ok:
-        note += " (über 250 m, manuelle Prüfung erforderlich)"
+        note += f" (über {threshold_m:.0f} m, manuelle Prüfung erforderlich)"
     return address_ok, coordinates_ok, note
 
 
@@ -198,9 +282,27 @@ def verify_staged_candidate(db: Session, candidate_id: int) -> StoreDiscoveryCan
     candidate = db.get(StoreDiscoveryCandidate, candidate_id)
     if candidate is None:
         raise ValueError("Marktkandidat nicht gefunden")
-    address_ok, coordinates_ok, note = verify_candidate_address_coordinates(candidate)
+    official_reference = None
+    if not candidate.source.startswith("official:"):
+        references = db.query(StoreDiscoveryCandidate).filter(
+            StoreDiscoveryCandidate.postal_code == candidate.postal_code,
+            StoreDiscoveryCandidate.retailer == candidate.retailer,
+            StoreDiscoveryCandidate.official_source_verified.is_(True),
+            StoreDiscoveryCandidate.source.like("official:%"),
+            StoreDiscoveryCandidate.id != candidate.id,
+        ).all()
+        if references:
+            official_reference = min(
+                references,
+                key=lambda row: haversine_km(
+                    candidate.latitude, candidate.longitude, row.latitude, row.longitude
+                ),
+            )
+    address_ok, coordinates_ok, note = verify_candidate_address_coordinates(candidate, official_reference)
     candidate.address_verified = address_ok
     candidate.coordinates_verified = coordinates_ok
+    if official_reference is not None:
+        candidate.official_source_verified = address_ok
     candidate.verification_note = note
     candidate.status = "verified" if address_ok and coordinates_ok and candidate.official_source_verified else "discovered"
     candidate.verified_at = datetime.utcnow() if address_ok and coordinates_ok else None
@@ -214,6 +316,7 @@ def candidate_ready_for_promotion(candidate: StoreDiscoveryCandidate) -> bool:
     return bool(
         candidate.address
         and candidate.city
+        and _POSTCODE_RE.fullmatch(candidate.postal_code or "")
         and candidate.address_verified
         and candidate.coordinates_verified
         and candidate.official_source_verified
@@ -235,6 +338,18 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
             Store.retailer == candidate.retailer,
             Store.external_id == candidate.source_external_id,
         ).first()
+    if store is None:
+        store = next(
+            (
+                row
+                for row in db.query(Store).filter(
+                    Store.retailer == candidate.retailer,
+                    Store.postal_code == candidate.postal_code,
+                ).all()
+                if addresses_match(row.address, candidate.address)
+            ),
+            None,
+        )
     if store is None:
         base_name = candidate.name or candidate.retailer
         name = base_name
