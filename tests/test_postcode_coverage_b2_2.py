@@ -13,6 +13,7 @@ from app.coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from app.db import Base, create_database_engine, get_db
 from app.models import Store
 from app.postcode_coverage_service import (
+    addresses_match,
     candidate_ready_for_promotion,
     seed_initial_postcode_coverage,
     stage_postcode_candidates,
@@ -147,6 +148,16 @@ def test_official_adapter_records_are_staged_but_never_promoted_automatically():
     db.close()
 
 
+def test_missing_official_source_blocks_promotion_even_after_address_and_position_checks():
+    candidate = _candidate(
+        "candidate",
+        address_verified=True,
+        coordinates_verified=True,
+        official_source_verified=False,
+    )
+    assert candidate_ready_for_promotion(candidate) is False
+
+
 def test_reconciliation_detects_missing_expected_store():
     db = _db()
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
@@ -239,6 +250,10 @@ def test_verification_rejects_coordinate_distance_above_threshold():
     assert address_ok is True
     assert coordinates_ok is False
     assert "über 250 m" in note
+
+
+def test_address_matching_normalizes_common_street_abbreviations():
+    assert addresses_match("Urbacher Straße 31a", "Urbacherstr. 31a")
 
 
 def test_admin_map_and_toggle_endpoint_share_the_seeded_postcode_state(tmp_path):
