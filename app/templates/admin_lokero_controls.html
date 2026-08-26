@@ -35,11 +35,14 @@
     <p class="small"><code>benchmark_verified</code> ist die öffentliche Freigabe. Interne Prüfgeräte können QA-Märkte trotzdem sehen.</p>
     <div class="grid">
     {% for s in stores %}
+      {% set a=activation_overviews.get(s.id) %}
       <div class="store"><div><b>{{ s.retailer }}</b><br>{{ s.name }}<div class="small">{{ s.postal_code }} {{ s.city }}</div></div>
+        {% if a.can_publish or a.can_suspend %}
         <form method="post" action="/admin/lokero-controls/store/{{ s.id }}/release">
-          <input type="hidden" name="released" value="{{ '0' if s.benchmark_verified else '1' }}">
-          <button class="btn {{ 'off' if s.benchmark_verified else 'warn' }}">{{ 'öffentlich' if s.benchmark_verified else 'intern' }}</button>
+          <input type="hidden" name="released" value="{{ '0' if a.can_suspend else '1' }}">
+          <button class="btn {{ 'off' if a.can_suspend else 'warn' }}">{{ 'sperren' if a.can_suspend else 'veröffentlichen' }}</button>
         </form>
+        {% else %}<span class="small">{{ a.status }} · Quality Gate offen</span>{% endif %}
       </div>
     {% endfor %}
     </div>

@@ -23,7 +23,7 @@ def test_gtin_check_digit():
     assert not valid_gtin("4006381333932")
 
 
-def test_unverified_active_store_is_favorite_but_not_user_offer_selection():
+def test_unverified_active_store_is_hidden_even_when_favorite_row_exists():
     db = SessionLocal()
     user = db.query(UserProfile).first()
     edeka = db.query(Store).filter(Store.retailer == "EDEKA").first()
@@ -33,7 +33,7 @@ def test_unverified_active_store_is_favorite_but_not_user_offer_selection():
         db.commit()
     assert edeka.active is True
     assert edeka.benchmark_verified is False
-    assert edeka.id in favorite_store_ids(db, user)
+    assert edeka.id not in favorite_store_ids(db, user)
     assert edeka.id not in selected_store_ids(db, user)
     db.close()
 

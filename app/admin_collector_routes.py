@@ -20,6 +20,14 @@ from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
 from .collection_quality import BenchmarkContext, CollectionQualitySnapshot
+from .market_activation import (
+    activation_overview,
+    begin_test_scrape,
+    complete_test_scrape,
+    fail_test_scrape,
+    publish_store,
+    suspend_store,
+)
 from .web_collector import collect_store_from_web
 
 BASE = Path(__file__).resolve().parent
@@ -170,7 +178,7 @@ def _persist_background_failure(
     db.commit()
 
 
-def _run_store_collection_background(store_id: int) -> None:
+def _run_store_collection_background(store_id: int, activation_test: bool = False) -> None:
     """Run one market collection outside the HTTP request lifecycle.
 
     Long-running browser collectors (especially Lidl flipbooks) can exceed
@@ -194,9 +202,11 @@ def _run_store_collection_background(store_id: int) -> None:
             timeout_timer.start()
         context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
         if store.retailer == "EDEKA":
-            collect_edeka_market_pdf(db, store, benchmark_context=context)
+            _, _, run = collect_edeka_market_pdf(db, store, benchmark_context=context)
         else:
-            collect_store_from_web(db, store.name, benchmark_context=context)
+            _, _, run = collect_store_from_web(db, store.name, benchmark_context=context)
+        if activation_test:
+            complete_test_scrape(db, store, run)
     except Exception as exc:
         try:
             _persist_background_failure(
@@ -207,6 +217,22 @@ def _run_store_collection_background(store_id: int) -> None:
             )
         except Exception:
             db.rollback()
+        if activation_test:
+            try:
+                store = db.get(Store, store_id)
+                run = (
+                    db.query(CollectionRun)
+                    .filter(
+                        CollectionRun.store_id == store_id,
+                        CollectionRun.started_at >= job_started_at,
+                    )
+                    .order_by(CollectionRun.started_at.desc())
+                    .first()
+                )
+                if store is not None:
+                    fail_test_scrape(db, store, run=run, error=f"{type(exc).__name__}: {exc}")
+            except Exception:
+                db.rollback()
     finally:
         if timeout_timer is not None:
             timeout_timer.cancel()
@@ -247,6 +273,7 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
             else []
         )
     }
+    activation_overviews = {store.id: activation_overview(db, store) for store in stores}
     return templates.TemplateResponse("admin_collector.html", {
         "request": request, "actor": actor, "stores": stores, "latest": latest,
         "prospects": prospects, "next_prospects": next_prospects, "recent": recent,
@@ -254,6 +281,7 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
         "manual_collection_enabled": settings.manual_collection_enabled,
         "quality_by_run": quality_by_run,
         "progress_by_run": progress_by_run,
+        "activation_overviews": activation_overviews,
     })
 
 
@@ -289,8 +317,15 @@ def collector_run_store(
             status_code=303,
         )
 
-    background_tasks.add_task(_run_store_collection_background, store.id)
-    mode = "live" if store.benchmark_verified else "qa"
+    activation_test = not store.benchmark_verified
+    if activation_test:
+        try:
+            begin_test_scrape(db, store)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    background_tasks.add_task(_run_store_collection_background, store.id, activation_test)
+    mode = "live" if store.benchmark_verified else "test"
     return RedirectResponse(
         f"/admin/collector?collected={store.id}:{mode}:gestartet",
         status_code=303,
@@ -307,9 +342,15 @@ def collector_release_store(
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
-    store.benchmark_verified = released == "1"
-    db.commit()
-    state = "released" if store.benchmark_verified else "qa"
+    try:
+        if released == "1":
+            publish_store(db, store)
+            state = "released"
+        else:
+            suspend_store(db, store, "manuell im Collector gesperrt")
+            state = "suspended"
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return RedirectResponse(f"/admin/collector?collected={store.id}:{state}", status_code=303)
 
 

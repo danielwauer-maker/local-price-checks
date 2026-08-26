@@ -106,7 +106,7 @@ def test_verified_store_toggle_api(monkeypatch):
     assert payload["refreshStarted"] is True
 
 
-def test_unverified_active_store_is_persistent_favorite_but_not_released_for_offers(monkeypatch):
+def test_unverified_active_store_is_hidden_from_user_flows(monkeypatch):
     user_id, _ = _seed()
     db = SessionLocal()
     user = db.get(UserProfile, user_id)
@@ -135,22 +135,14 @@ def test_unverified_active_store_is_persistent_favorite_but_not_released_for_off
     monkeypatch.setattr(api_routes, "_collect_store_background", lambda _store_id: None)
     client = TestClient(app)
     response = client.post(f"/api/stores/{store_id}/toggle")
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["selected"] is True
-    assert str(store_id) in payload["selectedIds"]
-    assert str(store_id) not in payload["activeSelectedIds"]
-    assert payload["released"] is False
-    assert payload["prices"] == []
-    assert payload["refreshStarted"] is True
+    assert response.status_code == 404
 
     bootstrap = client.get("/api/bootstrap").json()
-    assert str(store_id) in bootstrap["selected"]
+    assert str(store_id) not in bootstrap["selected"]
     assert str(store_id) not in bootstrap["activeSelected"]
+    assert str(store_id) not in {row["id"] for row in bootstrap["markets"]}
 
-    store_offers = client.get(f"/api/stores/{store_id}/offers").json()
-    assert store_offers["status"] == "qa_pending"
-    assert store_offers["prices"] == []
+    assert client.get(f"/api/stores/{store_id}/offers").status_code == 404
 
     db = SessionLocal()
     db.query(FavoriteStore).filter_by(user_id=user_id, store_id=store_id).delete()
@@ -177,7 +169,7 @@ def test_favorite_market_survives_outside_search_radius():
         latitude=52.52,
         longitude=13.405,
         active=True,
-        benchmark_verified=False,
+        benchmark_verified=True,
         external_id="outside-test",
     )
     db.add(store)

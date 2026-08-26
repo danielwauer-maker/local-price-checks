@@ -4,15 +4,25 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .admin_routes import _admin
+from .admin_collector_routes import _run_store_collection_background
 from .coverage_models import CoveragePostalCode, CoverageRegion, StoreDiscoveryCandidate
 from .coverage_service import coverage_payload, region_center, stores_in_region, upsert_discovered_stores
 from .db import get_db
+from .market_activation import (
+    activation_overview,
+    assess_latest_store_quality,
+    begin_test_scrape,
+    publish_store,
+    reactivate_store,
+    suspend_store,
+)
+from .models import CollectionRun, Store
 from .postcode_coverage_service import (
     candidate_ready_for_promotion,
     promote_candidate_to_store,
@@ -61,6 +71,22 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
     candidates_by_postcode: dict[str, list[StoreDiscoveryCandidate]] = {}
     for candidate in candidates:
         candidates_by_postcode.setdefault(candidate.postal_code, []).append(candidate)
+    postcode_values = [postcode.postal_code for postcode in postcodes]
+    postcode_stores = (
+        db.query(Store)
+        .filter(Store.postal_code.in_(postcode_values))
+        .order_by(Store.postal_code, Store.retailer, Store.name)
+        .all()
+        if postcode_values
+        else []
+    )
+    stores_by_postcode: dict[str, list[Store]] = {}
+    for store in postcode_stores:
+        stores_by_postcode.setdefault(store.postal_code, []).append(store)
+    activation_overviews = {
+        store.id: activation_overview(db, store)
+        for store in postcode_stores
+    }
     safe_candidate_source_urls = {
         candidate.id: safe_external_url(candidate.source_url)
         for candidate in candidates
@@ -83,6 +109,8 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "stores": stores,
         "postcodes": postcodes,
         "candidates_by_postcode": candidates_by_postcode,
+        "stores_by_postcode": stores_by_postcode,
+        "activation_overviews": activation_overviews,
         "safe_candidate_source_urls": safe_candidate_source_urls,
         "coverage_summaries": summaries,
         "postcode_geojson": {"type": "FeatureCollection", "features": features},
@@ -213,6 +241,98 @@ def promote_candidate(candidate_id: int, db: Session = Depends(get_db), actor: s
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return RedirectResponse(f"/admin/coverage?result=candidate:{candidate_id}:store={store.id}", status_code=303)
+
+
+@router.post("/admin/coverage/stores/{store_id}/test-scrape")
+def start_store_test_scrape(
+    store_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    running = db.query(CollectionRun).filter_by(store_id=store.id, status="running").first()
+    if running:
+        return RedirectResponse(
+            f"/admin/coverage?result=store:{store.id}:already-running:{running.id}",
+            status_code=303,
+        )
+    try:
+        begin_test_scrape(db, store)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    background_tasks.add_task(_run_store_collection_background, store.id, True)
+    return RedirectResponse(
+        f"/admin/coverage?result=store:{store.id}:test-scrape-started",
+        status_code=303,
+    )
+
+
+@router.post("/admin/coverage/stores/{store_id}/quality")
+def assess_store_activation_quality(
+    store_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    try:
+        result = assess_latest_store_quality(db, store)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return RedirectResponse(
+        f"/admin/coverage?result=store:{store.id}:quality:{'passed' if result.passed else 'failed'}",
+        status_code=303,
+    )
+
+
+@router.post("/admin/coverage/stores/{store_id}/publish")
+def publish_coverage_store(
+    store_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    try:
+        publish_store(db, store)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return RedirectResponse(f"/admin/coverage?result=store:{store.id}:public", status_code=303)
+
+
+@router.post("/admin/coverage/stores/{store_id}/suspend")
+def suspend_coverage_store(
+    store_id: int,
+    reason: str = Form("manuell im Coverage-Admin gesperrt"),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    suspend_store(db, store, reason)
+    return RedirectResponse(f"/admin/coverage?result=store:{store.id}:suspended", status_code=303)
+
+
+@router.post("/admin/coverage/stores/{store_id}/reactivate")
+def reactivate_coverage_store(
+    store_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    try:
+        reactivate_store(db, store)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return RedirectResponse(f"/admin/coverage?result=store:{store.id}:reactivated", status_code=303)
 
 
 @router.post("/admin/coverage")

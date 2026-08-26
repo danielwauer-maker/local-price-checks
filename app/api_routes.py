@@ -23,6 +23,7 @@ from .models import (
     ShoppingItem,
     Store,
 )
+from .market_activation import store_is_public
 from .optimizer import optimize_shopping
 from .product_media import preferred_product_media, preferred_product_media_map
 from .product_search import search_products
@@ -134,7 +135,9 @@ def _product(
 
 
 def _stores_in_radius(db: Session, user) -> list[Store]:
-    stores = db.query(Store).filter(Store.active.is_(True)).order_by(Store.city, Store.name).all()
+    stores = db.query(Store).filter(
+        Store.active.is_(True), Store.benchmark_verified.is_(True)
+    ).order_by(Store.city, Store.name).all()
     rows: list[Store] = []
     for store in stores:
         if store.latitude is None or store.longitude is None:
@@ -244,7 +247,7 @@ def _collect_store_background(store_id: int) -> None:
     db = SessionLocal()
     try:
         store = db.get(Store, store_id)
-        if not store or not store.active:
+        if not store_is_public(store):
             return
         from .web_collector import collect_store_from_web
 
@@ -345,14 +348,13 @@ def product_search(q: str = "", category: str | None = None, db: Session = Depen
 @router.get("/stores/{store_id}/offers")
 def store_offers(store_id: int, db: Session = Depends(get_db)):
     store = db.get(Store, store_id)
-    if not store or not store.active:
+    if not store_is_public(store):
         raise HTTPException(status_code=404, detail="Market not available")
     latest = _latest_collection(db, store_id)
-    released = bool(store.benchmark_verified)
     return {
         "marketId": str(store_id),
-        "status": (latest.status if latest else "never_collected") if released else "qa_pending",
-        "prices": [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])] if released else [],
+        "status": latest.status if latest else "never_collected",
+        "prices": [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])],
     }
 
 
@@ -360,7 +362,7 @@ def store_offers(store_id: int, db: Session = Depends(get_db)):
 def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = current_user(db)
     store = db.get(Store, store_id)
-    if not store or not store.active:
+    if not store_is_public(store):
         raise HTTPException(status_code=404, detail="Market not available")
     row = db.query(FavoriteStore).filter_by(user_id=user.id, store_id=store_id).first()
     refresh_started = False
@@ -372,8 +374,8 @@ def toggle_store(store_id: int, background_tasks: BackgroundTasks, db: Session =
         selected = True
     db.commit()
 
-    released = bool(store.benchmark_verified)
-    prices = [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])] if selected and released else []
+    released = True
+    prices = [_price_payload(o, db) for o in _current_offer_rows(db, [store_id])] if selected else []
     if selected and not _market_data_fresh(db, store_id):
         background_tasks.add_task(_collect_store_background, store_id)
         refresh_started = True
