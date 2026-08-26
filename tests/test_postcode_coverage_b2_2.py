@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import model_registry  # noqa: F401
 from app.admin_routes import _admin
+from app.admin_coverage_routes import safe_external_url
 from app.api_main import app
 from app.coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from app.db import Base, create_database_engine, get_db
@@ -215,6 +216,55 @@ def test_reconciliation_can_be_complete_only_with_all_gates_and_promotion():
     db.close()
 
 
+def test_unrelated_existing_store_does_not_satisfy_promotion_requirement():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="56305", enabled=True)
+    expected = _candidate("expected", source="official:lidl", official_source_verified=True)
+    unrelated = Store(
+        retailer="EDEKA", name="EDEKA Puderbach", postal_code="56305", city="Puderbach",
+        address="Mittelstraße 2", latitude=50.60, longitude=7.61, active=True,
+    )
+    db.add_all([postcode, expected, unrelated])
+    db.commit()
+    summary = reconcile_postcode_coverage(db, postcode, source_results=_source())
+    assert summary.promoted == 0
+    assert summary.status != "complete"
+    db.close()
+
+
+def test_identity_matching_counts_preexisting_store_with_normalized_address():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="56305", enabled=True)
+    expected = _candidate("expected", source="official:lidl", official_source_verified=True)
+    existing = Store(
+        retailer="Lidl", name="Lidl Puderbach", postal_code="56305", city="Puderbach",
+        address="Urbacherstr. 31a", latitude=50.592267, longitude=7.608759, active=True,
+    )
+    db.add_all([postcode, expected, existing])
+    db.commit()
+    summary = reconcile_postcode_coverage(db, postcode, source_results=_source())
+    assert summary.promoted == 1
+    db.close()
+
+
+def test_identity_matching_prefers_matching_external_store_id():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="56305", enabled=True)
+    expected = _candidate(
+        "expected", source="official:lidl", source_external_id="lidl-56305",
+        official_source_verified=True,
+    )
+    existing = Store(
+        retailer="Lidl", name="Lidl Puderbach", postal_code="56305", city="Puderbach",
+        address="Historische Adresse 1", latitude=50.592267, longitude=7.608759,
+        external_id="lidl-56305", active=True,
+    )
+    db.add_all([postcode, expected, existing])
+    db.commit()
+    assert reconcile_postcode_coverage(db, postcode, source_results=_source()).promoted == 1
+    db.close()
+
+
 @pytest.mark.parametrize(
     ("enabled", "source_status", "expected_status"),
     ((False, "supported", "disabled"), (True, "source_unavailable", "source_unavailable"), (True, "supported", "no_expected_stores")),
@@ -256,11 +306,33 @@ def test_address_matching_normalizes_common_street_abbreviations():
     assert addresses_match("Urbacher Straße 31a", "Urbacherstr. 31a")
 
 
+@pytest.mark.parametrize(
+    "value",
+    (
+        None, "", "javascript:alert(1)", "data:text/html,x", "file:///tmp/x",
+        "/relative", "example.com", "https:///missing-host", "https://exa mple.com",
+        "https://example.com:not-a-port",
+    ),
+)
+def test_safe_external_url_rejects_non_http_and_malformed_values(value):
+    assert safe_external_url(value) is None
+
+
+@pytest.mark.parametrize("value", ("https://example.com/store", "http://example.com/store"))
+def test_safe_external_url_accepts_absolute_http_urls(value):
+    assert safe_external_url(value) == value
+
+
 def test_admin_map_and_toggle_endpoint_share_the_seeded_postcode_state(tmp_path):
     engine = create_database_engine(f"sqlite+pysqlite:///{(tmp_path / 'admin-map.sqlite3').as_posix()}")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine, future=True)()
     seed_initial_postcode_coverage(db)
+    db.add_all([
+        _candidate("unsafe-url", source_url="javascript:alert(1)"),
+        _candidate("safe-url", source_url="https://example.com/store"),
+    ])
+    db.commit()
 
     def override_db():
         yield db
@@ -274,6 +346,8 @@ def test_admin_map_and_toggle_endpoint_share_the_seeded_postcode_state(tmp_path)
         assert "coverage-map" in response.text
         assert "56305" in response.text
         assert "OpenStreetMap contributors" in response.text
+        assert 'href="javascript:alert(1)"' not in response.text
+        assert 'href="https://example.com/store"' in response.text
         toggled = client.post(
             "/admin/coverage/postcodes/56305/toggle",
             data={"enabled": "0"},

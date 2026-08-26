@@ -59,6 +59,27 @@ def candidates_match(expected: StoreDiscoveryCandidate, discovered: StoreDiscove
     return bool(city_matches and address_matches and distance_m <= settings.store_coordinate_tolerance_m)
 
 
+def store_matches_candidate(store: Store, candidate: StoreDiscoveryCandidate) -> bool:
+    """Match an existing store only through an explicit or complete identity."""
+    if candidate.matched_store_id is not None:
+        return store.id == candidate.matched_store_id
+    if (
+        candidate.source_external_id
+        and store.external_id
+        and candidate.source_external_id == store.external_id
+    ):
+        return store.retailer == candidate.retailer and store.postal_code == candidate.postal_code
+    city_matches = not (store.city and candidate.city) or (
+        normalize_identity_text(store.city) == normalize_identity_text(candidate.city)
+    )
+    return bool(
+        store.retailer == candidate.retailer
+        and store.postal_code == candidate.postal_code
+        and addresses_match(store.address, candidate.address)
+        and city_matches
+    )
+
+
 def reconcile_postcode_coverage(
     db: Session,
     postcode: CoveragePostalCode,
@@ -90,15 +111,13 @@ def reconcile_postcode_coverage(
     official_verified = sum(
         bool(row.official_source_verified or row.id in official_for_discovered) for row in discovered_rows
     )
+    postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
     promoted_ids = {
-        row.matched_store_id
-        for row in candidates
-        if row.matched_store_id is not None and row.status == "promoted"
+        store.id
+        for candidate in candidates
+        for store in postcode_stores
+        if store_matches_candidate(store, candidate)
     }
-    # Also surface existing exact-PLZ stores that predate candidate staging.
-    promoted_ids.update(
-        row.id for row in db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
-    )
     missing_expected = expected - len(matched_expected_ids)
     additional_discovered = found - len(matched_discovered_ids)
     results = source_results or retailer_source_results(postcode.postal_code)

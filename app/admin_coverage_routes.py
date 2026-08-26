@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -29,6 +30,23 @@ templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
 
+def safe_external_url(value: str | None) -> str | None:
+    """Return an absolute HTTP(S) URL, rejecting unsafe or malformed schemes."""
+    if not value:
+        return None
+    cleaned = value.strip()
+    if not cleaned or any(character.isspace() or ord(character) < 32 for character in cleaned):
+        return None
+    try:
+        parsed = urlsplit(cleaned)
+        parsed.port  # Validate an optional numeric port.
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    return cleaned
+
+
 @router.get("/admin/coverage")
 def coverage_admin(request: Request, result: str = "", db: Session = Depends(get_db), actor: str = Depends(_admin)):
     regions = db.query(CoverageRegion).order_by(CoverageRegion.created_at.desc()).all()
@@ -43,6 +61,10 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
     candidates_by_postcode: dict[str, list[StoreDiscoveryCandidate]] = {}
     for candidate in candidates:
         candidates_by_postcode.setdefault(candidate.postal_code, []).append(candidate)
+    safe_candidate_source_urls = {
+        candidate.id: safe_external_url(candidate.source_url)
+        for candidate in candidates
+    }
     summaries = {
         postcode.postal_code: reconcile_postcode_coverage(db, postcode)
         for postcode in postcodes
@@ -61,6 +83,7 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "stores": stores,
         "postcodes": postcodes,
         "candidates_by_postcode": candidates_by_postcode,
+        "safe_candidate_source_urls": safe_candidate_source_urls,
         "coverage_summaries": summaries,
         "postcode_geojson": {"type": "FeatureCollection", "features": features},
         "osm_attribution": OSM_ATTRIBUTION,
