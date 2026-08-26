@@ -89,6 +89,14 @@ def reset_store_offers(db: Session, store: Store) -> dict[str, int]:
     offer_ids = [row[0] for row in rows]
     product_ids = {row[1] for row in rows}
     result = delete_offer_graph(db, offer_ids)
+    from .market_activation import StoreActivationState, StoreQualityAssessment
+    state = db.query(StoreActivationState).filter_by(store_id=store.id).first()
+    if state:
+        state.last_test_run_id = None
+        db.flush()
+    result["activation_assessments"] = db.query(StoreQualityAssessment).filter_by(
+        store_id=store.id
+    ).delete(synchronize_session=False)
     result["quality_snapshots"] = (
         db.query(CollectionQualitySnapshot)
         .filter(CollectionQualitySnapshot.store_id == store.id)
@@ -114,7 +122,19 @@ def reset_store_qa(db: Session, store: Store) -> dict[str, int]:
     offer_ids = [row[0] for row in rows]
     product_ids = {row[1] for row in rows}
 
+    from .market_activation import StoreActivationState, StoreQualityAssessment
     result = delete_offer_graph(db, offer_ids)
+    state = db.query(StoreActivationState).filter_by(store_id=store.id).first()
+    if state:
+        state.last_test_run_id = None
+        state.lifecycle_status = "promoted"
+        state.manually_suspended = False
+        state.suspension_reason = None
+        state.last_error = None
+        db.flush()
+    result["activation_assessments"] = db.query(StoreQualityAssessment).filter_by(
+        store_id=store.id
+    ).delete(synchronize_session=False)
     result["quality_snapshots"] = (
         db.query(CollectionQualitySnapshot)
         .filter(CollectionQualitySnapshot.store_id == store.id)
@@ -170,6 +190,7 @@ def reset_store_qa(db: Session, store: Store) -> dict[str, int]:
 
 def reset_all_test_data(db: Session) -> dict[str, int]:
     """Clear all collected/catalog QA data while preserving stores, regions and configuration."""
+    from .market_activation import StoreActivationState, StoreQualityAssessment
     counts = {
         "offers": db.query(Offer).count(),
         "products": db.query(MasterProduct).count(),
@@ -181,6 +202,14 @@ def reset_all_test_data(db: Session) -> dict[str, int]:
 
     delete_offer_graph(db, [row[0] for row in db.query(Offer.id).all()])
     db.query(ProspectMissingItem).delete(synchronize_session=False)
+    for state in db.query(StoreActivationState).all():
+        state.last_test_run_id = None
+        state.lifecycle_status = "promoted"
+        state.manually_suspended = False
+        state.suspension_reason = None
+        state.last_error = None
+    db.flush()
+    db.query(StoreQualityAssessment).delete(synchronize_session=False)
     db.query(CollectionQualitySnapshot).delete(synchronize_session=False)
     db.query(CollectionRunProgress).delete(synchronize_session=False)
     db.query(CollectionRun).delete(synchronize_session=False)

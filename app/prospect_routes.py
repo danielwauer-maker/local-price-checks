@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import Store
+from .market_activation import store_is_public
 from .prospect_models import Prospect
 from .prospects import ensure_store_prospects, discover_and_store_prospect
 
@@ -32,7 +33,7 @@ def _payload(row: Prospect | None):
 @router.get("/stores/{store_id}")
 def store_prospects(store_id: int, db: Session = Depends(get_db)):
     store = db.get(Store, store_id)
-    if not store or not store.active:
+    if not store_is_public(store):
         raise HTTPException(404, "Market not found")
     current, nxt = ensure_store_prospects(db, store)
     return {"current": _payload(current), "next": _payload(nxt)}
@@ -41,7 +42,7 @@ def store_prospects(store_id: int, db: Session = Depends(get_db)):
 @router.post("/stores/{store_id}/refresh")
 def refresh_store_prospects(store_id: int, db: Session = Depends(get_db)):
     store = db.get(Store, store_id)
-    if not store or not store.active:
+    if not store_is_public(store):
         raise HTTPException(404, "Market not found")
     result = {}
     for period in ("current", "next"):
@@ -58,7 +59,7 @@ def refresh_store_prospects(store_id: int, db: Session = Depends(get_db)):
 @router.get("/{prospect_id}/file")
 def prospect_file(prospect_id: int, db: Session = Depends(get_db)):
     row = db.get(Prospect, prospect_id)
-    if not row or not row.active:
+    if not row or not row.active or not store_is_public(db.get(Store, row.store_id)):
         raise HTTPException(404, "Prospect not found")
     target = Path(row.local_path)
     if not target.exists() or not target.is_file():

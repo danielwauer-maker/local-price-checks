@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -105,6 +106,58 @@ def _suspicious_name_reason(name: str) -> str | None:
     """Use the same canonical name validator at import and aggregate QA time."""
 
     return product_name_issue(name)
+
+
+def _activation_metrics(rows: list, summary) -> dict:
+    """Extract objective activation metrics without changing legacy QA semantics."""
+    received = len(rows)
+    online_rejected = int(summary.rejected_online or 0)
+    eligible = max(0, received - online_rejected)
+    with_price = sum(
+        1
+        for row in rows
+        if isinstance(getattr(row, "price", None), (int, float)) and float(row.price) > 0
+    )
+    with_unit = sum(
+        1
+        for row in rows
+        if (
+            isinstance(getattr(row, "unit_price", None), (int, float))
+            and float(row.unit_price) > 0
+        ) or (getattr(row, "quantity", None) and getattr(row, "unit", None))
+    )
+    fingerprints = [
+        (
+            str(getattr(row, "store_name", "") or "").strip().casefold(),
+            str(getattr(row, "product_name", "") or "").strip().casefold(),
+            str(getattr(row, "price", "") or ""),
+            str(getattr(row, "valid_from", "") or ""),
+            str(getattr(row, "valid_to", "") or ""),
+        )
+        for row in rows
+    ]
+    duplicate_count = max(0, len(fingerprints) - len(set(fingerprints)))
+    invalid_count = sum(
+        int(value or 0)
+        for value in (summary.rejected_quality, summary.rejected_store, summary.rejected_date)
+    )
+    return {
+        "raw_offer_count": received,
+        "eligible_offer_count": eligible,
+        "valid_offer_count": int(summary.imported or 0),
+        "offers_with_price": min(eligible, max(0, with_price - online_rejected)),
+        "offers_with_unit_or_base_price": min(eligible, max(0, with_unit - online_rejected)),
+        "duplicate_count": duplicate_count,
+        "invalid_or_non_product_count": invalid_count,
+        "prospect_date_available": any(
+            bool(getattr(row, "valid_from", None) and getattr(row, "valid_to", None))
+            for row in rows
+        ),
+        "prospect_page_available": any(
+            re.search(r"\bPDF\s+Seite\s+\d+\b", str(getattr(row, "source_text", "") or ""), re.I)
+            for row in rows
+        ),
+    }
 
 
 def evaluate_collection_quality(
@@ -338,6 +391,7 @@ def evaluate_collection_quality(
         "date_rejected": int(summary.rejected_date or 0),
         "quality_reasons": quality_reasons,
         "benchmark_reasons": benchmark_reasons,
+        **_activation_metrics(rows, summary),
     }
     return quality_status, benchmark_status, quality_score, metrics
 

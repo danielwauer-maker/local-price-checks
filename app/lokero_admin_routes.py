@@ -11,6 +11,7 @@ from .admin_routes import _admin
 from .db import get_db
 from .feature_flags import DEFAULT_FEATURE_FLAGS, get_feature_flags, set_feature_flag
 from .models import MasterProduct, Store
+from .market_activation import activation_overview, publish_store, suspend_store
 from .normal_prices import add_normal_price_observation, backfill_explicit_references
 
 BASE = Path(__file__).resolve().parent
@@ -22,6 +23,7 @@ templates = Jinja2Templates(directory=BASE / "templates")
 def lokero_controls(request: Request, db: Session = Depends(get_db), actor: str = Depends(_admin)):
     flags = get_feature_flags(db)
     stores = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+    activation_overviews = {store.id: activation_overview(db, store) for store in stores}
     return templates.TemplateResponse(
         "admin_lokero_controls.html",
         {
@@ -30,6 +32,7 @@ def lokero_controls(request: Request, db: Session = Depends(get_db), actor: str 
             "flags": flags,
             "defaults": DEFAULT_FEATURE_FLAGS,
             "stores": stores,
+            "activation_overviews": activation_overviews,
         },
     )
 
@@ -60,7 +63,13 @@ def release_store(
     store = db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
-    store.benchmark_verified = released == "1"
+    try:
+        if released == "1":
+            publish_store(db, store)
+        else:
+            suspend_store(db, store, "manuell in der Produktsteuerung gesperrt")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit(db, "lokero_store_release_changed", "store", store.id, f"released={store.benchmark_verified}", actor)
     db.commit()
     return RedirectResponse("/admin/lokero-controls", status_code=303)

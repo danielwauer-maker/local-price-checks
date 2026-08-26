@@ -112,12 +112,13 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
 
 
 def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return persistent market favorites independent of search area or QA release."""
+    """Return persistent favorites that are currently public."""
+    from .market_activation import store_is_public
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
     ids: list[int] = []
     for row in rows:
         store = row.store
-        if not store.active:
+        if not store_is_public(store):
             continue
         ids.append(store.id)
     return ids
@@ -138,7 +139,7 @@ def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
     ids: list[int] = []
     for row in rows:
         store = row.store
-        if store.id not in favorite_ids or not store.benchmark_verified:
+        if store.id not in favorite_ids:
             continue
         if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
             if haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) > user.radius_km:

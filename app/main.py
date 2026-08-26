@@ -16,6 +16,7 @@ from .db import Base, engine, get_db
 from .freshness import market_freshness
 from .geo import haversine_km, resolve_center
 from .models import FavoriteProduct, FavoriteStore, MasterProduct, ProductBarcode, ShoppingItem, Store
+from .market_activation import store_is_public
 from .optimizer import optimize_shopping
 from .product_search import search_products
 from .scheduler import run_verified_market_collection, start_scheduler, stop_scheduler
@@ -93,7 +94,9 @@ def home(request: Request, db: Session = Depends(get_db)):
 def stores_page(request: Request, db: Session = Depends(get_db)):
     user = current_user(db)
     favorites = {x.store_id for x in db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()}
-    stores = db.query(Store).filter(Store.active.is_(True)).order_by(Store.city, Store.name).all()
+    stores = db.query(Store).filter(
+        Store.active.is_(True), Store.benchmark_verified.is_(True)
+    ).order_by(Store.city, Store.name).all()
     rows = []
     for store in stores:
         distance = None
@@ -118,7 +121,7 @@ def save_location(postal_code: str = Form(...), city: str = Form(...), radius_km
 def toggle_store(store_id: int, db: Session = Depends(get_db)):
     user = current_user(db)
     store = db.get(Store, store_id)
-    if not store or not store.active or not store.benchmark_verified:
+    if not store_is_public(store):
         return RedirectResponse("/maerkte", status_code=303)
     existing = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id, FavoriteStore.store_id == store_id).first()
     if existing:
