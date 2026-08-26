@@ -23,12 +23,12 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/einstellungen")({
   head: () => ({
     meta: [
-      { title: "Einstellungen – Lokero" },
+      { title: "Einstellungen – Spareno" },
       {
         name: "description",
-        content: "Standort, Suchradius, Fahrtkosten, Benachrichtigungen und Account in Lokero anpassen.",
+        content: "Standort, Suchradius, Fahrtkosten, Benachrichtigungen und Account in Spareno anpassen.",
       },
-      { property: "og:title", content: "Einstellungen – Lokero" },
+      { property: "og:title", content: "Einstellungen – Spareno" },
       {
         property: "og:description",
         content: "Standort, Radius, Fahrtkosten und Benachrichtigungen anpassen.",
@@ -147,7 +147,7 @@ function SettingsPage() {
 
   return (
     <div className="pb-4">
-      <PageHeader title="Einstellungen" subtitle="Lokero an deinen Einkauf anpassen" />
+      <PageHeader title="Einstellungen" subtitle="Spareno an deinen Einkauf anpassen" />
 
       <div className="space-y-3 px-4 pt-1">
         <Section icon={MapPin} title="Standort">
@@ -261,7 +261,7 @@ function SettingsPage() {
             <>
               <Row label="Angemeldet als" hint={accountEmail} action={<span className="rounded-full bg-primary-soft px-2 py-1 text-[10px] font-semibold text-primary-deep">Registriert</span>} />
               <Row
-                label="Lokero Premium"
+                label="Spareno Premium"
                 hint="Erweiterte Optimierung"
                 action={<Sparkles className="h-4 w-4 text-primary" />}
               />
@@ -294,8 +294,8 @@ function SettingsPage() {
           />
           <ReviewerSettings />
           <Row
-            label="Über Lokero"
-            hint="Alles in deiner Nähe. Das Beste für dich."
+            label="Über Spareno"
+            hint="Besser einkaufen."
             action={<Info className="h-4 w-4 text-muted-foreground" />}
           />
         </Section>
