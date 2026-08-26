@@ -1,32 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Spareno App Icon</title>
-  <desc id="desc">Radar rings around a location pin with percent symbol.</desc>
-  <defs>
-    <linearGradient id="bg" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#123A7A"/>
-      <stop offset="1" stop-color="#081E4A"/>
-    </linearGradient>
-    <linearGradient id="ring" x1="105" y1="90" x2="408" y2="415" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20C9E8"/>
-      <stop offset="1" stop-color="#22C55E"/>
-    </linearGradient>
-    <linearGradient id="pin" x1="256" y1="252" x2="256" y2="413" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#A7F3D0"/>
-      <stop offset="1" stop-color="#22C55E"/>
-    </linearGradient>
-  </defs>
-  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
-  <g fill="none" stroke="url(#ring)" stroke-linecap="round">
-    <path d="M117 370A184 184 0 0 1 371 103" stroke-width="18"/>
-    <path d="M144 139A145 145 0 0 1 389 332" stroke-width="18"/>
-    <path d="M166 353A110 110 0 0 1 352 173" stroke-width="18"/>
-  </g>
-  <circle cx="386" cy="145" r="20" fill="#22C55E"/>
-  <path d="M256 404 194 316c-22-31-20-75 5-104 30-35 84-40 120-11 35 29 42 81 16 118L256 404Z" fill="url(#pin)"/>
-  <circle cx="256" cy="266" r="73" fill="#FFFFFF"/>
-  <g stroke="#102A6E" stroke-width="15" stroke-linecap="round" fill="none">
-    <path d="M221 301 291 231"/>
-    <circle cx="220" cy="233" r="15"/>
-    <circle cx="292" cy="299" r="15"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Spareno">
+  <image href="/brand/spareno-icon-512.png" width="512" height="512" preserveAspectRatio="xMidYMid meet"/>
 </svg>
