@@ -9,3 +9,144 @@
   --brand-navy: var(--spareno-navy);
   --brand-green: var(--spareno-green);
 }
+
+.spareno-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgb(24 75 151 / 0.48), transparent 38%),
+    linear-gradient(155deg, #0f3a80 0%, #0b2d6b 42%, #071c47 100%);
+  color: var(--spareno-white);
+  opacity: 1;
+  animation: spareno-splash-in 320ms ease-out both;
+  transition:
+    opacity 420ms ease,
+    visibility 420ms ease;
+  isolation: isolate;
+}
+
+.spareno-splash--exiting {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.spareno-splash__rings {
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  width: min(86vw, 720px);
+  aspect-ratio: 1;
+  border: 1px solid rgb(63 208 208 / 0.11);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    0 0 0 clamp(48px, 9vw, 112px) rgb(63 208 208 / 0.055),
+    0 0 0 clamp(104px, 18vw, 220px) rgb(63 208 208 / 0.035);
+}
+
+.spareno-splash__brand {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  max-width: min(90vw, 560px);
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: min(12vh, 110px);
+  text-align: center;
+  animation: spareno-splash-brand-in 620ms 90ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.spareno-splash__mark {
+  width: clamp(104px, 24vw, 150px);
+  height: clamp(104px, 24vw, 150px);
+  filter: drop-shadow(0 20px 30px rgb(0 10 40 / 0.34));
+}
+
+.spareno-splash__wordmark {
+  margin-top: clamp(24px, 4vh, 38px);
+  font-family: "Sora", sans-serif;
+  font-size: clamp(3rem, 12vw, 5rem);
+  font-weight: 700;
+  letter-spacing: -0.065em;
+  line-height: 0.95;
+}
+
+.spareno-splash__wordmark span:last-child {
+  color: #20d8a4;
+}
+
+.spareno-splash__brand p {
+  margin: clamp(18px, 3vh, 28px) 0 0;
+  color: #42e5c7;
+  font-family: "Sora", sans-serif;
+  font-size: clamp(0.95rem, 3.6vw, 1.3rem);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.spareno-splash__waves {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 1;
+  width: 100%;
+  height: clamp(180px, 31vh, 340px);
+}
+
+.spareno-splash__wave--back {
+  fill: rgb(174 243 222 / 0.5);
+}
+
+.spareno-splash__wave--middle {
+  fill: rgb(47 211 177 / 0.62);
+}
+
+.spareno-splash__wave--front {
+  fill: rgb(12 181 125 / 0.82);
+}
+
+@keyframes spareno-splash-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spareno-splash-brand-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (min-width: 768px) {
+  .spareno-splash__brand {
+    padding-bottom: 70px;
+  }
+
+  .spareno-splash__waves {
+    height: min(31vh, 300px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spareno-splash,
+  .spareno-splash__brand {
+    animation: none;
+  }
+
+  .spareno-splash {
+    transition-duration: 120ms;
+  }
+}

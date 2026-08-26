@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import brandCss from "../brand.css?url";
@@ -17,6 +17,10 @@ import { AppShell } from "@/components/AppShell";
 import { AccountSessionSync } from "@/components/AccountSessionSync";
 import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
+import { SplashScreen } from "@/components/brand/SplashScreen";
+
+const SPLASH_DURATION_MS = 2500;
+const SPLASH_EXIT_MS = 420;
 
 function NotFoundComponent() {
   return (
@@ -140,6 +144,20 @@ function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const bare = pathname.startsWith("/auth");
+  const [splashPhase, setSplashPhase] = useState<"visible" | "exiting" | "hidden">("visible");
+
+  useEffect(() => {
+    const exitTimer = window.setTimeout(() => setSplashPhase("exiting"), SPLASH_DURATION_MS);
+    const removeTimer = window.setTimeout(
+      () => setSplashPhase("hidden"),
+      SPLASH_DURATION_MS + SPLASH_EXIT_MS,
+    );
+
+    return () => {
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(removeTimer);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -162,6 +180,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppStoreProvider>
+        {splashPhase !== "hidden" && <SplashScreen exiting={splashPhase === "exiting"} />}
         <AccountSessionSync />
         {bare ? (
           <div className="app-frame">
