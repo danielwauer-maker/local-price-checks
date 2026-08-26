@@ -1,7 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - fix/spareno-png-browser-compat
   pull_request:
 permissions:
   contents: read
