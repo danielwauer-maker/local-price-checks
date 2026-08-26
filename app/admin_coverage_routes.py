@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -19,11 +20,31 @@ from .postcode_coverage_service import (
     stage_postcode_candidates,
     verify_staged_candidate,
 )
+from .postcode_geometry import OSM_ATTRIBUTION, OSM_LICENSE_URL, import_postcode_geometry, postcode_feature
+from .postcode_reconciliation import reconcile_postcode_coverage
+from .retailer_store_sources import stage_official_store_candidates
 from .web_collector import collect_store_from_web
 
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
+
+
+def safe_external_url(value: str | None) -> str | None:
+    """Return an absolute HTTP(S) URL, rejecting unsafe or malformed schemes."""
+    if not value:
+        return None
+    cleaned = value.strip()
+    if not cleaned or any(character.isspace() or ord(character) < 32 for character in cleaned):
+        return None
+    try:
+        parsed = urlsplit(cleaned)
+        parsed.port  # Validate an optional numeric port.
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    return cleaned
 
 
 @router.get("/admin/coverage")
@@ -40,6 +61,20 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
     candidates_by_postcode: dict[str, list[StoreDiscoveryCandidate]] = {}
     for candidate in candidates:
         candidates_by_postcode.setdefault(candidate.postal_code, []).append(candidate)
+    safe_candidate_source_urls = {
+        candidate.id: safe_external_url(candidate.source_url)
+        for candidate in candidates
+    }
+    summaries = {
+        postcode.postal_code: reconcile_postcode_coverage(db, postcode)
+        for postcode in postcodes
+    }
+    features = []
+    for postcode in postcodes:
+        summary = summaries[postcode.postal_code]
+        feature = postcode_feature(postcode, summary.as_dict())
+        if feature:
+            features.append(feature)
     return templates.TemplateResponse("admin_coverage.html", {
         "request": request,
         "actor": actor,
@@ -48,9 +83,57 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "stores": stores,
         "postcodes": postcodes,
         "candidates_by_postcode": candidates_by_postcode,
+        "safe_candidate_source_urls": safe_candidate_source_urls,
+        "coverage_summaries": summaries,
+        "postcode_geojson": {"type": "FeatureCollection", "features": features},
+        "osm_attribution": OSM_ATTRIBUTION,
+        "osm_license_url": OSM_LICENSE_URL,
         "candidate_ready_for_promotion": candidate_ready_for_promotion,
         "result": result,
     })
+
+
+@router.post("/admin/coverage/postcodes/import")
+def import_postcode(
+    postal_code: str = Form(...),
+    enabled: str = Form("0"),
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    try:
+        row = import_postcode_geometry(db, postal_code, enabled=enabled == "1")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        db.rollback()
+        return RedirectResponse(
+            f"/admin/coverage?result=postcode-geometry:{postal_code}:failed={type(exc).__name__}",
+            status_code=303,
+        )
+    return RedirectResponse(
+        f"/admin/coverage?result=postcode-geometry:{row.postal_code}:imported",
+        status_code=303,
+    )
+
+
+@router.post("/admin/coverage/postcodes/{postal_code}/geometry")
+def refresh_postcode_geometry(
+    postal_code: str,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    existing = db.query(CoveragePostalCode).filter_by(postal_code=postal_code).first()
+    if existing is None:
+        raise HTTPException(404, "PLZ nicht gefunden")
+    try:
+        import_postcode_geometry(db, postal_code)
+        result = f"postcode-geometry:{postal_code}:updated"
+    except Exception as exc:
+        db.rollback()
+        # The previously cached geometry remains available because the provider
+        # is called before any existing fields are changed.
+        result = f"postcode-geometry:{postal_code}:failed={type(exc).__name__}:cache-kept"
+    return RedirectResponse(f"/admin/coverage?result={result}", status_code=303)
 
 
 @router.post("/admin/coverage/postcodes/{postal_code}/toggle")
@@ -76,8 +159,12 @@ def discover_postcode(postal_code: str, db: Session = Depends(get_db), actor: st
     if postcode is None or not postcode.enabled:
         raise HTTPException(400, "PLZ ist nicht freigegeben")
     try:
+        official_created, official_updated, _ = stage_official_store_candidates(db, postal_code)
         created, updated = stage_postcode_candidates(db, postal_code)
-        result = f"postcode-discover:{postal_code}:new={created}:updated={updated}"
+        result = (
+            f"postcode-discover:{postal_code}:osm-new={created}:osm-updated={updated}:"
+            f"official-new={official_created}:official-updated={official_updated}"
+        )
     except Exception as exc:
         db.rollback()
         result = f"postcode-discover:{postal_code}:failed={type(exc).__name__}"
