@@ -13,7 +13,7 @@ import {
 import type { ReactNode } from "react";
 import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
-import { LokeroWordmark } from "@/components/brand/LokeroLogo";
+import { SparenoWordmark } from "@/components/brand/SparenoLogo";
 
 const NAV = [
   { to: "/", label: "Start", icon: Home },
@@ -71,7 +71,7 @@ export function TopBar() {
   return (
     <header className="bg-surface px-4 pb-3 pt-[max(0.875rem,env(safe-area-inset-top))]">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-        <LokeroWordmark className="min-w-0 text-navy" />
+        <SparenoWordmark className="min-w-0" />
         <div className="flex shrink-0 items-center">
           <Link
             to="/liste"
