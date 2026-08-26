@@ -384,6 +384,9 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
     candidate.matched_store_id = store.id
     candidate.status = "promoted"
     candidate.updated_at = datetime.utcnow()
+    from .market_activation import register_promoted_store
+
+    register_promoted_store(db, store, candidate)
     db.commit()
     db.refresh(store)
     return store

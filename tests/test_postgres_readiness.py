@@ -38,8 +38,10 @@ def test_model_registry_contains_additive_models():
         "collection_quality_snapshots",
         "coverage_postal_codes",
         "store_discovery_candidates",
+        "store_activation_states",
+        "store_quality_assessments",
     } <= names
-    assert len(names) == 44
+    assert len(names) == 46
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):

@@ -239,3 +239,52 @@ Bekannte Grenzen:
 - Kartenkacheln und Leaflet-CDN benötigen für die visuelle Basiskarte Netzwerk;
   die gespeicherten Polygone und die Tabellen-/Statusdaten bleiben serverseitig
   auch bei Ausfall der Geometriequelle verfügbar.
+
+## B2.3: Market Activation & Quality Gate
+
+Die Identitätsprüfung, Datenqualität und öffentliche Freigabe bleiben getrennte
+Entscheidungen. Der zentrale Lifecycle lautet: `discovered` →
+`identity_verified` → `promoted` → `scrape_pending`/`scrape_failed` →
+`quality_review` → `quality_passed` → `public`; ein Admin kann einen Markt in
+`suspended` überführen. Discovery und Promotion veröffentlichen nie automatisch.
+
+Nach einer Promotion registriert `StoreActivationState` die bestätigte
+Marktidentität. Erst dann darf ein Admin einen Test-Scrape starten. Dieser nutzt
+den vorhandenen Store-Collector und dessen `CollectionRun` sowie
+`CollectionQualitySnapshot`; es gibt keine zweite Extraktionsengine. Start,
+Ende, Dauer, Quelle, Roh-/gültige Angebote, Preis- und Einheitsabdeckung,
+Dubletten, ungültige/Nicht-Produkte, Prospektdatum/-seite und Fehler bleiben
+nachvollziehbar gespeichert. `StoreQualityAssessment` hält pro Testlauf die
+strukturierte, historische Gate-Bewertung.
+
+`assess_store_quality` bewertet transparent sechs gewichtete Checks:
+
+- bestätigte Identität (15 Punkte)
+- erfolgreicher Test-Scrape (20)
+- mindestens 10 gültige Angebote (20)
+- mindestens 80 % der gültigen Angebote mit Preis (20)
+- höchstens 10 % Dubletten bezogen auf Rohzeilen (10)
+- höchstens 20 % ungültige/Nicht-Produkte bezogen auf Rohzeilen (15)
+
+Die vier Zahlen sind über `STORE_QUALITY_MIN_VALID_OFFERS`,
+`STORE_QUALITY_MIN_PRICE_COVERAGE_PCT`,
+`STORE_QUALITY_MAX_DUPLICATE_RATE_PCT` und
+`STORE_QUALITY_MAX_INVALID_RATE_PCT` konfigurierbar. Ergebnis, Score, einzelne
+Checks, Messwerte, Fehlergründe und Warnungen werden angezeigt und gespeichert;
+es wird keine allgemeine Qualitätsquote behauptet.
+
+`store_ready_for_publication` verlangt bestätigte Identität, den letzten
+erfolgreichen Testlauf, dessen bestandenes Assessment und das Fehlen einer
+manuellen Sperre. Auch `quality_passed` veröffentlicht noch nicht: Erst der
+explizite Admin-Schritt setzt den Lifecycle auf `public` und das bestehende
+Kompatibilitätsfeld `benchmark_verified=true`. Normale Markets-, Angebots-,
+Favoriten-, Umkreis-, Startseiten-, Prospekt- und Einkaufslistenpfade verwenden
+nur `active=true AND benchmark_verified=true`. Historische Bestandsmärkte mit
+diesen Flags werden bei der additiven Migration als `public` übernommen.
+
+Suspend setzt `benchmark_verified=false`, lässt Store, Angebote, Testläufe und
+Assessments jedoch bestehen. Reactivate hebt nur die Sperre auf und führt bei
+weiter gültigem Gate zu `quality_passed`; eine erneute Veröffentlichung bleibt
+ein eigener Admin-Schritt. Die Migration `20260826_01` ergänzt ausschließlich
+`store_activation_states` und `store_quality_assessments` und ist für SQLite
+und PostgreSQL ausgelegt.
