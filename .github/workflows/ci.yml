@@ -56,9 +56,8 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - name: Generate Spareno icon family
+      - name: Validate canonical Spareno icon family
         run: |
-          bun src/components/brand/generate-icons.mjs
           test -f public/brand/spareno-icon-192.png
           test -f public/brand/spareno-icon-512.png
           test -f public/brand/spareno-maskable-512.png
