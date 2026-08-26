@@ -45,6 +45,30 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests/test_postgres_readiness.py -m postgres
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-lovable-source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Generate Spareno icon family
+        run: |
+          bun src/components/brand/generate-icons.mjs
+          test -f public/brand/spareno-icon-192.png
+          test -f public/brand/spareno-icon-512.png
+          test -f public/brand/spareno-maskable-512.png
+          test -f public/brand/apple-touch-icon.png
+          test -f public/brand/favicon-32.png
+      - name: Production frontend build
+        run: bun run build
+      - name: Frontend lint (advisory)
+        continue-on-error: true
+        run: bun run lint
   docker:
     runs-on: ubuntu-latest
     steps:

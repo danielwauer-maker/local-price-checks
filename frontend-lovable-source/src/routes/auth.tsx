@@ -9,16 +9,16 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Anmelden – Lokero" },
+      { title: "Anmelden – Spareno" },
       {
         name: "description",
         content:
           "Melde dich an, um Einkaufslisten, Favoriten und deine Märkte geräteübergreifend zu sichern.",
       },
-      { property: "og:title", content: "Anmelden – Lokero" },
+      { property: "og:title", content: "Anmelden – Spareno" },
       {
         property: "og:description",
-        content: "Konto für Einkaufslisten, Favoriten und Märkte bei Lokero.",
+        content: "Konto für Einkaufslisten, Favoriten und Märkte bei Spareno.",
       },
     ],
   }),
@@ -145,7 +145,7 @@ function AuthPage() {
         <div className="mt-10 surface-card p-6">
           <h1 className="text-2xl font-semibold">Neues Passwort setzen</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Wähle ein neues Passwort für dein Lokero-Konto.
+            Wähle ein neues Passwort für dein Spareno-Konto.
           </p>
           <form onSubmit={updatePassword} className="mt-6 space-y-3">
             <input
@@ -180,9 +180,9 @@ function AuthPage() {
       ) : user ? (
         <div className="mt-10 surface-card p-6 text-center">
           <p className="text-sm text-muted-foreground">Angemeldet als</p>
-          <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Lokero-Konto"}</p>
+          <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Spareno-Konto"}</p>
           <p className="mt-2 text-xs text-muted-foreground">
-            Diese Anmeldung kann auch aus einer früheren Lokero-/Test-Session stammen.
+            Diese Anmeldung kann auch aus einer früheren Test-Session stammen.
           </p>
           <button
             onClick={async () => {

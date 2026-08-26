@@ -11,6 +11,7 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import brandCss from "../brand.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppShell } from "@/components/AppShell";
 import { AccountSessionSync } from "@/components/AccountSessionSync";
@@ -85,23 +86,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         name: "viewport",
         content: "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover",
       },
-      { title: "Lokero – Alles in deiner Nähe. Das Beste für dich." },
+      { title: "Spareno – besser einkaufen." },
       {
         name: "description",
         content:
-          "Lokero ist dein smarter lokaler Einkaufsassistent: Märkte in der Nähe, aktuelle Angebote, Preisalarme und automatisch optimierte Einkaufsliste.",
+          "Spareno ist dein smarter Einkaufsassistent: lokale Angebote entdecken, Märkte vergleichen und deinen Einkauf optimieren.",
       },
-      { name: "theme-color", content: "#22C55E" },
+      { name: "theme-color", content: "#102A6E" },
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "default" },
-      { name: "apple-mobile-web-app-title", content: "Lokero" },
+      { name: "apple-mobile-web-app-title", content: "Spareno" },
       { name: "format-detection", content: "telephone=no" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      { rel: "stylesheet", href: brandCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -109,9 +111,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: "https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap",
       },
       { rel: "manifest", href: "/manifest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/icons/lokero-icon.svg" },
-      { rel: "icon", href: "/icons/lokero-icon.svg", type: "image/svg+xml" },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png", sizes: "180x180" },
+      { rel: "icon", href: "/brand/spareno-icon.svg", type: "image/svg+xml" },
+      { rel: "icon", href: "/brand/favicon-32.png", type: "image/png", sizes: "32x32" },
     ],
   }),
   shellComponent: RootShell,
