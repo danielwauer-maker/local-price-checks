@@ -24,18 +24,18 @@ export function SparenoMark({ className }: { className?: string }) {
         </linearGradient>
       </defs>
       <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#spareno-bg)" />
-      <g stroke="url(#spareno-ring)" strokeLinecap="round" strokeWidth="2.6">
-        <path d="M15 46A24 24 0 0 1 47 14" />
-        <path d="M18 18A19 19 0 0 1 49 42" />
-        <path d="M21 44A14 14 0 0 1 45 21" />
+      <g stroke="url(#spareno-ring)" strokeLinecap="round" strokeWidth="3.2">
+        <path d="M14 46A25 25 0 0 1 47.5 12.5" />
+        <path d="M18 18A19.5 19.5 0 0 1 50 42.5" />
+        <path d="M20.5 44.5A14.5 14.5 0 0 1 45.5 20.5" />
       </g>
-      <circle cx="48.4" cy="18" r="2.7" fill="#22C55E" />
-      <path d="M32 52 24.4 41.2c-2.8-4-2.5-9.4.6-13.1 3.8-4.4 10.5-5 15-.9 4.4 3.6 5.2 10.1 2 14.8L32 52Z" fill="url(#spareno-pin)" />
-      <circle cx="32" cy="34.6" r="9.1" fill="white" />
-      <g stroke="#102A6E" strokeLinecap="round" strokeWidth="2.2">
-        <path d="m27.7 39 8.7-8.7" />
-        <circle cx="27.6" cy="30.6" r="1.7" />
-        <circle cx="36.6" cy="39" r="1.7" />
+      <circle cx="48.7" cy="17.7" r="3.1" fill="#22C55E" />
+      <path d="M32 53 23.8 41.3c-2.9-4.2-2.6-9.9.7-13.7 4-4.6 11-5.2 15.7-.9 4.6 3.8 5.4 10.6 2.1 15.4L32 53Z" fill="url(#spareno-pin)" />
+      <circle cx="32" cy="34.5" r="9.8" fill="white" />
+      <g stroke="#102A6E" strokeLinecap="round" strokeWidth="2.5">
+        <path d="m27.2 39.3 9.4-9.4" />
+        <circle cx="27.3" cy="30.2" r="1.8" />
+        <circle cx="36.8" cy="39" r="1.8" />
       </g>
     </svg>
   );
@@ -49,9 +49,12 @@ export function SparenoWordmark({
   markClassName?: string;
 }) {
   return (
-    <span className={cn("flex items-center gap-2", className)}>
-      <SparenoMark className={cn("h-7 w-7 shrink-0", markClassName)} />
-      <span className="text-[19px] font-bold tracking-[-0.03em] leading-none" aria-label="Spareno">
+    <span className={cn("flex items-center gap-2.5", className)}>
+      <SparenoMark className={cn("h-10 w-10 shrink-0 sm:h-11 sm:w-11", markClassName)} />
+      <span
+        className="text-[26px] font-bold leading-none tracking-[-0.045em] sm:text-[28px]"
+        aria-label="Spareno"
+      >
         <span style={{ color: "var(--spareno-navy)" }}>spar</span>
         <span style={{ color: "var(--spareno-green)" }}>eno</span>
       </span>
