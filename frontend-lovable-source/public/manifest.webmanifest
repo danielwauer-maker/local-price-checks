@@ -1,16 +1,16 @@
 {
-  "name": "Lokero – Alles in deiner Nähe. Das Beste für dich.",
-  "short_name": "Lokero",
-  "description": "Smarter lokaler Einkaufsassistent: Märkte vergleichen, Angebote entdecken und den Einkauf automatisch optimieren.",
+  "name": "Spareno – besser einkaufen.",
+  "short_name": "Spareno",
+  "description": "Smarter Einkaufsassistent: lokale Angebote entdecken, Märkte vergleichen und den Einkauf optimieren.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#F8FAFC",
-  "theme_color": "#22C55E",
+  "background_color": "#F0FDF4",
+  "theme_color": "#102A6E",
   "lang": "de",
   "icons": [
-    { "src": "/icons/lokero-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/icons/lokero-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+    { "src": "/brand/spareno-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/brand/spareno-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }
