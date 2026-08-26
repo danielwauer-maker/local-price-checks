@@ -1,0 +1,11 @@
+:root {
+  --spareno-navy: #102a6e;
+  --spareno-green: #22c55e;
+  --spareno-mint: #a7f3d0;
+  --spareno-pale-mint: #f0fdf4;
+  --spareno-white: #ffffff;
+
+  /* Brand-only overrides. Functional UI colors remain unchanged. */
+  --brand-navy: var(--spareno-navy);
+  --brand-green: var(--spareno-green);
+}
