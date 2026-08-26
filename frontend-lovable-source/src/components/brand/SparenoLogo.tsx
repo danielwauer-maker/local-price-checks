@@ -1,9 +1,11 @@
 import { cn } from "@/lib/utils";
 
+const SPARENO_MARK_SRC = "/brand/spareno-icon-512.png?v=20260826-rgba";
+
 export function SparenoMark({ className }: { className?: string }) {
   return (
     <img
-      src="/brand/spareno-icon-512.png"
+      src={SPARENO_MARK_SRC}
       alt=""
       aria-hidden="true"
       draggable={false}
