@@ -10,6 +10,7 @@ from . import client_models as client_models
 from . import collection_quality as collection_quality
 from . import coverage_models as coverage_models
 from . import lokero_models as lokero_models
+from . import market_activation as market_activation
 from . import models as models
 from . import prospect_models as prospect_models
 from . import ux_routes as ux_routes

@@ -25,8 +25,9 @@ from .db_transfer import (
 from .model_registry import metadata as application_metadata
 
 BASELINE_REVISION = "20260825_01"
-PREVIOUS_REVISION = "20260825_02"
-TARGET_REVISION = "20260825_03"
+PREVIOUS_REVISION = "20260825_03"
+TARGET_REVISION = "20260826_01"
+HISTORICAL_REVISIONS = {BASELINE_REVISION, "20260825_02", PREVIOUS_REVISION}
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -146,7 +147,7 @@ def _schema_checks(path: Path, revision: str | None) -> None:
     if revision is None:
         expected = baseline_metadata()
         expected_label = BASELINE_REVISION
-    elif revision in {BASELINE_REVISION, PREVIOUS_REVISION}:
+    elif revision in HISTORICAL_REVISIONS:
         expected = revision_metadata(revision)
         expected_label = revision
     elif revision == TARGET_REVISION:
