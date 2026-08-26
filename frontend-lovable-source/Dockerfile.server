@@ -13,7 +13,13 @@ ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
 ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN bun run build && test -f .output/server/index.mjs
+RUN bun src/components/brand/generate-icons.mjs \
+    && test -f public/brand/spareno-icon-192.png \
+    && test -f public/brand/spareno-icon-512.png \
+    && test -f public/brand/spareno-maskable-512.png \
+    && test -f public/brand/apple-touch-icon.png \
+    && bun run build \
+    && test -f .output/server/index.mjs
 
 FROM node:22.14.0-slim AS runtime
 WORKDIR /app
