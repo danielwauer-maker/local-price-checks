@@ -43,7 +43,7 @@ function paeth(a, b, c) {
   return c;
 }
 
-function decodeIndexedPng(buffer) {
+function decodePng(buffer) {
   const signature = buffer.subarray(0, 8);
   const expected = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   if (!signature.equals(expected)) throw new Error("canonical Spareno asset is not a PNG");
@@ -81,41 +81,51 @@ function decodeIndexedPng(buffer) {
     }
   }
 
-  if (bitDepth !== 8 || colorType !== 3 || interlace !== 0 || !palette) {
+  if (bitDepth !== 8 || interlace !== 0 || ![3, 6].includes(colorType)) {
     throw new Error(
       `unsupported canonical PNG format: bitDepth=${bitDepth}, colorType=${colorType}, interlace=${interlace}`,
     );
   }
+  if (colorType === 3 && !palette) throw new Error("indexed canonical PNG is missing its palette");
 
-  const compressed = Buffer.concat(idat);
-  const raw = inflateSync(compressed);
-  const stride = width;
-  const scanline = Buffer.alloc(width * height);
+  const bytesPerPixel = colorType === 6 ? 4 : 1;
+  const stride = width * bytesPerPixel;
+  const raw = inflateSync(Buffer.concat(idat));
+  const expectedLength = (stride + 1) * height;
+  if (raw.length !== expectedLength) {
+    throw new Error(`unexpected decoded PNG length: ${raw.length}; expected ${expectedLength}`);
+  }
+
+  const scanline = Buffer.alloc(stride * height);
   let srcOffset = 0;
 
   for (let y = 0; y < height; y++) {
     const filter = raw[srcOffset++];
+    if (filter > 4) throw new Error(`unsupported PNG filter: ${filter} on row ${y}`);
     const rowStart = y * stride;
+
     for (let x = 0; x < stride; x++) {
       const value = raw[srcOffset++];
-      const left = x > 0 ? scanline[rowStart + x - 1] : 0;
+      const left = x >= bytesPerPixel ? scanline[rowStart + x - bytesPerPixel] : 0;
       const up = y > 0 ? scanline[rowStart - stride + x] : 0;
-      const upLeft = x > 0 && y > 0 ? scanline[rowStart - stride + x - 1] : 0;
+      const upLeft =
+        x >= bytesPerPixel && y > 0 ? scanline[rowStart - stride + x - bytesPerPixel] : 0;
 
       let decoded;
       if (filter === 0) decoded = value;
       else if (filter === 1) decoded = (value + left) & 0xff;
       else if (filter === 2) decoded = (value + up) & 0xff;
       else if (filter === 3) decoded = (value + Math.floor((left + up) / 2)) & 0xff;
-      else if (filter === 4) decoded = (value + paeth(left, up, upLeft)) & 0xff;
-      else throw new Error(`unsupported PNG filter: ${filter}`);
+      else decoded = (value + paeth(left, up, upLeft)) & 0xff;
 
       scanline[rowStart + x] = decoded;
     }
   }
 
+  if (colorType === 6) return { width, height, rgba: scanline };
+
   const rgba = Buffer.alloc(width * height * 4);
-  for (let i = 0; i < scanline.length; i++) {
+  for (let i = 0; i < width * height; i++) {
     const index = scanline[i];
     const paletteOffset = index * 3;
     const out = i * 4;
@@ -183,7 +193,7 @@ function encodeRgbaPng(width, height, rgba) {
   ]);
 }
 
-const canonical = decodeIndexedPng(readFileSync(canonicalPath));
+const canonical = decodePng(readFileSync(canonicalPath));
 const outputs = [
   ["spareno-icon-512.png", 512],
   ["spareno-icon-192.png", 192],
