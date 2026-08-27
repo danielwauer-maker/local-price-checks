@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ArrowRight, Clock3, Heart, ListChecks, Minus, Plus, Save, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Check, Clock3, Heart, ListChecks, Minus, Play, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { Tabs } from "@/components/lokero/FilterChips";
@@ -31,7 +31,18 @@ type ListGroup = {
 
 function ListScreen() {
   const [tab, setTab] = useState("meine");
-  const { listEntries, listCount, favoriteProducts, setQty, addToList, clearList } = useStore();
+  const [shoppingMode, setShoppingMode] = useState(false);
+  const {
+    listEntries,
+    listCount,
+    checkedListItems,
+    favoriteProducts,
+    setQty,
+    addToList,
+    clearList,
+    toggleListChecked,
+    clearCheckedList,
+  } = useStore();
   const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures });
   const trip = useQuery({ queryKey: ["optimized-trip"], queryFn: fetchOptimizedTrip });
   const optimizationEnabled = features.data?.features.optimization !== false && trip.data?.enabled !== false;
@@ -61,6 +72,9 @@ function ListScreen() {
     [groups],
   );
   const hasUnknownPrices = groups.some((group) => group.subtotal == null);
+  const checkedCount = listEntries.filter((entry) => checkedListItems.includes(entry.productId)).length;
+  const progress = listEntries.length > 0 ? Math.round((checkedCount / listEntries.length) * 100) : 0;
+  const allChecked = listEntries.length > 0 && checkedCount === listEntries.length;
   const quickFavorites = useMemo(
     () => favoriteProducts
       .filter((id) => !listEntries.some((entry) => entry.productId === id))
@@ -70,9 +84,14 @@ function ListScreen() {
     [favoriteProducts, listEntries],
   );
 
+  const toggleShoppingMode = () => {
+    setShoppingMode((active) => !active);
+    if (!shoppingMode) toast.success("Einkaufsmodus gestartet");
+  };
+
   return (
     <div>
-      <PageHeader title="Einkaufsliste" action={listEntries.length > 0 ? <button onClick={() => { clearList(); toast.success("Liste geleert"); }} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
+      <PageHeader title="Einkaufsliste" action={listEntries.length > 0 ? <button onClick={() => { clearList(); setShoppingMode(false); toast.success("Liste geleert"); }} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
       <div className="bg-surface px-4"><Tabs options={TABS} value={tab} onChange={setTab} /></div>
 
       {tab === "optimiert" && (
@@ -94,17 +113,38 @@ function ListScreen() {
       {tab === "meine" && (
         <div className="space-y-4 px-4 pt-4">
           {listEntries.length > 0 && (
-            <section className="card-surface flex items-center gap-3 p-4">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><ListChecks className="h-5 w-5" /></span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-semibold text-navy">{listCount} {listCount === 1 ? "Artikel" : "Artikel"} auf deiner Liste</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">{hasUnknownPrices ? `Bekannte Preise: ${formatEuro(knownTotal)}` : `Aktuell günstigster Gesamtpreis: ${formatEuro(knownTotal)}`}</p>
+            <section className="card-surface p-4">
+              <div className="flex items-center gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><ListChecks className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-navy">{shoppingMode ? `${checkedCount} von ${listEntries.length} Positionen erledigt` : `${listCount} Artikel auf deiner Liste`}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{shoppingMode ? "Tippe Produkte an, sobald sie im Wagen liegen." : (hasUnknownPrices ? `Bekannte Preise: ${formatEuro(knownTotal)}` : `Aktuell günstigster Gesamtpreis: ${formatEuro(knownTotal)}`)}</p>
+                </div>
+                {!shoppingMode && <Link to="/suche" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-navy" aria-label="Produkt hinzufügen"><Search className="h-4 w-4" /></Link>}
               </div>
-              <Link to="/suche" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-navy" aria-label="Produkt hinzufügen"><Search className="h-4 w-4" /></Link>
+
+              {shoppingMode && (
+                <div className="mt-3">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted-surface"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} /></div>
+                  <div className="mt-2 flex items-center justify-between text-[11px]"><span className="font-medium text-primary">{progress}% erledigt</span><button type="button" onClick={clearCheckedList} className="inline-flex items-center gap-1 text-muted-foreground"><RotateCcw className="h-3 w-3" /> Zurücksetzen</button></div>
+                </div>
+              )}
+
+              <button type="button" onClick={toggleShoppingMode} className={`mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[13px] font-semibold ${shoppingMode ? "border border-border bg-surface text-navy" : "bg-primary text-primary-foreground"}`}>
+                {shoppingMode ? <><Check className="h-4 w-4" /> Einkaufsmodus beenden</> : <><Play className="h-4 w-4" /> Einkauf starten</>}
+              </button>
             </section>
           )}
 
-          {quickFavorites.length > 0 && (
+          {shoppingMode && allChecked && (
+            <section className="rounded-2xl border border-primary/20 bg-primary-soft p-4 text-center">
+              <span className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-primary text-primary-foreground"><Check className="h-5 w-5" /></span>
+              <h2 className="mt-2 text-[14px] font-semibold text-navy">Einkauf geschafft</h2>
+              <p className="mt-1 text-[11px] text-muted-foreground">Alle Positionen deiner Liste sind abgehakt.</p>
+            </section>
+          )}
+
+          {!shoppingMode && quickFavorites.length > 0 && (
             <section>
               <div className="mb-2 flex items-center gap-1.5"><Heart className="h-3.5 w-3.5 text-primary" /><h2 className="text-[12px] font-semibold text-navy">Aus deinen Favoriten hinzufügen</h2></div>
               <div className="flex gap-2 overflow-x-auto pb-1">
@@ -120,30 +160,45 @@ function ListScreen() {
           )}
 
           {listEntries.length === 0 && <EmptyState icon={ListChecks} title="Deine Einkaufsliste ist noch leer." description="Füge Produkte über Suche, Angebote oder deine Favoriten hinzu." action={<div className="flex flex-wrap justify-center gap-2"><Link to="/suche" className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Search className="h-4 w-4" /> Produkt suchen</Link><Link to="/angebote" className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-navy"><Plus className="h-4 w-4" /> Angebote ansehen</Link></div>} />}
-          {groups.length > 1 && groups.some((group) => group.marketId) && <p className="text-[11px] text-muted-foreground">Märkte werden aktuell nach Entfernung sortiert. Eine echte Routenoptimierung folgt später.</p>}
+          {groups.length > 1 && groups.some((group) => group.marketId) && !shoppingMode && <p className="text-[11px] text-muted-foreground">Märkte werden aktuell nach Entfernung sortiert. Eine echte Routenoptimierung folgt später.</p>}
           {groups.map((group) => {
             const market = group.marketId ? getMarket(group.marketId) : undefined;
+            const displayEntries = shoppingMode
+              ? [...group.entries].sort((a, b) => Number(checkedListItems.includes(a.productId)) - Number(checkedListItems.includes(b.productId)))
+              : group.entries;
             return (
               <section key={group.key} className="overflow-hidden rounded-2xl border border-border bg-surface">
                 <div className="flex items-center gap-3 border-b border-border px-3 py-3">
                   {market && <MarketLogo chain={market.chain} size="sm" />}
                   <div className="min-w-0 flex-1"><h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{group.marketName}</h2>{market && <p className="text-[10px] text-muted-foreground">{formatKm(group.distanceKm)}</p>}</div>
-                  {group.subtotal != null && <div className="shrink-0 text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
+                  {group.subtotal != null && !shoppingMode && <div className="shrink-0 text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
+                  {shoppingMode && <p className="shrink-0 text-[11px] font-medium text-muted-foreground">{displayEntries.filter((entry) => checkedListItems.includes(entry.productId)).length}/{displayEntries.length}</p>}
                 </div>
                 <div className="divide-y divide-border">
-                  {group.entries.map(({ productId, qty, price }) => {
+                  {displayEntries.map(({ productId, qty, price }) => {
                     const product = getProduct(productId);
                     if (!product) return null;
+                    const checked = checkedListItems.includes(productId);
                     return (
-                      <article key={productId} className="flex items-center gap-2.5 p-3">
+                      <article key={productId} className={`flex items-center gap-2.5 p-3 transition-opacity ${checked ? "opacity-55" : ""}`}>
+                        {shoppingMode && (
+                          <button type="button" onClick={() => toggleListChecked(productId)} aria-label={checked ? `${product.name} wieder öffnen` : `${product.name} abhaken`} className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-muted-foreground"}`}>
+                            {checked && <Check className="h-4 w-4" />}
+                          </button>
+                        )}
                         <ProductImage product={product} size="sm" />
-                        <div className="min-w-0 flex-1"><p className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{product.name}</p>{price != null && <p className="tabular mt-1 text-[11px] text-muted-foreground">{formatEuro(price)} je Stück</p>}</div>
-                        <button type="button" onClick={() => setQty(productId, 0)} aria-label={`${product.name} entfernen`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /></button>
-                        <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
-                          <button onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
-                          <span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span>
-                          <button onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
-                        </div>
+                        <button type="button" onClick={shoppingMode ? () => toggleListChecked(productId) : undefined} className={`min-w-0 flex-1 text-left ${shoppingMode ? "cursor-pointer" : "cursor-default"}`}>
+                          <p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p>
+                          <p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p>
+                        </button>
+                        {!shoppingMode && <button type="button" onClick={() => setQty(productId, 0)} aria-label={`${product.name} entfernen`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /></button>}
+                        {!shoppingMode && (
+                          <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
+                            <button onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span>
+                            <button onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                          </div>
+                        )}
                       </article>
                     );
                   })}
