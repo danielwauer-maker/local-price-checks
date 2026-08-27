@@ -16,7 +16,33 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   exit 1
 fi
 
-mkdir -p "$BACKUP_DIR"
+ensure_backup_dir() {
+  if [[ -d "$BACKUP_DIR" && -w "$BACKUP_DIR" ]]; then
+    return 0
+  fi
+
+  if mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+    chmod 750 "$BACKUP_DIR" 2>/dev/null || true
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    sudo -n install -d -m 755 /opt/backups
+    sudo -n install -d -m 750 -o "$(id -u)" -g "$(id -g)" "$BACKUP_DIR"
+  elif command -v docker >/dev/null 2>&1 && [[ "$BACKUP_DIR" == /opt/backups/local-price-checks ]]; then
+    uid="$(id -u)"
+    gid="$(id -g)"
+    docker run --rm -v /opt:/host-opt nginx:1.27-alpine sh -c \
+      "mkdir -p /host-opt/backups/local-price-checks && chown $uid:$gid /host-opt/backups/local-price-checks && chmod 750 /host-opt/backups/local-price-checks"
+  else
+    echo "ERROR: cannot create writable external backup directory $BACKUP_DIR"
+    return 1
+  fi
+
+  if [[ ! -d "$BACKUP_DIR" || ! -w "$BACKUP_DIR" ]]; then
+    echo "ERROR: external backup directory is not writable: $BACKUP_DIR"
+    return 1
+  fi
+}
+
+ensure_backup_dir
 git fetch --prune origin main
 
 if [[ -z "$TARGET_SHA" ]]; then
