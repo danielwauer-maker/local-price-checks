@@ -40,15 +40,7 @@ export const Route = createFileRoute("/einstellungen")({
   component: SettingsPage,
 });
 
-function Section({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: typeof MapPin;
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ icon: Icon, title, children }: { icon: typeof MapPin; title: string; children: ReactNode }) {
   return (
     <section className="card-surface overflow-hidden">
       <h2 className="flex items-center gap-2 border-b border-border px-3.5 py-2.5 text-[13px] font-semibold text-navy">
@@ -60,15 +52,7 @@ function Section({
   );
 }
 
-function Row({
-  label,
-  hint,
-  action,
-}: {
-  label: string;
-  hint?: string;
-  action: ReactNode;
-}) {
+function Row({ label, hint, action }: { label: string; hint?: string; action: ReactNode }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
       <div className="min-w-0">
@@ -80,15 +64,7 @@ function Row({
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <button
       type="button"
@@ -97,14 +73,14 @@ function Toggle({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200",
-        checked ? "bg-primary" : "bg-muted-surface border border-border",
+        "relative h-6 w-11 shrink-0 overflow-hidden rounded-full border transition-colors duration-200",
+        checked ? "border-primary bg-primary" : "border-border bg-muted-surface",
       )}
     >
       <span
         className={cn(
-          "absolute top-0.5 h-5 w-5 rounded-full bg-surface shadow-sm transition-transform duration-200",
-          checked ? "translate-x-[22px]" : "translate-x-0.5",
+          "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-surface shadow-sm transition-transform duration-200",
+          checked ? "translate-x-5" : "translate-x-0",
         )}
       />
     </button>
@@ -122,7 +98,6 @@ function SettingsPage() {
 
   useEffect(() => {
     let active = true;
-
     void supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       setAccountEmail(data.session?.user.email ?? null);
@@ -159,25 +134,15 @@ function SettingsPage() {
         <Section icon={MapPin} title="Standort">
           <Row label="Aktueller Standort" hint={store.location.label} action={<span />} />
           <div className="flex gap-2">
-            <Link
-              to="/regionen"
-              className="tap-target flex h-10 flex-1 items-center justify-center rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy"
-            >
+            <Link to="/regionen" className="tap-target flex h-10 flex-1 items-center justify-center rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy">
               Standort ändern
             </Link>
             <button
               type="button"
-              onClick={() =>
-                navigator.geolocation?.getCurrentPosition(
-                  (pos) =>
-                    store.setLocation({
-                      lat: pos.coords.latitude,
-                      lng: pos.coords.longitude,
-                      label: "Mein Standort",
-                    }),
-                  () => toast.error("Standortfreigabe wurde abgelehnt"),
-                )
-              }
+              onClick={() => navigator.geolocation?.getCurrentPosition(
+                (pos) => store.setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, label: "Mein Standort" }),
+                () => toast.error("Standortfreigabe wurde abgelehnt"),
+              )}
               className="tap-target flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground"
             >
               <Navigation className="h-4 w-4" /> Standort freigeben
@@ -195,9 +160,7 @@ function SettingsPage() {
                 aria-pressed={store.radius === km}
                 className={cn(
                   "h-9 rounded-full border px-3.5 text-[13px] font-medium transition-colors duration-150",
-                  store.radius === km
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-surface text-muted-foreground",
+                  store.radius === km ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-muted-foreground",
                 )}
               >
                 {km} km
@@ -228,24 +191,16 @@ function SettingsPage() {
         </Section>
 
         <Section icon={Bell} title="Benachrichtigungen">
-          {(
-            [
-              ["priceAlerts", "Preisalarme"],
-              ["newOffers", "Neue Angebote"],
-              ["regionAvailable", "Region verfügbar"],
-              ["favoriteOffers", "Favoriten im Angebot"],
-            ] as const
-          ).map(([key, label]) => (
+          {([
+            ["priceAlerts", "Preisalarme"],
+            ["newOffers", "Neue Angebote"],
+            ["regionAvailable", "Region verfügbar"],
+            ["favoriteOffers", "Favoriten im Angebot"],
+          ] as const).map(([key, label]) => (
             <Row
               key={key}
               label={label}
-              action={
-                <Toggle
-                  checked={store.notifications[key]}
-                  onChange={(v) => store.setNotification(key, v)}
-                  label={label}
-                />
-              }
+              action={<Toggle checked={store.notifications[key]} onChange={(v) => store.setNotification(key, v)} label={label} />}
             />
           ))}
         </Section>
@@ -253,11 +208,7 @@ function SettingsPage() {
         <Section icon={ShieldCheck} title="Datenschutz">
           <Row label="Datenschutzerklärung" hint="Wie wir Daten verarbeiten" action={<span />} />
           <Row label="Standortdaten" hint="Nur zur Umkreissuche verwendet" action={<span />} />
-          <Row
-            label="Tracking"
-            hint="Anonyme Nutzungsstatistik"
-            action={<Toggle checked={false} onChange={() => {}} label="Tracking" />}
-          />
+          <Row label="Tracking" hint="Anonyme Nutzungsstatistik" action={<Toggle checked={false} onChange={() => {}} label="Tracking" />} />
         </Section>
 
         <Section icon={User} title="Account">
@@ -265,16 +216,16 @@ function SettingsPage() {
             <div className="h-16 animate-pulse rounded-xl bg-muted-surface" />
           ) : accountEmail ? (
             <>
-              <Row label="Angemeldet als" hint={accountEmail} action={<span className="rounded-full bg-primary-soft px-2 py-1 text-[10px] font-semibold text-primary-deep">Registriert</span>} />
               <Row
-                label="Spareno Premium"
-                hint="Erweiterte Optimierung"
-                action={<Sparkles className="h-4 w-4 text-primary" />}
+                label="Angemeldet als"
+                hint={accountEmail}
+                action={<span className="rounded-full bg-primary-soft px-2 py-1 text-[10px] font-semibold text-primary-deep">Registriert</span>}
               />
+              <Row label="Spareno Premium" hint="Erweiterte Optimierung" action={<Sparkles className="h-4 w-4 text-primary" />} />
               <button
                 type="button"
                 onClick={signOut}
-                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy"
+                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-destructive/25 bg-destructive/5 text-[13px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
               >
                 <LogOut className="h-4 w-4" /> Abmelden
               </button>
@@ -282,10 +233,7 @@ function SettingsPage() {
           ) : (
             <>
               <Row label="Noch nicht angemeldet" hint="Mit Konto kannst du deine Daten geräteübergreifend nutzen." action={<span />} />
-              <Link
-                to="/auth"
-                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground"
-              >
+              <Link to="/auth" className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground">
                 <LogIn className="h-4 w-4" /> Anmelden oder registrieren
               </Link>
             </>
@@ -293,18 +241,14 @@ function SettingsPage() {
         </Section>
 
         <Section icon={Download} title="App">
-          <Row
-            label="Installationsstatus"
-            hint={installed ? "Als App installiert" : "Im Browser geöffnet"}
-            action={<span />}
-          />
+          <Row label="Installationsstatus" hint={installed ? "Als App installiert" : "Im Browser geöffnet"} action={<span />} />
           <button
             type="button"
             onClick={replayOnboarding}
-            className="tap-target flex w-full items-center gap-3 rounded-xl border border-primary/15 bg-primary/[0.045] px-3 py-3 text-left transition-colors hover:bg-primary/[0.075]"
+            className="tap-target flex w-full items-center gap-3 rounded-xl border border-primary/20 bg-primary/[0.055] px-3 py-3 text-left transition-colors hover:bg-primary/[0.09]"
           >
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary">
-              <BookOpen className="h-4.5 w-4.5" />
+              <BookOpen className="h-4 w-4" />
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-[13px] font-semibold text-navy">Einführung erneut ansehen</span>
@@ -312,11 +256,7 @@ function SettingsPage() {
             </span>
           </button>
           <ReviewerSettings />
-          <Row
-            label="Über Spareno"
-            hint="Besser einkaufen."
-            action={<Info className="h-4 w-4 text-muted-foreground" />}
-          />
+          <Row label="Über Spareno" hint="Besser einkaufen." action={<Info className="h-4 w-4 text-muted-foreground" />} />
         </Section>
       </div>
     </div>
