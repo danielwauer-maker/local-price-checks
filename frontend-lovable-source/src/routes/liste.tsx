@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { ArrowRight, Check, Clock3, Heart, ListChecks, Minus, Play, Plus, RotateCcw, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
@@ -9,7 +9,7 @@ import { OptimizedTripSummary, ShoppingMarketGroup, TripRouteRow } from "@/compo
 import { ProductImage } from "@/components/lokero/ProductImage";
 import { MarketLogo } from "@/components/lokero/MarketLogo";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
-import { useStore } from "@/lib/app-store";
+import { manualListKey, useStore } from "@/lib/app-store";
 import { bestPriceFor, fetchFeatures, fetchOptimizedTrip, getMarket, getProduct } from "@/services/lokero-api";
 import { formatEuro, formatKm } from "@/lib/format";
 
@@ -32,13 +32,18 @@ type ListGroup = {
 function ListScreen() {
   const [tab, setTab] = useState("meine");
   const [shoppingMode, setShoppingMode] = useState(false);
+  const [manualName, setManualName] = useState("");
   const {
     listEntries,
     listCount,
+    manualListItems,
     checkedListItems,
     favoriteProducts,
     setQty,
     addToList,
+    addManualListItem,
+    setManualListQty,
+    removeManualListItem,
     clearList,
     toggleListChecked,
     clearCheckedList,
@@ -71,10 +76,15 @@ function ListScreen() {
     () => groups.reduce((sum, group) => sum + (group.subtotal ?? 0), 0),
     [groups],
   );
-  const hasUnknownPrices = groups.some((group) => group.subtotal == null);
-  const checkedCount = listEntries.filter((entry) => checkedListItems.includes(entry.productId)).length;
-  const progress = listEntries.length > 0 ? Math.round((checkedCount / listEntries.length) * 100) : 0;
-  const allChecked = listEntries.length > 0 && checkedCount === listEntries.length;
+  const totalCount = listCount + manualListItems.reduce((sum, item) => sum + item.qty, 0);
+  const totalPositions = listEntries.length + manualListItems.length;
+  const hasAnyItems = totalPositions > 0;
+  const hasUnknownPrices = manualListItems.length > 0 || groups.some((group) => group.subtotal == null);
+  const checkedProductCount = listEntries.filter((entry) => checkedListItems.includes(entry.productId)).length;
+  const checkedManualCount = manualListItems.filter((item) => checkedListItems.includes(manualListKey(item.id))).length;
+  const checkedCount = checkedProductCount + checkedManualCount;
+  const progress = totalPositions > 0 ? Math.round((checkedCount / totalPositions) * 100) : 0;
+  const allChecked = totalPositions > 0 && checkedCount === totalPositions;
   const quickFavorites = useMemo(
     () => favoriteProducts
       .filter((id) => !listEntries.some((entry) => entry.productId === id))
@@ -89,9 +99,18 @@ function ListScreen() {
     if (!shoppingMode) toast.success("Einkaufsmodus gestartet");
   };
 
+  const submitManualItem = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = manualName.trim();
+    if (!name) return;
+    addManualListItem(name);
+    setManualName("");
+    toast.success(`${name} hinzugefügt`);
+  };
+
   return (
     <div>
-      <PageHeader title="Einkaufsliste" action={listEntries.length > 0 ? <button onClick={() => { clearList(); setShoppingMode(false); toast.success("Liste geleert"); }} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
+      <PageHeader title="Einkaufsliste" action={hasAnyItems ? <button onClick={() => { clearList(); setShoppingMode(false); toast.success("Liste geleert"); }} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
       <div className="bg-surface px-4"><Tabs options={TABS} value={tab} onChange={setTab} /></div>
 
       {tab === "optimiert" && (
@@ -112,12 +131,12 @@ function ListScreen() {
 
       {tab === "meine" && (
         <div className="space-y-4 px-4 pt-4">
-          {listEntries.length > 0 && (
+          {hasAnyItems && (
             <section className="card-surface p-4">
               <div className="flex items-center gap-3">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><ListChecks className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-semibold text-navy">{shoppingMode ? `${checkedCount} von ${listEntries.length} Positionen erledigt` : `${listCount} Artikel auf deiner Liste`}</p>
+                  <p className="text-[13px] font-semibold text-navy">{shoppingMode ? `${checkedCount} von ${totalPositions} Positionen erledigt` : `${totalCount} Artikel auf deiner Liste`}</p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">{shoppingMode ? "Tippe Produkte an, sobald sie im Wagen liegen." : (hasUnknownPrices ? `Bekannte Preise: ${formatEuro(knownTotal)}` : `Aktuell günstigster Gesamtpreis: ${formatEuro(knownTotal)}`)}</p>
                 </div>
                 {!shoppingMode && <Link to="/suche" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-navy" aria-label="Produkt hinzufügen"><Search className="h-4 w-4" /></Link>}
@@ -144,6 +163,17 @@ function ListScreen() {
             </section>
           )}
 
+          {!shoppingMode && (
+            <form onSubmit={submitManualItem} className="rounded-2xl border border-border bg-surface p-3">
+              <label htmlFor="manual-list-item" className="mb-2 block text-[12px] font-semibold text-navy">Artikel frei hinzufügen</label>
+              <div className="flex gap-2">
+                <input id="manual-list-item" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="z. B. Müllbeutel" maxLength={120} className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-muted-surface px-3 text-[13px] text-navy outline-none placeholder:text-muted-foreground focus:border-primary" />
+                <button type="submit" disabled={!manualName.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40" aria-label="Freien Artikel hinzufügen"><Plus className="h-4 w-4" /></button>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Für Dinge, die Spareno nicht als Produkt kennt. Sie bleiben auf diesem Gerät gespeichert.</p>
+            </form>
+          )}
+
           {!shoppingMode && quickFavorites.length > 0 && (
             <section>
               <div className="mb-2 flex items-center gap-1.5"><Heart className="h-3.5 w-3.5 text-primary" /><h2 className="text-[12px] font-semibold text-navy">Aus deinen Favoriten hinzufügen</h2></div>
@@ -159,7 +189,7 @@ function ListScreen() {
             </section>
           )}
 
-          {listEntries.length === 0 && <EmptyState icon={ListChecks} title="Deine Einkaufsliste ist noch leer." description="Füge Produkte über Suche, Angebote oder deine Favoriten hinzu." action={<div className="flex flex-wrap justify-center gap-2"><Link to="/suche" className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Search className="h-4 w-4" /> Produkt suchen</Link><Link to="/angebote" className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-navy"><Plus className="h-4 w-4" /> Angebote ansehen</Link></div>} />}
+          {!hasAnyItems && <EmptyState icon={ListChecks} title="Deine Einkaufsliste ist noch leer." description="Füge einen freien Artikel ein oder wähle ein Produkt über Suche, Angebote oder Favoriten." action={<div className="flex flex-wrap justify-center gap-2"><Link to="/suche" className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Search className="h-4 w-4" /> Produkt suchen</Link><Link to="/angebote" className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-navy"><Plus className="h-4 w-4" /> Angebote ansehen</Link></div>} />}
           {groups.length > 1 && groups.some((group) => group.marketId) && !shoppingMode && <p className="text-[11px] text-muted-foreground">Märkte werden aktuell nach Entfernung sortiert. Eine echte Routenoptimierung folgt später.</p>}
           {groups.map((group) => {
             const market = group.marketId ? getMarket(group.marketId) : undefined;
@@ -206,6 +236,44 @@ function ListScreen() {
               </section>
             );
           })}
+
+          {manualListItems.length > 0 && (
+            <section className="overflow-hidden rounded-2xl border border-border bg-surface">
+              <div className="flex items-center justify-between border-b border-border px-3 py-3">
+                <div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">Manuell hinzugefügt · ohne Preisvergleich</p></div>
+                {shoppingMode && <p className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</p>}
+              </div>
+              <div className="divide-y divide-border">
+                {[...manualListItems]
+                  .sort((a, b) => shoppingMode ? Number(checkedListItems.includes(manualListKey(a.id))) - Number(checkedListItems.includes(manualListKey(b.id))) : 0)
+                  .map((item) => {
+                    const itemKey = manualListKey(item.id);
+                    const checked = checkedListItems.includes(itemKey);
+                    return (
+                      <article key={item.id} className={`flex items-center gap-2.5 p-3 transition-opacity ${checked ? "opacity-55" : ""}`}>
+                        {shoppingMode && (
+                          <button type="button" onClick={() => toggleListChecked(itemKey)} aria-label={checked ? `${item.name} wieder öffnen` : `${item.name} abhaken`} className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-muted-foreground"}`}>
+                            {checked && <Check className="h-4 w-4" />}
+                          </button>
+                        )}
+                        <button type="button" onClick={shoppingMode ? () => toggleListChecked(itemKey) : undefined} className={`min-w-0 flex-1 text-left ${shoppingMode ? "cursor-pointer" : "cursor-default"}`}>
+                          <p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p>
+                        </button>
+                        {!shoppingMode && <button type="button" onClick={() => removeManualListItem(item.id)} aria-label={`${item.name} entfernen`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /></button>}
+                        {!shoppingMode && (
+                          <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
+                            <button onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span>
+                            <button onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </div>
