@@ -459,7 +459,7 @@ def accept_list_invite(token: str, db: Session = Depends(get_db)):
         .filter(SharedShoppingListInvite.token == token)
         .first()
     )
-    if invite is None or invite.expires_at < datetime.utcnow():
+    if invite is None or invite.expires_at < datetime.utcnow() or invite.accepted_at is not None:
         raise HTTPException(status_code=404, detail="Die Einladung ist abgelaufen oder ungültig.")
     if invite.invited_email and (identity.email or "").strip().lower() != invite.invited_email:
         raise HTTPException(
@@ -500,10 +500,11 @@ def remove_list_member(list_id: int, member_user_id: int, db: Session = Depends(
         raise HTTPException(status_code=400, detail="Der Besitzer kann nicht entfernt werden.")
     if user.id != member_user_id and membership.role != "owner":
         raise HTTPException(status_code=403, detail="Nur der Besitzer kann andere Mitglieder entfernen.")
+    target_user = db.get(UserProfile, target.user_id)
     db.delete(target)
     target_state = db.get(SharedShoppingListUserState, member_user_id)
-    if target_state and target_state.active_list_id == list_id:
-        target_state.active_list_id = _ensure_personal_list(db, target.user).id
+    if target_state and target_state.active_list_id == list_id and target_user is not None:
+        target_state.active_list_id = _ensure_personal_list(db, target_user).id
     _bump(shopping_list)
     db.commit()
     return {"removed": True}
