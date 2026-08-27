@@ -85,6 +85,11 @@ function ListScreen() {
   const checkedCount = checkedProductCount + checkedManualCount;
   const progress = totalPositions > 0 ? Math.round((checkedCount / totalPositions) * 100) : 0;
   const allChecked = totalPositions > 0 && checkedCount === totalPositions;
+  const priceSummary = hasUnknownPrices
+    ? knownTotal > 0
+      ? `Bekannte Preise: ${formatEuro(knownTotal)}`
+      : "Für diese Liste fehlen noch Vergleichspreise."
+    : `Aktuell günstigster Gesamtpreis: ${formatEuro(knownTotal)}`;
   const quickFavorites = useMemo(
     () => favoriteProducts
       .filter((id) => !listEntries.some((entry) => entry.productId === id))
@@ -96,7 +101,19 @@ function ListScreen() {
 
   const toggleShoppingMode = () => {
     setShoppingMode((active) => !active);
-    if (!shoppingMode) toast.success("Einkaufsmodus gestartet");
+    if (!shoppingMode) toast.success(checkedCount > 0 ? "Einkauf fortgesetzt" : "Einkaufsmodus gestartet");
+  };
+
+  const changeTab = (nextTab: string) => {
+    if (nextTab !== "meine") setShoppingMode(false);
+    setTab(nextTab);
+  };
+
+  const confirmClearList = () => {
+    if (!window.confirm("Möchtest du wirklich die komplette Einkaufsliste leeren?")) return;
+    clearList();
+    setShoppingMode(false);
+    toast.success("Liste geleert");
   };
 
   const submitManualItem = (event: FormEvent<HTMLFormElement>) => {
@@ -110,8 +127,8 @@ function ListScreen() {
 
   return (
     <div>
-      <PageHeader title="Einkaufsliste" action={hasAnyItems ? <button onClick={() => { clearList(); setShoppingMode(false); toast.success("Liste geleert"); }} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
-      <div className="bg-surface px-4"><Tabs options={TABS} value={tab} onChange={setTab} /></div>
+      <PageHeader title="Einkaufsliste" action={hasAnyItems ? <button type="button" onClick={confirmClearList} className="tap-target grid place-items-center rounded-xl text-muted-foreground" aria-label="Liste leeren"><Trash2 className="h-4.5 w-4.5" /></button> : undefined} />
+      <div className="bg-surface px-4"><Tabs options={TABS} value={tab} onChange={changeTab} /></div>
 
       {tab === "optimiert" && (
         <div className="space-y-3 px-4 pt-4">
@@ -122,10 +139,10 @@ function ListScreen() {
               <span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary-soft text-primary"><Clock3 className="h-5 w-5" /></span>
               <h2 className="mt-3 text-[15px] font-semibold text-navy">Einkaufsoptimierung wird vorbereitet</h2>
               <p className="mx-auto mt-1 max-w-[300px] text-[12px] leading-relaxed text-muted-foreground">Deine Einkaufsliste funktioniert bereits. Sobald mehrere geprüfte Märkte und belastbare Vergleichspreise verfügbar sind, schaltet Spareno die optimale Marktkombination frei.</p>
-              <button type="button" onClick={() => setTab("meine")} className="mt-4 h-11 rounded-xl bg-primary px-4 text-[13px] font-semibold text-primary-foreground">Liste ansehen</button>
+              <button type="button" onClick={() => changeTab("meine")} className="mt-4 h-11 rounded-xl bg-primary px-4 text-[13px] font-semibold text-primary-foreground">Liste ansehen</button>
             </section>
           )}
-          {optimizationEnabled && trip.data && <><OptimizedTripSummary trip={trip.data} /><TripRouteRow trip={trip.data} />{trip.data.stops.map((s) => <ShoppingMarketGroup key={s.marketId} stop={s} />)}<button onClick={() => toast.success("Route wird in deiner Karten-App geöffnet")} className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground">Route & Einkauf starten <ArrowRight className="h-4 w-4" /></button><button onClick={() => toast.success("Liste gespeichert")} className="flex w-full items-center justify-center gap-2 py-1 text-[13px] font-medium text-muted-foreground"><Save className="h-4 w-4" /> Liste speichern</button></>}
+          {optimizationEnabled && trip.data && <><OptimizedTripSummary trip={trip.data} /><TripRouteRow trip={trip.data} />{trip.data.stops.map((s) => <ShoppingMarketGroup key={s.marketId} stop={s} />)}<button type="button" onClick={() => toast.success("Route wird in deiner Karten-App geöffnet")} className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground">Route & Einkauf starten <ArrowRight className="h-4 w-4" /></button><button type="button" onClick={() => toast.success("Liste gespeichert")} className="flex w-full items-center justify-center gap-2 py-1 text-[13px] font-medium text-muted-foreground"><Save className="h-4 w-4" /> Liste speichern</button></>}
         </div>
       )}
 
@@ -137,26 +154,26 @@ function ListScreen() {
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><ListChecks className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-semibold text-navy">{shoppingMode ? `${checkedCount} von ${totalPositions} Positionen erledigt` : `${totalCount} Artikel auf deiner Liste`}</p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">{shoppingMode ? "Tippe Produkte an, sobald sie im Wagen liegen." : (hasUnknownPrices ? `Bekannte Preise: ${formatEuro(knownTotal)}` : `Aktuell günstigster Gesamtpreis: ${formatEuro(knownTotal)}`)}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{shoppingMode ? "Tippe Produkte an, sobald sie im Wagen liegen." : priceSummary}</p>
                 </div>
                 {!shoppingMode && <Link to="/suche" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface text-navy" aria-label="Produkt hinzufügen"><Search className="h-4 w-4" /></Link>}
               </div>
 
               {shoppingMode && (
-                <div className="mt-3">
-                  <div className="h-2 overflow-hidden rounded-full bg-muted-surface"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} /></div>
-                  <div className="mt-2 flex items-center justify-between text-[11px]"><span className="font-medium text-primary">{progress}% erledigt</span><button type="button" onClick={clearCheckedList} className="inline-flex items-center gap-1 text-muted-foreground"><RotateCcw className="h-3 w-3" /> Zurücksetzen</button></div>
+                <div className="mt-3" aria-live="polite">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted-surface" role="progressbar" aria-label="Einkaufsfortschritt" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} /></div>
+                  <div className="mt-2 flex items-center justify-between text-[11px]"><span className="font-medium text-primary">{progress}% erledigt</span><button type="button" onClick={clearCheckedList} disabled={checkedCount === 0} className="inline-flex items-center gap-1 text-muted-foreground disabled:opacity-40"><RotateCcw className="h-3 w-3" /> Zurücksetzen</button></div>
                 </div>
               )}
 
               <button type="button" onClick={toggleShoppingMode} className={`mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[13px] font-semibold ${shoppingMode ? "border border-border bg-surface text-navy" : "bg-primary text-primary-foreground"}`}>
-                {shoppingMode ? <><Check className="h-4 w-4" /> Einkaufsmodus beenden</> : <><Play className="h-4 w-4" /> Einkauf starten</>}
+                {shoppingMode ? <><Check className="h-4 w-4" /> Einkaufsmodus beenden</> : <><Play className="h-4 w-4" /> {checkedCount > 0 ? "Einkauf fortsetzen" : "Einkauf starten"}</>}
               </button>
             </section>
           )}
 
           {shoppingMode && allChecked && (
-            <section className="rounded-2xl border border-primary/20 bg-primary-soft p-4 text-center">
+            <section className="rounded-2xl border border-primary/20 bg-primary-soft p-4 text-center" aria-live="polite">
               <span className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-primary text-primary-foreground"><Check className="h-5 w-5" /></span>
               <h2 className="mt-2 text-[14px] font-semibold text-navy">Einkauf geschafft</h2>
               <p className="mt-1 text-[11px] text-muted-foreground">Alle Positionen deiner Liste sind abgehakt.</p>
@@ -167,7 +184,7 @@ function ListScreen() {
             <form onSubmit={submitManualItem} className="rounded-2xl border border-border bg-surface p-3">
               <label htmlFor="manual-list-item" className="mb-2 block text-[12px] font-semibold text-navy">Artikel frei hinzufügen</label>
               <div className="flex gap-2">
-                <input id="manual-list-item" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="z. B. Müllbeutel" maxLength={120} className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-muted-surface px-3 text-[13px] text-navy outline-none placeholder:text-muted-foreground focus:border-primary" />
+                <input id="manual-list-item" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="z. B. Müllbeutel" maxLength={80} autoComplete="off" enterKeyHint="done" className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-muted-surface px-3 text-[13px] text-navy outline-none placeholder:text-muted-foreground focus:border-primary" />
                 <button type="submit" disabled={!manualName.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40" aria-label="Freien Artikel hinzufügen"><Plus className="h-4 w-4" /></button>
               </div>
               <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Für Dinge, die Spareno nicht als Produkt kennt. Sie bleiben auf diesem Gerät gespeichert.</p>
@@ -224,9 +241,9 @@ function ListScreen() {
                         {!shoppingMode && <button type="button" onClick={() => setQty(productId, 0)} aria-label={`${product.name} entfernen`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /></button>}
                         {!shoppingMode && (
                           <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
-                            <button onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
                             <span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span>
-                            <button onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
                           </div>
                         )}
                       </article>
@@ -263,9 +280,9 @@ function ListScreen() {
                         {!shoppingMode && <button type="button" onClick={() => removeManualListItem(item.id)} aria-label={`${item.name} entfernen`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground"><Trash2 className="h-3.5 w-3.5" /></button>}
                         {!shoppingMode && (
                           <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
-                            <button onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
                             <span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span>
-                            <button onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                            <button type="button" onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
                           </div>
                         )}
                       </article>
