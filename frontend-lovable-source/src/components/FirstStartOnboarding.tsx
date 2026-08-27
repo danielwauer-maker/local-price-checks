@@ -3,7 +3,6 @@ import {
   ArrowRight,
   Check,
   Heart,
-  ListChecks,
   MapPin,
   Search,
   ShoppingBasket,
@@ -25,23 +24,24 @@ type OnboardingCard = {
   title: string;
   text: string;
   visual: ReactNode;
+  titleClassName?: string;
 };
 
 function MapVisual() {
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-[1.75rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
+    <div className="relative h-full w-full overflow-hidden rounded-[1.65rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
       <div className="absolute inset-0 opacity-50" style={{ backgroundImage: "linear-gradient(to right, hsl(var(--border)) 1px, transparent 1px), linear-gradient(to bottom, hsl(var(--border)) 1px, transparent 1px)", backgroundSize: "34px 34px" }} />
       <div className="absolute left-[12%] top-[58%] h-1.5 w-[78%] -rotate-6 rounded-full bg-primary/10" />
       <div className="absolute left-[24%] top-[18%] h-[70%] w-1.5 rotate-[28deg] rounded-full bg-primary/10" />
       <div className="absolute left-[58%] top-[16%] h-[70%] w-1.5 -rotate-[18deg] rounded-full bg-primary/10" />
 
-      <div className="absolute left-[15%] top-[22%] grid h-11 w-11 place-items-center rounded-2xl bg-surface shadow-sm ring-1 ring-border">
+      <div className="absolute left-[15%] top-[22%] grid h-10 w-10 place-items-center rounded-2xl bg-surface shadow-sm ring-1 ring-border">
         <Store className="h-5 w-5 text-primary" />
       </div>
       <div className="absolute right-[14%] top-[30%] grid h-10 w-10 place-items-center rounded-2xl bg-surface shadow-sm ring-1 ring-border">
         <MapPin className="h-5 w-5 text-primary" />
       </div>
-      <div className="absolute bottom-[17%] left-[43%] grid h-12 w-12 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg ring-4 ring-primary/10">
+      <div className="absolute bottom-[18%] left-[43%] grid h-11 w-11 place-items-center rounded-full bg-primary text-primary-foreground shadow-lg ring-4 ring-primary/10">
         <MapPin className="h-5 w-5" fill="currentColor" />
       </div>
       <div className="absolute bottom-3 right-3 rounded-xl bg-surface/95 px-3 py-2 text-left shadow-sm ring-1 ring-border">
@@ -54,7 +54,7 @@ function MapVisual() {
 
 function OffersVisual() {
   return (
-    <div className="flex h-full w-full flex-col justify-center rounded-[1.75rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
+    <div className="flex h-full w-full flex-col justify-center rounded-[1.65rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
       <div className="mx-auto mb-3 flex h-10 w-[88%] items-center gap-2 rounded-xl border border-border bg-surface px-3 shadow-sm">
         <Search className="h-4 w-4 text-primary" />
         <span className="text-[11px] text-muted-foreground">Cola, Käse, Fisch …</span>
@@ -62,7 +62,7 @@ function OffersVisual() {
       <div className="grid grid-cols-3 gap-2.5">
         {["Cola", "Käse", "Kaffee"].map((name, index) => (
           <div key={name} className="relative rounded-2xl border border-border bg-surface p-2.5 shadow-sm">
-            <div className="grid h-12 place-items-center rounded-xl bg-muted-surface">
+            <div className="grid h-11 place-items-center rounded-xl bg-muted-surface">
               {index === 0 ? <ShoppingBasket className="h-5 w-5 text-primary" /> : index === 1 ? <Tag className="h-5 w-5 text-primary" /> : <Sparkles className="h-5 w-5 text-primary" />}
             </div>
             <p className="mt-2 truncate text-[10px] font-semibold text-navy">{name}</p>
@@ -78,7 +78,7 @@ function OffersVisual() {
 function ListVisual() {
   const rows = ["Milch", "Tomaten", "Müllbeutel"];
   return (
-    <div className="h-full w-full rounded-[1.75rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
+    <div className="h-full w-full rounded-[1.65rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
       <div className="mx-auto h-full max-w-[300px] overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
         <div className="flex items-center justify-between bg-muted-surface px-3 py-2.5">
           <div className="flex items-center gap-2"><Store className="h-4 w-4 text-primary" /><span className="text-[11px] font-semibold text-navy">Mein Einkauf</span></div>
@@ -102,8 +102,8 @@ function ListVisual() {
 
 function SavingsVisual() {
   return (
-    <div className="h-full w-full rounded-[1.75rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
-      <div className="mx-auto grid h-full max-w-[310px] grid-cols-[1fr_auto_1fr] items-center gap-2">
+    <div className="h-full w-full rounded-[1.65rem] border border-primary/10 bg-primary/[0.045] p-4" aria-hidden="true">
+      <div className="mx-auto grid h-full max-w-[300px] grid-cols-[1fr_auto_1fr] items-center gap-2">
         <div className="rounded-2xl border border-border bg-surface p-3 text-center shadow-sm">
           <Store className="mx-auto h-5 w-5 text-muted-foreground" />
           <p className="mt-2 text-[10px] font-semibold text-navy">Markt A</p>
@@ -116,7 +116,7 @@ function SavingsVisual() {
           <p className="mt-1 text-[15px] font-bold text-primary">23,10 €</p>
         </div>
       </div>
-      <div className="mx-auto -mt-8 flex w-fit items-center gap-2 rounded-full bg-primary px-3 py-1.5 text-primary-foreground shadow-sm">
+      <div className="mx-auto -mt-7 flex w-fit items-center gap-2 rounded-full bg-primary px-3 py-1.5 text-primary-foreground shadow-sm">
         <Sparkles className="h-3.5 w-3.5" />
         <span className="text-[10px] font-bold">5,30 € sparen</span>
       </div>
@@ -130,6 +130,7 @@ const CARDS: OnboardingCard[] = [
     title: "Lokale Märkte in deiner Nähe",
     text: "Entdecke Angebote aus Märkten in deiner Umgebung. Spareno zeigt dir, welche Händler in deiner Region bereits verfügbar sind.",
     visual: <MapVisual />,
+    titleClassName: "max-w-[16ch]",
   },
   {
     eyebrow: "Angebote entdecken",
@@ -239,7 +240,7 @@ export function FirstStartOnboarding({ active = true }: { active?: boolean }) {
       <div className="mx-auto flex h-[100dvh] w-full max-w-[480px] flex-col overflow-hidden bg-background px-4 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
         <div className="flex h-11 shrink-0 items-center justify-between">
           <div className="font-display text-[17px] font-semibold tracking-tight text-primary">Spareno</div>
-          <button type="button" onClick={complete} className="rounded-full px-3 py-2 text-[12px] font-semibold text-muted-foreground hover:bg-muted-surface">
+          <button type="button" onClick={complete} className="rounded-full px-3 py-2 text-[12px] font-semibold text-muted-foreground transition-colors hover:bg-muted-surface hover:text-navy">
             Überspringen
           </button>
         </div>
@@ -250,14 +251,14 @@ export function FirstStartOnboarding({ active = true }: { active?: boolean }) {
           onPointerUp={handlePointerUp}
           onPointerCancel={() => { pointerStartX.current = null; }}
         >
-          <div className="mx-auto mt-1 h-[min(31dvh,220px)] min-h-[165px] w-full max-w-[390px] shrink-0">
+          <div className="mx-auto mt-1 h-[min(28dvh,198px)] min-h-[152px] w-full max-w-[382px] shrink-0">
             {card.visual}
           </div>
 
-          <div className="mx-auto flex min-h-0 w-full max-w-[390px] flex-1 flex-col justify-center px-1 py-3 text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary">{card.eyebrow}</p>
-            <h1 className="mt-2 font-display text-[clamp(1.35rem,3.2dvh,1.8rem)] font-semibold leading-tight tracking-tight text-navy">{card.title}</h1>
-            <p className="mx-auto mt-2.5 max-w-[35ch] text-[clamp(0.78rem,1.75dvh,0.95rem)] leading-relaxed text-muted-foreground">{card.text}</p>
+          <div className="mx-auto flex min-h-0 w-full max-w-[390px] flex-1 flex-col items-center justify-start px-1 pb-2 pt-[clamp(1.65rem,5dvh,3rem)] text-center">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary">{card.eyebrow}</p>
+            <h1 className={`mx-auto mt-2 font-display text-[clamp(1.28rem,2.9dvh,1.68rem)] font-semibold leading-[1.08] tracking-tight text-navy ${card.titleClassName ?? ""}`}>{card.title}</h1>
+            <p className="mx-auto mt-3 max-w-[34ch] text-[clamp(0.78rem,1.65dvh,0.93rem)] leading-[1.55] text-muted-foreground">{card.text}</p>
           </div>
         </div>
 
@@ -270,7 +271,7 @@ export function FirstStartOnboarding({ active = true }: { active?: boolean }) {
                 onClick={() => setStep(index)}
                 aria-label={`Zu Schritt ${index + 1}`}
                 aria-current={index === step ? "step" : undefined}
-                className={`h-2 rounded-full transition-all ${index === step ? "w-7 bg-primary" : "w-2 bg-border"}`}
+                className={`h-2 rounded-full transition-all duration-200 ${index === step ? "w-7 bg-primary" : "w-2 bg-border"}`}
               />
             ))}
           </div>
@@ -280,12 +281,12 @@ export function FirstStartOnboarding({ active = true }: { active?: boolean }) {
               type="button"
               onClick={previous}
               disabled={step === 0}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-border bg-surface text-navy disabled:pointer-events-none disabled:opacity-0"
+              className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-border bg-surface text-navy shadow-sm transition-colors hover:bg-muted-surface disabled:pointer-events-none disabled:opacity-0"
               aria-label="Zurück"
             >
               <ArrowLeft className="h-4.5 w-4.5" />
             </button>
-            <button type="button" onClick={next} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 text-[13px] font-semibold text-primary-foreground shadow-sm">
+            <button type="button" onClick={next} className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-5 text-[13px] font-semibold text-primary-foreground shadow-sm transition-transform active:scale-[0.99]">
               {lastStep ? "Los geht’s" : "Weiter"}
               <ArrowRight className="h-4 w-4" />
             </button>
