@@ -40,7 +40,8 @@ printf 'Deploying %s -> %s\n' "$OLD_SHA" "$TARGET_SHA"
 printf '%s\n' "$CHANGED_FILES"
 
 # Database schema changes deliberately require a manual production release.
-if grep -Eq '^(alembic\.ini|alembic/|migrations/|app/.+migration|app/models\.py$|app/client_models\.py$)' <<<"$CHANGED_FILES"; then
+# Catch every SQLAlchemy model module, not only the two legacy model files.
+if grep -Eq '^(alembic\.ini|alembic/|migrations/|app/.+migration|app/models\.py$|app/[^/]*_models\.py$)' <<<"$CHANGED_FILES"; then
   echo "ERROR: database/schema-related change detected. Manual deployment approval required."
   exit 42
 fi
