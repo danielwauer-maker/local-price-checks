@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronDown, Copy, Link2, Plus, Share2, UserPlus, Users, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Link2, Plus, Share2, Trash2, UserPlus, Users, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useStore } from "@/lib/app-store";
-import { createShoppingListInvite, shoppingInviteUrl, type ListInvite } from "@/services/sharing-api";
+import { createShoppingListInvite, removeShoppingListMember, shoppingInviteUrl, type ListInvite } from "@/services/sharing-api";
 
 export function SharedListControls() {
   const {
@@ -14,6 +14,7 @@ export function SharedListControls() {
     activeShoppingListMembers,
     selectShoppingList,
     createSharedShoppingList,
+    refreshShoppingSharing,
   } = useStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -37,7 +38,7 @@ export function SharedListControls() {
         <Users className="h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-semibold text-navy">Einkaufsliste gemeinsam nutzen</p>
-          <p className="text-[10px] text-muted-foreground">Mit Account in Echtzeit mit Partnern oder Freunden teilen</p>
+          <p className="text-[10px] text-muted-foreground">Mit Account nahezu live mit Partnern oder Freunden teilen</p>
         </div>
         <ChevronDown className="h-4 w-4 -rotate-90 text-primary" />
       </Link>
@@ -90,6 +91,21 @@ export function SharedListControls() {
     }
   };
 
+  const removeMember = async (userId: string, displayName: string) => {
+    if (!activeShoppingListId) return;
+    if (!window.confirm(`${displayName} wirklich aus dieser Einkaufsliste entfernen?`)) return;
+    setBusy(true);
+    try {
+      await removeShoppingListMember(activeShoppingListId, userId);
+      await refreshShoppingSharing();
+      toast.success(`${displayName} wurde aus der Liste entfernt`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Mitglied konnte nicht entfernt werden");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <div className="mt-2 flex items-stretch gap-2">
@@ -115,7 +131,7 @@ export function SharedListControls() {
             type="button"
             onClick={() => { setInvite(null); setShareOpen(true); }}
             className="grid w-12 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary-soft text-primary"
-            aria-label="Einkaufsliste teilen"
+            aria-label="Einkaufsliste teilen und Mitglieder verwalten"
           >
             <UserPlus className="h-4.5 w-4.5" />
           </button>
@@ -156,7 +172,7 @@ export function SharedListControls() {
                     <Users className={`h-4 w-4 ${selected ? "text-primary" : "text-muted-foreground"}`} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[12px] font-semibold text-navy">{list.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{list.memberCount > 1 ? `${list.memberCount} Personen` : "Nur du"}</p>
+                      <p className="text-[10px] text-muted-foreground">{list.memberCount > 1 ? `${list.memberCount} Personen` : "Nur du"}{list.role !== "owner" ? " · geteilt mit dir" : ""}</p>
                     </div>
                     {selected && <Check className="h-4 w-4 text-primary" />}
                   </button>
@@ -169,6 +185,7 @@ export function SharedListControls() {
                 <input id="new-list-name" value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="z. B. Familie oder Grillabend" maxLength={120} className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-muted-surface px-3 text-[12px] outline-none focus:border-primary" />
                 <button type="button" disabled={!newName.trim() || busy} onClick={() => void createList()} className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-primary px-3 text-[12px] font-semibold text-primary-foreground disabled:opacity-40"><Plus className="h-4 w-4" /> Erstellen</button>
               </div>
+              <p className="mt-2 text-[9px] leading-relaxed text-muted-foreground">Du musst beim Hinzufügen eines Angebots nichts auswählen: Spareno verwendet immer die zuletzt aktive Liste.</p>
             </div>
           </div>
         </div>
@@ -183,8 +200,14 @@ export function SharedListControls() {
             </div>
             <div className="mt-4 rounded-xl bg-primary-soft/55 p-3">
               <p className="text-[11px] font-semibold text-navy">Mitglieder · {activeShoppingListMembers.length}</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {activeShoppingListMembers.map((member) => <span key={member.userId} className="rounded-full border border-primary/15 bg-surface px-2.5 py-1 text-[10px] text-navy">{member.displayName}{member.role === "owner" ? " · Besitzer" : ""}</span>)}
+              <div className="mt-2 space-y-1.5">
+                {activeShoppingListMembers.map((member) => (
+                  <div key={member.userId} className="flex items-center gap-2 rounded-xl border border-primary/10 bg-surface px-2.5 py-2">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary-soft text-[10px] font-bold text-primary">{member.displayName.trim().charAt(0).toUpperCase() || "S"}</span>
+                    <div className="min-w-0 flex-1"><p className="truncate text-[10px] font-semibold text-navy">{member.displayName}</p><p className="truncate text-[9px] text-muted-foreground">{member.role === "owner" ? "Besitzer" : member.email || "Kann Liste bearbeiten"}</p></div>
+                    {member.role !== "owner" && <button type="button" disabled={busy} onClick={() => void removeMember(member.userId, member.displayName)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-destructive/5 hover:text-destructive" aria-label={`${member.displayName} entfernen`}><Trash2 className="h-3.5 w-3.5" /></button>}
+                  </div>
+                ))}
               </div>
             </div>
             {!invite ? (
