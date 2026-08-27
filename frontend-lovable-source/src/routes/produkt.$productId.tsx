@@ -20,10 +20,21 @@ export const Route = createFileRoute("/produkt/$productId")({
   component: ProductScreen,
 });
 
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function ProductScreen() {
   const { productId } = Route.useParams();
   const navigate = useNavigate();
   const {
+    location,
     list,
     addToList,
     isFavoriteProduct,
@@ -34,6 +45,26 @@ function ProductScreen() {
   } = useStore();
   const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures });
   const product = getProduct(productId);
+  const productDetails = useQuery({
+    queryKey: ["product-detail-meta", productId],
+    enabled: !!product,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!product) return null;
+      try {
+        const response = await fetch(`/api/products?q=${encodeURIComponent(product.name)}`, {
+          credentials: "include",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) return null;
+        const rows = await response.json() as Array<Record<string, unknown>>;
+        const exact = rows.find((row) => String(row.id ?? "") === productId) ?? rows[0];
+        return exact ? String(exact.category ?? "") || null : null;
+      } catch {
+        return null;
+      }
+    },
+  });
 
   if (!product) return <div className="px-4 pt-6"><EmptyState icon={LineChart} title="Produkt nicht gefunden" /></div>;
 
@@ -47,6 +78,7 @@ function ProductScreen() {
   const priceAlertsEnabled = features.data?.features.price_alerts === true;
   const productAlternativesEnabled = features.data?.features.product_alternatives === true;
   const productMeta = [product.brand, product.detail ?? product.amount].filter(Boolean).join(" · ");
+  const categoryLabel = productDetails.data ?? getCategory(product.category)?.label ?? "Sonstiges";
 
   const goBack = () => {
     if (typeof window !== "undefined" && window.history.length > 1) {
@@ -71,7 +103,7 @@ function ProductScreen() {
           <ProductImage product={product} size="lg" className="mx-auto" eager />
           <h1 className="mt-3 text-[18px] font-bold leading-snug text-navy">{product.name}</h1>
           {productMeta && <p className="mt-1 text-[12px] text-muted-foreground">{productMeta}</p>}
-          <p className="mt-1 text-[11px] text-muted-foreground">{getCategory(product.category)?.label}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{categoryLabel}</p>
 
           {best && (
             <>
@@ -131,12 +163,19 @@ function ProductScreen() {
             {prices.map((p) => {
               const m = getMarket(p.marketId);
               if (!m) return null;
+              const calculatedDistance = m.distanceKm > 0
+                ? m.distanceKm
+                : (m.lat && m.lng && location.lat && location.lng
+                    ? haversineKm(location.lat, location.lng, m.lat, m.lng)
+                    : 0);
               return (
                 <div key={p.marketId} className="flex items-center gap-3 px-3 py-3">
                   <MarketLogo chain={m.chain} size="sm" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[12px] font-semibold text-navy">{m.name}</p>
-                    <p className="tabular mt-0.5 text-[11px] text-muted-foreground">{formatKm(m.distanceKm)}</p>
+                    <p className="tabular mt-0.5 text-[11px] text-muted-foreground">
+                      {calculatedDistance > 0 ? formatKm(calculatedDistance) : "Entfernung nicht verfügbar"}
+                    </p>
                   </div>
                   <span className="tabular shrink-0 text-[15px] font-bold text-navy">{formatEuro(p.price)}</span>
                 </div>
