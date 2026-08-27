@@ -1,9 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Heart, HeartHandshake, LogIn, Save, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
+import { useAuth } from "@/lib/use-auth";
 import { fetchPublicFavoriteShare, subscribeToFavoriteShare } from "@/services/sharing-api";
 
 export const Route = createFileRoute("/favoriten/geteilt/$token")({
@@ -13,10 +14,13 @@ export const Route = createFileRoute("/favoriten/geteilt/$token")({
 
 function PublicFavoriteShareScreen() {
   const { token } = Route.useParams();
+  const { user, loading: authLoading } = useAuth();
   const share = useQuery({ queryKey: ["public-favorites", token], queryFn: () => fetchPublicFavoriteShare(token) });
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [accountNeeded, setAccountNeeded] = useState(false);
+  const returnPath = `/favoriten/geteilt/${encodeURIComponent(token)}`;
+  const authHref = `/auth?returnTo=${encodeURIComponent(returnPath)}`;
 
   const save = async () => {
     setBusy(true);
@@ -58,15 +62,24 @@ function PublicFavoriteShareScreen() {
                   : `${share.data.ownerName} teilt die Favoriten derzeit nicht. Wenn die Liste später wieder sichtbar wird, bleibt ein gespeicherter Kontakt erhalten.`}
               </p>
               {share.data.available && (
-                <button type="button" disabled={busy || saved} onClick={() => void save()} className={`mt-4 inline-flex h-11 items-center gap-2 rounded-xl px-4 text-[12px] font-semibold ${saved ? "border border-primary/20 bg-primary-soft text-primary" : "bg-primary text-primary-foreground"}`}>
-                  {saved ? <Heart className="h-4 w-4 fill-current" /> : <Save className="h-4 w-4" />}
-                  {saved ? "In Favoriten von Freunden gespeichert" : "In Spareno speichern"}
-                </button>
+                authLoading ? (
+                  <button type="button" disabled className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[12px] font-semibold text-primary-foreground opacity-60">Konto wird geprüft …</button>
+                ) : !user ? (
+                  <a href={authHref} className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[12px] font-semibold text-primary-foreground">
+                    <LogIn className="h-4 w-4" /> Anmelden & speichern
+                  </a>
+                ) : (
+                  <button type="button" disabled={busy || saved} onClick={() => void save()} className={`mt-4 inline-flex h-11 items-center gap-2 rounded-xl px-4 text-[12px] font-semibold ${saved ? "border border-primary/20 bg-primary-soft text-primary" : "bg-primary text-primary-foreground"}`}>
+                    {saved ? <Heart className="h-4 w-4 fill-current" /> : <Save className="h-4 w-4" />}
+                    {saved ? "In Favoriten von Freunden gespeichert" : "In Spareno speichern"}
+                  </button>
+                )
               )}
+              {!authLoading && !user && share.data.available && <p className="mt-2 text-[10px] text-muted-foreground">Zum Speichern brauchst du ein Spareno-Konto. Danach kommst du automatisch hierher zurück.</p>}
               {accountNeeded && (
                 <div className="mt-3 rounded-xl border border-primary/15 bg-primary-soft/50 p-3">
-                  <p className="text-[10px] leading-relaxed text-muted-foreground">Zum dauerhaften Speichern brauchst du einen Spareno-Account. Anschauen kannst du diese Freigabe weiterhin ohne Anmeldung.</p>
-                  <Link to="/auth" className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary"><LogIn className="h-3.5 w-3.5" /> Anmelden oder registrieren</Link>
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">Dein Konto ist noch nicht vollständig mit Spareno verbunden. Die öffentliche Freigabe bleibt weiterhin sichtbar.</p>
+                  <a href={authHref} className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary"><LogIn className="h-3.5 w-3.5" /> Konto erneut verbinden</a>
                 </div>
               )}
             </section>
