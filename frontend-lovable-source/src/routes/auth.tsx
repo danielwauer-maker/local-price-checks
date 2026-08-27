@@ -1,9 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { ArrowLeft, LogOut, Mail, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
 import { cn } from "@/lib/utils";
+import { linkLokeroAccount, rememberLinkedProfile } from "@/services/lokero-account-api";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
@@ -25,9 +27,23 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+function safeReturnPath() {
+  if (typeof window === "undefined") return "/";
+  const raw = new URLSearchParams(window.location.search).get("returnTo")?.trim() ?? "";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+  if (raw === "/auth" || raw.startsWith("/auth?")) return "/";
+  return raw;
+}
+
+function authRedirectUrl(returnTo: string) {
+  const url = new URL("/auth", window.location.origin);
+  if (returnTo !== "/") url.searchParams.set("returnTo", returnTo);
+  return url.toString();
+}
+
 function AuthPage() {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,6 +53,22 @@ function AuthPage() {
   const [confirmationPending, setConfirmationPending] = useState(false);
   const [resending, setResending] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [returnTo] = useState(safeReturnPath);
+  const handoffStarted = useRef(false);
+
+  const isInviteReturn = returnTo.startsWith("/liste/einladung/");
+  const isFavoriteReturn = returnTo.startsWith("/favoriten/geteilt/");
+  const returnHint = isInviteReturn
+    ? "Nach der Anmeldung kommst du automatisch zu deiner Einladung zurück."
+    : isFavoriteReturn
+      ? "Nach der Anmeldung kommst du automatisch zu den geteilten Favoriten zurück."
+      : null;
+
+  async function finishAccountHandoff(nextSession: Session, destination = returnTo) {
+    const linked = await linkLokeroAccount(nextSession);
+    rememberLinkedProfile(linked);
+    window.location.assign(destination || "/");
+  }
 
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((event) => {
@@ -47,26 +79,43 @@ function AuthPage() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!session || returnTo === "/" || recoveryMode || handoffStarted.current) return;
+    const recoveryCallback = typeof window !== "undefined"
+      && (window.location.hash.includes("type=recovery")
+        || new URLSearchParams(window.location.search).get("type") === "recovery");
+    if (recoveryCallback) return;
+
+    handoffStarted.current = true;
+    setBusy(true);
+    void finishAccountHandoff(session).catch((error) => {
+      handoffStarted.current = false;
+      setBusy(false);
+      toast.error(error instanceof Error ? error.message : "Konto konnte nicht mit Spareno verbunden werden");
+    });
+  }, [session, returnTo, recoveryMode]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
       if (mode === "login") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        if (!data.session) throw new Error("Anmeldung konnte nicht abgeschlossen werden.");
         toast.success("Willkommen zurück!");
-        navigate({ to: "/" });
+        await finishAccountHandoff(data.session);
       } else if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth` },
+          options: { emailRedirectTo: authRedirectUrl(returnTo) },
         });
         if (error) throw error;
 
         if (data.session) {
           toast.success("Konto erstellt und angemeldet.");
-          navigate({ to: "/" });
+          await finishAccountHandoff(data.session);
           return;
         }
 
@@ -81,7 +130,6 @@ function AuthPage() {
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Aktion fehlgeschlagen");
-    } finally {
       setBusy(false);
     }
   }
@@ -105,10 +153,9 @@ function AuthPage() {
       setNewPassword("");
       setNewPasswordRepeat("");
       toast.success("Passwort wurde geändert.");
-      navigate({ to: "/" });
+      window.location.assign("/");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Passwort konnte nicht geändert werden");
-    } finally {
       setBusy(false);
     }
   }
@@ -120,7 +167,7 @@ function AuthPage() {
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: email.trim(),
-        options: { emailRedirectTo: `${window.location.origin}/auth` },
+        options: { emailRedirectTo: authRedirectUrl(returnTo) },
       });
       if (error) throw error;
       toast.success("Bestätigungsmail wurde erneut angefordert.");
@@ -134,7 +181,7 @@ function AuthPage() {
   return (
     <div className="min-h-dvh px-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
       <button
-        onClick={() => navigate({ to: "/" })}
+        onClick={() => returnTo !== "/" ? window.location.assign(returnTo) : navigate({ to: "/" })}
         className="flex h-10 w-10 items-center justify-center rounded-full bg-surface shadow-card"
         aria-label="Zurück"
       >
@@ -181,9 +228,11 @@ function AuthPage() {
         <div className="mt-10 surface-card p-6 text-center">
           <p className="text-sm text-muted-foreground">Angemeldet als</p>
           <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Spareno-Konto"}</p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Diese Anmeldung kann auch aus einer früheren Test-Session stammen.
-          </p>
+          {returnHint ? <p className="mt-3 rounded-xl bg-primary-soft px-3 py-2 text-xs text-primary">{busy ? "Konto wird verbunden …" : returnHint}</p> : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Diese Anmeldung kann auch aus einer früheren Test-Session stammen.
+            </p>
+          )}
           <button
             onClick={async () => {
               await signOut();
@@ -206,6 +255,11 @@ function AuthPage() {
                 ? "Wir senden dir einen Link, mit dem du ein neues Passwort festlegen kannst."
                 : "Sichere Einkaufslisten, Favoriten und Märkte auf allen Geräten."}
             </p>
+            {returnHint && mode !== "forgot" && (
+              <p className="mt-3 rounded-xl border border-primary/15 bg-primary-soft/60 px-3 py-2 text-xs font-medium text-primary">
+                {returnHint}
+              </p>
+            )}
           </header>
 
           {mode !== "forgot" ? (
@@ -256,7 +310,7 @@ function AuthPage() {
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow-float disabled:opacity-60"
             >
               <Mail className="h-4 w-4" />
-              {mode === "login" ? "Anmelden" : mode === "signup" ? "Registrieren" : "Reset-Link senden"}
+              {busy ? "Bitte warten …" : mode === "login" ? "Anmelden" : mode === "signup" ? "Registrieren" : "Reset-Link senden"}
             </button>
           </form>
 
@@ -282,7 +336,7 @@ function AuthPage() {
             <div className="mt-4 rounded-2xl bg-surface p-4 text-sm shadow-card">
               <p className="font-semibold">E-Mail noch nicht angekommen?</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Prüfe bitte auch Spam/Junk. Du kannst die Bestätigungsmail anschließend erneut anfordern.
+                Prüfe bitte auch Spam/Junk. Nach der Bestätigung öffnet Spareno automatisch wieder die Seite, von der du gekommen bist.
               </p>
               <button
                 type="button"
