@@ -69,7 +69,7 @@ export function ReviewerSettings() {
       >
         <span className="min-w-0">
           <span className="block text-[13px] font-medium text-navy">Version</span>
-          <span className="block text-[11px] text-muted-foreground">1.0.0 (Design Freeze)</span>
+          <span className="block text-[11px] text-muted-foreground">1.0.0</span>
         </span>
         <span className="text-[11px] font-medium text-muted-foreground">Spareno</span>
       </button>
