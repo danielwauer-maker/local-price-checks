@@ -65,13 +65,13 @@ export function ReviewerSettings() {
         type="button"
         onClick={versionTap}
         className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-left"
-        aria-label="Lokero Version 1.0.0"
+        aria-label="Spareno Version 1.0.0"
       >
         <span className="min-w-0">
           <span className="block text-[13px] font-medium text-navy">Version</span>
           <span className="block text-[11px] text-muted-foreground">1.0.0 (Design Freeze)</span>
         </span>
-        <span className="text-[11px] text-muted-foreground">Lokero</span>
+        <span className="text-[11px] font-medium text-muted-foreground">Spareno</span>
       </button>
 
       {unlockVisible && !status.reviewer && (
@@ -112,7 +112,7 @@ export function ReviewerSettings() {
       {status.reviewer && (
         <div className="rounded-xl border border-primary/20 bg-primary-soft p-3">
           <div className="flex items-center gap-2 text-[12px] font-semibold text-navy">
-            <ShieldCheck className="h-4 w-4 text-primary" /> Lokero Prüfmodus aktiv
+            <ShieldCheck className="h-4 w-4 text-primary" /> Spareno Prüfmodus aktiv
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
             Dieses Gerät darf interne Märkte und Angebots-QA sehen
