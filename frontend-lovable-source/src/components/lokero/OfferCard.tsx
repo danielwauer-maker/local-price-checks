@@ -63,59 +63,59 @@ export function OfferRow({ offer }: { offer: OfferView }) {
   const { addToList, toggleFavoriteProduct, isFavoriteProduct } = useStore();
   const favorite = isFavoriteProduct(offer.product.id);
   return (
-    <article className="card-surface flex gap-3 p-3">
-      <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="shrink-0">
+    <article className="card-surface grid grid-cols-[64px_minmax(0,1fr)_78px] gap-2.5 p-3">
+      <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="self-center">
         <ProductImage offer={offer} />
       </Link>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
-          <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="min-w-0 flex-1">
-            <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{offer.product.name}</p>
-            <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{offer.product.detail ?? offer.product.amount}</p>
-          </Link>
-          <div className="flex shrink-0 items-center gap-1">
-            <MarketLogo chain={offer.market.chain} size="xs" />
-            <button
-              type="button"
-              aria-label={favorite ? "Favorit entfernen" : "Zu Favoriten hinzufügen"}
-              onClick={() => {
-                toggleFavoriteProduct(offer.product.id);
-                toast.success(favorite ? "Favorit entfernt" : "Zu Favoriten hinzugefügt");
-              }}
-              className="grid h-9 w-9 place-items-center rounded-xl text-discount"
-            >
-              <Heart className="h-4.5 w-4.5" fill={favorite ? "currentColor" : "none"} />
-            </button>
-          </div>
+
+      <div className="flex min-w-0 flex-col">
+        <Link to="/produkt/$productId" params={{ productId: offer.product.id }} className="min-w-0">
+          <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{offer.product.name}</p>
+          <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{offer.product.detail ?? offer.product.amount}</p>
+        </Link>
+
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <MarketLogo chain={offer.market.chain} size="xs" />
+          <button
+            type="button"
+            aria-label={favorite ? "Favorit entfernen" : "Zu Favoriten hinzufügen"}
+            onClick={() => {
+              toggleFavoriteProduct(offer.product.id);
+              toast.success(favorite ? "Favorit entfernt" : "Zu Favoriten hinzugefügt");
+            }}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-discount transition-colors active:bg-discount/5"
+          >
+            <Heart className="h-4 w-4" fill={favorite ? "currentColor" : "none"} />
+          </button>
         </div>
 
-        <div className="mt-1.5 flex items-end justify-between gap-2">
-          <div className="min-w-0">
-            {offer.basePrice && <p className="tabular text-[10px] text-muted-foreground">{offer.basePrice}</p>}
-            {offer.leafletPage && <p className="text-[10px] text-muted-foreground">Prospekt S. {offer.leafletPage}</p>}
-          </div>
-          <div className="text-right">
-            <div className="flex items-center justify-end gap-1.5">
-              <span className="tabular text-[15px] font-bold text-navy">{formatEuro(offer.price)}</span>
-              {offer.discount != null && <DiscountBadge value={offer.discount} size="xs" />}
-            </div>
-            {offer.oldPrice != null && (
-              <p className="tabular text-[10px] text-muted-foreground line-through">statt {formatEuro(offer.oldPrice)}</p>
-            )}
-          </div>
+        <div className="mt-auto pt-1.5">
+          {offer.basePrice && <p className="tabular text-[10px] text-muted-foreground">{offer.basePrice}</p>}
+          {offer.leafletPage && <p className="text-[10px] text-muted-foreground">Prospekt S. {offer.leafletPage}</p>}
         </div>
       </div>
-      <button
-        type="button"
-        aria-label={`${offer.product.name} zur Einkaufsliste hinzufügen`}
-        onClick={() => {
-          addToList(offer.product.id);
-          toast.success(`${offer.product.name} auf deiner Liste`);
-        }}
-        className="tap-target grid h-11 w-11 shrink-0 self-center place-items-center rounded-xl bg-primary-soft text-primary transition-transform duration-150 active:scale-95"
-      >
-        <ShoppingCart className="h-4 w-4" strokeWidth={2.2} />
-      </button>
+
+      <div className="flex min-h-[92px] w-[78px] flex-col items-end justify-between">
+        <button
+          type="button"
+          aria-label={`${offer.product.name} zur Einkaufsliste hinzufügen`}
+          onClick={() => {
+            addToList(offer.product.id);
+            toast.success(`${offer.product.name} auf deiner Liste`);
+          }}
+          className="tap-target grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary transition-transform duration-150 active:scale-95"
+        >
+          <ShoppingCart className="h-4 w-4" strokeWidth={2.2} />
+        </button>
+
+        <div className="mt-2 flex w-full flex-col items-end">
+          {offer.discount != null && <DiscountBadge value={offer.discount} size="xs" className="mb-1" />}
+          {offer.oldPrice != null && (
+            <p className="tabular mb-0.5 whitespace-nowrap text-[10px] text-muted-foreground line-through">{formatEuro(offer.oldPrice)}</p>
+          )}
+          <p className="tabular whitespace-nowrap text-[16px] font-bold leading-none text-navy">{formatEuro(offer.price)}</p>
+        </div>
+      </div>
     </article>
   );
 }
