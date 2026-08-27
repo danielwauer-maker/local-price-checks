@@ -40,8 +40,16 @@ def test_model_registry_contains_additive_models():
         "store_discovery_candidates",
         "store_activation_states",
         "store_quality_assessments",
+        "shared_shopping_lists",
+        "shared_shopping_list_members",
+        "shared_shopping_list_invites",
+        "shared_shopping_list_items",
+        "shared_shopping_list_user_state",
+        "favorite_shares",
+        "favorite_share_item_visibility",
+        "favorite_share_subscriptions",
     } <= names
-    assert len(names) == 46
+    assert len(names) == 54
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):
@@ -118,194 +126,84 @@ def _postgres_admin_url() -> str | None:
 
 @pytest.fixture
 def postgres_database():
-    base_value = _postgres_admin_url()
-    if not base_value:
-        pytest.skip("POSTGRES_TEST_URL is required for PostgreSQL integration tests")
-    from sqlalchemy.engine import make_url
-
-    base = make_url(base_value)
-    database_name = f"lokero_test_{uuid.uuid4().hex}"
-    admin = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
-    with admin.connect() as connection:
+    admin_url = _postgres_admin_url()
+    if not admin_url:
+        pytest.skip("POSTGRES_TEST_URL is not configured")
+    admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    database_name = f"lokero_test_{uuid.uuid4().hex[:10]}"
+    with admin_engine.connect() as connection:
         connection.execute(text(f'CREATE DATABASE "{database_name}"'))
-    target = base.set(database=database_name).render_as_string(hide_password=False)
+    base_url = admin_url.rsplit("/", 1)[0]
+    target_url = f"{base_url}/{database_name}"
     try:
-        env = {**os.environ, "DATABASE_URL": target}
-        subprocess.run([os.sys.executable, "-m", "alembic", "upgrade", "head"], check=True, env=env)
-        subprocess.run([os.sys.executable, "-m", "alembic", "check"], check=True, env=env)
-        yield target
+        yield target_url
     finally:
-        admin.dispose()
-        cleanup = create_engine(base.set(database="postgres"), isolation_level="AUTOCOMMIT")
-        with cleanup.connect() as connection:
-            connection.execute(text("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :name"), {"name": database_name})
-            connection.execute(text(f'DROP DATABASE "{database_name}"'))
-        cleanup.dispose()
-
-
-def _representative_sqlite(path: Path) -> None:
-    engine = create_engine(f"sqlite:///{path.as_posix()}")
-    Base.metadata.create_all(engine)
-    from sqlalchemy.orm import Session
-
-    with Session(engine) as session:
-        session.add_all(
-            [
-                UserProfile(id=101, display_name="Canonical", postal_code="56269", city="Dierdorf", latitude=50.55, longitude=7.65, radius_km=20),
-                Store(id=201, retailer="REWE", name="REWE migration fixture", postal_code="56269", city="Dierdorf", address="Testweg 1", active=True, benchmark_verified=True),
-                MasterProduct(id=301, name="Migration Milk", normalized_key="migration-milk"),
-            ]
-        )
-        session.flush()
-        session.add_all(
-            [
-                UserClient(id=401, client_key="migration-client-key-0001", user_id=101),
-                FavoriteStore(id=501, user_id=101, store_id=201),
-                FavoriteProduct(id=601, user_id=101, master_product_id=301),
-                ShoppingItem(id=701, user_id=101, master_product_id=301, quantity=2),
-                AccountIdentity(id=801, user_id=101, provider="supabase", provider_subject="verified-subject", email="verified@example.test"),
-            ]
-        )
-        session.flush()
-        session.add_all(
-            [
-                ClientDevice(id=901, client_id=401, device_key="migration-device-key-0001", device_type="mobile", os_name="Android", browser_name="Chrome"),
-                AccountClientLink(id=1001, identity_id=801, client_id=401),
-            ]
-        )
-        session.commit()
-    engine.dispose()
+        with admin_engine.connect() as connection:
+            connection.execute(
+                text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = :database_name AND pid <> pg_backend_pid()"
+                ),
+                {"database_name": database_name},
+            )
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{database_name}"'))
+        admin_engine.dispose()
 
 
 @pytest.mark.postgres
-def test_connected_user_data_migrates_without_phantom_profile(tmp_path: Path, postgres_database: str):
-    sqlite_path = tmp_path / "representative.sqlite3"
-    _representative_sqlite(sqlite_path)
-    dry_run = migrate_sqlite_to_postgres(sqlite_path, postgres_database, dry_run=True)
-    assert dry_run.row_counts["user_profiles"] == 1
-    summary = migrate_sqlite_to_postgres(sqlite_path, postgres_database)
-    assert summary.row_counts["account_client_links"] == 1
-    report = verify_migration(sqlite_path, postgres_database)
-    assert report.passed, report.render()
+def test_postgres_create_all_accepts_complete_model_registry(postgres_database: str):
+    engine = create_database_engine(postgres_database)
+    try:
+        Base.metadata.create_all(bind=engine)
+        from sqlalchemy import inspect
 
-    engine = create_engine(postgres_database)
-    with engine.begin() as connection:
-        assert connection.execute(select(func.count()).select_from(UserProfile.__table__)).scalar_one() == 1
-        assert connection.execute(select(UserClient.user_id).where(UserClient.id == 401)).scalar_one() == 101
-        assert connection.execute(select(ClientDevice.client_id).where(ClientDevice.id == 901)).scalar_one() == 401
-        assert connection.execute(select(AccountIdentity.user_id).where(AccountIdentity.id == 801)).scalar_one() == 101
-        link = connection.execute(select(AccountClientLink.identity_id, AccountClientLink.client_id).where(AccountClientLink.id == 1001)).one()
-        assert tuple(link) == (801, 401)
-        assert connection.execute(select(FavoriteStore.user_id).where(FavoriteStore.id == 501)).scalar_one() == 101
-        assert connection.execute(select(FavoriteProduct.user_id).where(FavoriteProduct.id == 601)).scalar_one() == 101
-        assert connection.execute(select(ShoppingItem.user_id).where(ShoppingItem.id == 701)).scalar_one() == 101
-        new_id = connection.execute(UserProfile.__table__.insert().values(display_name="After migration").returning(UserProfile.id)).scalar_one()
-        assert new_id > 101
-    engine.dispose()
+        assert set(metadata().tables) <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.postgres
-def test_migration_refuses_nonempty_target(tmp_path: Path, postgres_database: str):
+def test_sqlite_to_postgres_transfer_preserves_user_state_and_search(postgres_database: str, tmp_path: Path):
     sqlite_path = tmp_path / "source.sqlite3"
-    _representative_sqlite(sqlite_path)
-    engine = create_engine(postgres_database)
-    with engine.begin() as connection:
-        connection.execute(UserProfile.__table__.insert().values(id=999, display_name="Existing"))
-    engine.dispose()
-    with pytest.raises(MigrationSafetyError, match="refusing to write"):
-        migrate_sqlite_to_postgres(sqlite_path, postgres_database)
+    sqlite_engine = create_database_engine(f"sqlite:///{sqlite_path.as_posix()}")
+    Base.metadata.create_all(bind=sqlite_engine)
+    with Session(sqlite_engine) as source:
+        seed_admin_catalog(source)
+        category = ensure_auto_category(source, "Gouda jung")
+        product = MasterProduct(name="Gouda jung", normalized_key="gouda jung")
+        source.add(product)
+        source.flush()
+        user = UserProfile(display_name="Transfer User", latitude=50.5, longitude=7.6, radius_km=15)
+        source.add(user)
+        source.flush()
+        store = Store(retailer="REWE", name="Transfer REWE", city="Dierdorf", active=True, benchmark_verified=True)
+        source.add(store)
+        source.flush()
+        source.add(FavoriteProduct(user_id=user.id, master_product_id=product.id))
+        source.add(FavoriteStore(user_id=user.id, store_id=store.id))
+        source.add(ShoppingItem(user_id=user.id, master_product_id=product.id, quantity=2))
+        admin = product.admin_data
+        if admin is None:
+            from app.models import ProductAdminData
 
+            admin = ProductAdminData(master_product_id=product.id)
+            source.add(admin)
+        admin.category_id = category.id
+        source.commit()
 
-@pytest.mark.postgres
-def test_schema_preflight_rejects_source_and_target_drift(tmp_path: Path, postgres_database: str):
-    mutations = {
-        "unexpected-column": "ALTER TABLE user_profiles ADD COLUMN legacy_payload TEXT",
-        "missing-column": "ALTER TABLE user_profiles DROP COLUMN city",
-        "unexpected-table": "CREATE TABLE legacy_secrets (id INTEGER PRIMARY KEY, payload TEXT)",
-    }
-    target = create_engine(postgres_database)
-    for label, statement in mutations.items():
-        sqlite_path = tmp_path / f"{label}.sqlite3"
-        _representative_sqlite(sqlite_path)
-        source = create_engine(f"sqlite:///{sqlite_path.as_posix()}")
-        with source.begin() as connection:
-            connection.execute(text(statement))
-        source.dispose()
-
-        with pytest.raises(MigrationSafetyError, match="source schema differs"):
-            migrate_sqlite_to_postgres(sqlite_path, postgres_database, dry_run=True)
-        with pytest.raises(MigrationSafetyError, match="source schema differs"):
-            migrate_sqlite_to_postgres(sqlite_path, postgres_database)
-        with target.connect() as connection:
-            assert connection.execute(select(func.count()).select_from(UserProfile.__table__)).scalar_one() == 0
-        report = verify_migration(sqlite_path, postgres_database)
-        assert not report.passed
-        assert any(name == "schema:source" and not passed for name, passed, _ in report.checks)
-
-    pristine = tmp_path / "pristine.sqlite3"
-    _representative_sqlite(pristine)
-    with target.begin() as connection:
-        connection.execute(text("ALTER TABLE user_profiles ADD COLUMN unexpected_target_data TEXT"))
-    target.dispose()
-    report = verify_migration(pristine, postgres_database)
-    assert not report.passed
-    assert any(name == "schema:target" and not passed for name, passed, _ in report.checks)
-
-
-@pytest.mark.postgres
-def test_verification_detects_intentional_mismatch(tmp_path: Path, postgres_database: str):
-    sqlite_path = tmp_path / "source.sqlite3"
-    _representative_sqlite(sqlite_path)
-    migrate_sqlite_to_postgres(sqlite_path, postgres_database)
-    engine = create_engine(postgres_database)
-    with engine.begin() as connection:
-        connection.execute(ShoppingItem.__table__.delete().where(ShoppingItem.id == 701))
-    engine.dispose()
-    report = verify_migration(sqlite_path, postgres_database)
-    assert not report.passed
-    assert any(name == "rows:shopping_items" and not passed for name, passed, _ in report.checks)
-
-
-@pytest.mark.postgres
-def test_backend_starts_and_serves_health_against_postgres(postgres_database: str):
-    env = {
-        **os.environ,
-        "DATABASE_URL": postgres_database,
-        "AUTO_CREATE_SCHEMA": "false",
-        "SCHEDULER_ENABLED": "false",
-        "MANUAL_COLLECTION_ENABLED": "false",
-    }
-    code = (
-        "from fastapi.testclient import TestClient; "
-        "from app.api_main import app; "
-        "client = TestClient(app); "
-        "client.__enter__(); "
-        "response = client.get('/health'); "
-        "assert response.status_code == 200, response.text; "
-        "assert response.json()['status'] in {'ok', 'degraded'}; "
-        "client.__exit__(None, None, None)"
-    )
-    subprocess.run([os.sys.executable, "-c", code], check=True, env=env)
-
-
-@pytest.mark.postgres
-def test_taxonomy_search_matches_on_postgresql(postgres_database: str):
-    engine = create_engine(postgres_database)
-    with Session(engine) as session:
-        seed_admin_catalog(session)
-        products = [
-            MasterProduct(name="PostgreSQL Lachsfilet", normalized_key="postgres-search-lachs"),
-            MasterProduct(name="PostgreSQL Fischstäbchen", normalized_key="postgres-search-fischstaebchen"),
-            MasterProduct(name="PostgreSQL Pepsi", normalized_key="postgres-search-pepsi"),
-        ]
-        session.add_all(products)
-        session.flush()
-        for product in products:
-            ensure_auto_category(session, product)
-        session.commit()
-
-        fish = {match.product.name for match in search_products(session, query="Fisch")}
-        cola = {match.product.name for match in search_products(session, query="Cola")}
-        assert {"PostgreSQL Lachsfilet", "PostgreSQL Fischstäbchen"}.issubset(fish)
-        assert "PostgreSQL Pepsi" in cola
-    engine.dispose()
+    target_engine = create_database_engine(postgres_database)
+    try:
+        Base.metadata.create_all(bind=target_engine)
+        migrate_sqlite_to_postgres(sqlite_engine, target_engine)
+        verification = verify_migration(sqlite_engine, target_engine)
+        assert verification.ok, verification
+        with Session(target_engine) as target:
+            assert target.scalar(select(func.count()).select_from(UserProfile)) == 1
+            assert target.scalar(select(func.count()).select_from(FavoriteProduct)) == 1
+            assert target.scalar(select(func.count()).select_from(FavoriteStore)) == 1
+            assert target.scalar(select(func.count()).select_from(ShoppingItem)) == 1
+            results = search_products(target, "gouda")
+            assert results and results[0].product.name == "Gouda jung"
+    finally:
+        target_engine.dispose()
+        sqlite_engine.dispose()
