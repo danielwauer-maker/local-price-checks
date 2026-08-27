@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
+  BookOpen,
   Car,
   Download,
   Info,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
+import { SPARENO_ONBOARDING_REPLAY_EVENT } from "@/components/FirstStartOnboarding";
 import { ReviewerSettings } from "@/components/lokero/ReviewerSettings";
 import { useStore } from "@/lib/app-store";
 import { supabase } from "@/integrations/supabase/client";
@@ -143,6 +145,10 @@ function SettingsPage() {
     await supabase.auth.signOut();
     toast.success("Abgemeldet");
     navigate({ to: "/auth" });
+  }
+
+  function replayOnboarding() {
+    window.dispatchEvent(new Event(SPARENO_ONBOARDING_REPLAY_EVENT));
   }
 
   return (
@@ -292,6 +298,19 @@ function SettingsPage() {
             hint={installed ? "Als App installiert" : "Im Browser geöffnet"}
             action={<span />}
           />
+          <button
+            type="button"
+            onClick={replayOnboarding}
+            className="tap-target flex w-full items-center gap-3 rounded-xl border border-primary/15 bg-primary/[0.045] px-3 py-3 text-left transition-colors hover:bg-primary/[0.075]"
+          >
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary">
+              <BookOpen className="h-4.5 w-4.5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold text-navy">Einführung erneut ansehen</span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Die 4 Spareno-Karten mit Märkten, Angeboten, Einkaufsliste und Sparvergleich öffnen.</span>
+            </span>
+          </button>
           <ReviewerSettings />
           <Row
             label="Über Spareno"
