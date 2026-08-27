@@ -3,8 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Heart, Store } from "lucide-react";
 import { TopBar } from "@/components/AppShell";
 import { SavingsHero } from "@/components/lokero/SavingsHero";
-import { SearchBar } from "@/components/lokero/SearchBar";
-import { CategoryGrid } from "@/components/lokero/CategoryGrid";
 import { OfferTile } from "@/components/lokero/OfferCard";
 import { SkeletonCard } from "@/components/lokero/States";
 import { RegionAvailabilityCard } from "@/components/lokero/RegionAvailabilityCard";
@@ -14,7 +12,7 @@ import { OPTIMIZED_TRIP } from "@/data/lokero";
 import { useStore } from "@/lib/app-store";
 
 export const Route = createFileRoute("/")({
-  head: () => ({ meta: [{ title: "Lokero – Alles in deiner Nähe. Das Beste für dich." }] }),
+  head: () => ({ meta: [{ title: "Spareno – Alles in deiner Nähe. Das Beste für dich." }] }),
   component: StartScreen,
 });
 
@@ -64,7 +62,7 @@ function StartScreen() {
                 <p className="mt-1 text-[12px] leading-relaxed text-white/80">
                   {hasFavoriteMarkets
                     ? (region.data?.activeMarkets ? `${region.data.activeMarkets} freigegebene ${region.data.activeMarkets === 1 ? "Markt" : "Märkte"} · ${region.data.currentOffers ?? 0} aktuelle Angebote` : "Aktuelle lokale Angebote ansehen")
-                    : "Wähle die Märkte aus, deren Angebote Lokero für dich anzeigen soll."}
+                    : "Wähle die Märkte aus, deren Angebote Spareno für dich anzeigen soll."}
                 </p>
               </div>
             </div>
@@ -73,9 +71,6 @@ function StartScreen() {
             </Link>
           </section>
         )}
-
-        <SearchBar />
-        <CategoryGrid />
 
         <section>
           <div className="flex items-baseline justify-between gap-3">
@@ -86,7 +81,7 @@ function StartScreen() {
           {!hasFavoriteMarkets && (
             <div className="mt-2 rounded-xl border border-border bg-surface px-3 py-3">
               <p className="text-[12px] font-semibold text-navy">Noch keine Märkte ausgewählt</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Wähle mindestens einen Markt aus. Danach zeigt Lokero passende Angebote aus deiner persönlichen Marktauswahl.</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">Wähle mindestens einen Markt aus. Danach zeigt Spareno passende Angebote aus deiner persönlichen Marktauswahl.</p>
               <Link to="/maerkte" className="mt-3 inline-flex h-9 items-center rounded-xl bg-primary px-3 text-[11px] font-semibold text-primary-foreground">Märkte auswählen</Link>
             </div>
           )}
