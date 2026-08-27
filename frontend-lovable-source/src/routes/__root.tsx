@@ -15,6 +15,7 @@ import brandCss from "../brand.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppShell } from "@/components/AppShell";
 import { AccountSessionSync } from "@/components/AccountSessionSync";
+import { FirstStartOnboarding } from "@/components/FirstStartOnboarding";
 import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
 import { SplashScreen } from "@/components/brand/SplashScreen";
@@ -182,6 +183,7 @@ function RootComponent() {
       <AppStoreProvider>
         {splashPhase !== "hidden" && <SplashScreen exiting={splashPhase === "exiting"} />}
         <AccountSessionSync />
+        {!bare && <FirstStartOnboarding active={splashPhase === "hidden"} />}
         {bare ? (
           <div className="app-frame">
             <Outlet />
