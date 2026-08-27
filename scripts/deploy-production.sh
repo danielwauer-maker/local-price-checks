@@ -56,32 +56,43 @@ fi
 
 OLD_SHA="$(git rev-parse HEAD)"
 DIFF_BASE="$OLD_SHA"
+PENDING_BASE=""
+PENDING_TARGET=""
 
-# A failed controlled schema release may already have fast-forwarded the checkout.
-# Preserve the original comparison base externally so a workflow re-run can safely resume.
-if [[ "$OLD_SHA" == "$TARGET_SHA" ]]; then
-  if [[ -f "$PENDING_FILE" ]]; then
-    read -r SAVED_BASE SAVED_TARGET < "$PENDING_FILE" || true
-    if [[ "${SAVED_TARGET:-}" == "$TARGET_SHA" && -n "${SAVED_BASE:-}" ]]; then
-      DIFF_BASE="$SAVED_BASE"
-      echo "Resuming pending schema release from $DIFF_BASE to $TARGET_SHA"
-    else
-      echo "Already deployed: $TARGET_SHA"
-      exit 0
-    fi
-  else
-    echo "Already deployed: $TARGET_SHA"
-    exit 0
+# A controlled schema release may have failed after the checkout advanced but
+# before the migration completed. Carry its original diff base forward across
+# small follow-up commits so the pending migration cannot be silently skipped.
+if [[ -f "$PENDING_FILE" ]]; then
+  read -r PENDING_BASE PENDING_TARGET < "$PENDING_FILE" || true
+  if [[ -n "$PENDING_BASE" && -n "$PENDING_TARGET" ]] \
+    && git cat-file -e "${PENDING_BASE}^{commit}" 2>/dev/null \
+    && git cat-file -e "${PENDING_TARGET}^{commit}" 2>/dev/null \
+    && git merge-base --is-ancestor "$PENDING_TARGET" "$TARGET_SHA" \
+    && git merge-base --is-ancestor "$PENDING_BASE" "$TARGET_SHA"; then
+    DIFF_BASE="$PENDING_BASE"
+    echo "Resuming pending schema release from $PENDING_BASE through $TARGET_SHA"
+  elif [[ "$OLD_SHA" == "$TARGET_SHA" ]]; then
+    echo "ERROR: stale or invalid pending schema release marker: $PENDING_FILE"
+    exit 1
   fi
+fi
+
+if [[ "$OLD_SHA" == "$TARGET_SHA" && "$DIFF_BASE" == "$OLD_SHA" ]]; then
+  echo "Already deployed: $TARGET_SHA"
+  exit 0
 fi
 
 if ! git merge-base --is-ancestor "$DIFF_BASE" "$TARGET_SHA"; then
   echo "ERROR: deployment would not be a fast-forward ($DIFF_BASE -> $TARGET_SHA)."
   exit 1
 fi
+if ! git merge-base --is-ancestor "$OLD_SHA" "$TARGET_SHA"; then
+  echo "ERROR: checkout cannot fast-forward ($OLD_SHA -> $TARGET_SHA)."
+  exit 1
+fi
 
 CHANGED_FILES="$(git diff --name-only "$DIFF_BASE" "$TARGET_SHA")"
-printf 'Deploying %s -> %s\n' "$DIFF_BASE" "$TARGET_SHA"
+printf 'Deploying %s -> %s (checkout %s -> %s)\n' "$DIFF_BASE" "$TARGET_SHA" "$OLD_SHA" "$TARGET_SHA"
 printf '%s\n' "$CHANGED_FILES"
 
 SCHEMA_FILES="$(grep -E '^(alembic\.ini|alembic/|migrations/|app/.+migration|app/models\.py$|app/[^/]*_models\.py$)' <<<"$CHANGED_FILES" || true)"
@@ -138,6 +149,7 @@ on_error() {
 trap on_error ERR
 
 if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
+  # Preserve the oldest known pre-migration base, not merely this follow-up SHA.
   printf '%s %s\n' "$DIFF_BASE" "$TARGET_SHA" > "$PENDING_FILE"
 fi
 
@@ -193,13 +205,13 @@ if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
   echo "Validating migration in dry-run mode..."
   docker compose run --rm --no-deps -T \
     -v "$BACKUP_DIR:$BACKUP_DIR" \
-    app python scripts/prepare_existing_sqlite_for_alembic.py \
+    app env PYTHONPATH=/app python scripts/prepare_existing_sqlite_for_alembic.py \
     --sqlite-path "$DB_PATH"
 
   echo "Applying verified migration with external backup..."
   docker compose run --rm --no-deps -T \
     -v "$BACKUP_DIR:$BACKUP_DIR" \
-    app python scripts/prepare_existing_sqlite_for_alembic.py \
+    app env PYTHONPATH=/app python scripts/prepare_existing_sqlite_for_alembic.py \
     --sqlite-path "$DB_PATH" \
     --apply \
     --backup-path "$BACKUP_PATH"
