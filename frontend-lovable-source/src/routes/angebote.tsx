@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronDown, Search, Store, Tag } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
-import { CategoryGrid } from "@/components/lokero/CategoryGrid";
+import { CategoryIcon } from "@/components/lokero/CategoryIcon";
 import { OfferRow } from "@/components/lokero/OfferCard";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
 import { fetchOffers, fetchOfferWeek } from "@/services/lokero-api";
@@ -41,7 +41,7 @@ function readStoredCategories(initialCategory?: CategoryId) {
       // Ignore invalid legacy session state.
     }
   }
-  if (initialCategory) next.add(initialCategory);
+  if (initialCategory) return new Set([initialCategory]);
   return next;
 }
 
@@ -52,6 +52,8 @@ function OffersScreen() {
   const [openCategories, setOpenCategories] = useState<Set<string>>(
     () => readStoredCategories(initial.category),
   );
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(initial.category ?? null);
+  const initialScrollDone = useRef(false);
   const favoriteMarketKey = useMemo(() => [...favoriteMarkets].sort().join(","), [favoriteMarkets]);
   const hasFavoriteMarkets = favoriteMarkets.length > 0;
 
@@ -77,16 +79,6 @@ function OffersScreen() {
     }
   }, [openCategories]);
 
-  useEffect(() => {
-    if (!initial.category) return;
-    setOpenCategories((current) => {
-      if (current.has(initial.category!)) return current;
-      const next = new Set(current);
-      next.add(initial.category!);
-      return next;
-    });
-  }, [initial.category]);
-
   const groups = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("de");
     const categoryRows = categories.data ?? [];
@@ -107,14 +99,40 @@ function OffersScreen() {
       .filter((group) => group.offers.length > 0);
   }, [query.data, categories.data, search]);
 
+  useEffect(() => {
+    if (!initial.category || initialScrollDone.current || groups.length === 0) return;
+    const exists = groups.some((group) => group.category.id === initial.category);
+    if (!exists) return;
+    setSearch("");
+    setSelectedCategory(initial.category);
+    setOpenCategories(new Set([initial.category]));
+    initialScrollDone.current = true;
+    window.requestAnimationFrame(() => {
+      document.getElementById(`offer-category-${initial.category}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [groups, initial.category]);
+
   const visibleOfferCount = groups.reduce((sum, group) => sum + group.offers.length, 0);
   const searchActive = search.trim().length > 0;
+
+  const focusCategory = (categoryId: string) => {
+    setSearch("");
+    setSelectedCategory(categoryId);
+    setOpenCategories(new Set([categoryId]));
+    window.requestAnimationFrame(() => {
+      document.getElementById(`offer-category-${categoryId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   const toggleCategory = (categoryId: string) => {
     setOpenCategories((current) => {
       const next = new Set(current);
-      if (next.has(categoryId)) next.delete(categoryId);
-      else next.add(categoryId);
+      if (next.has(categoryId)) {
+        next.delete(categoryId);
+        if (selectedCategory === categoryId) setSelectedCategory(null);
+      } else {
+        next.add(categoryId);
+      }
       return next;
     });
   };
@@ -146,18 +164,46 @@ function OffersScreen() {
               <span className="sr-only">Angebote durchsuchen</span>
               <input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setSelectedCategory(null);
+                }}
                 placeholder="Produkte oder Angebote suchen"
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-navy outline-none placeholder:text-muted-foreground"
               />
             </label>
 
             <section>
-              <div className="mb-2 flex items-baseline justify-between">
+              <div className="mb-2 flex items-baseline justify-between gap-3">
                 <h2 className="text-[13px] font-semibold text-navy">Kategorien</h2>
-                <span className="text-[10px] text-muted-foreground">Schnell entdecken</span>
+                <span className="text-[10px] text-muted-foreground">Seitlich wischen</span>
               </div>
-              <CategoryGrid />
+              <div className="-mx-4 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <div className="grid w-max auto-cols-[92px] grid-flow-col grid-rows-2 gap-2 pr-4">
+                  {(categories.data ?? []).map((category) => {
+                    const active = selectedCategory === category.id;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() => focusCategory(category.id)}
+                        aria-pressed={active}
+                        className={cn(
+                          "flex h-[74px] w-[92px] flex-col items-center justify-center gap-1.5 rounded-xl border px-1 text-center transition-colors",
+                          active
+                            ? "border-primary bg-primary/[0.07] text-primary"
+                            : "border-border bg-surface text-navy active:bg-muted-surface",
+                        )}
+                      >
+                        <span className={cn("grid h-8 w-8 place-items-center rounded-lg", active ? "bg-primary/10" : "bg-primary-soft text-primary")}>
+                          <CategoryIcon categoryId={category.id as CategoryId} className="h-4.5 w-4.5" />
+                        </span>
+                        <span className="line-clamp-2 text-[10px] font-medium leading-tight">{category.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </section>
 
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5">
@@ -187,7 +233,7 @@ function OffersScreen() {
             {groups.map(({ category, offers }) => {
               const open = searchActive || openCategories.has(category.id);
               return (
-                <section key={category.id} className="overflow-hidden rounded-xl border border-border bg-surface">
+                <section id={`offer-category-${category.id}`} key={category.id} className="scroll-mt-24 overflow-hidden rounded-xl border border-border bg-surface">
                   <button
                     type="button"
                     onClick={() => toggleCategory(category.id)}
