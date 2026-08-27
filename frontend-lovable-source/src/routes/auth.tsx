@@ -31,8 +31,13 @@ function safeReturnPath() {
   if (typeof window === "undefined") return "/";
   const raw = new URLSearchParams(window.location.search).get("returnTo")?.trim() ?? "";
   if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  if (raw === "/auth" || raw.startsWith("/auth?")) return "/";
-  return raw;
+  try {
+    const candidate = new URL(raw, window.location.origin);
+    if (candidate.origin !== window.location.origin || candidate.pathname === "/auth") return "/";
+    return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+  } catch {
+    return "/";
+  }
 }
 
 function authRedirectUrl(returnTo: string) {
@@ -53,6 +58,7 @@ function AuthPage() {
   const [confirmationPending, setConfirmationPending] = useState(false);
   const [resending, setResending] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
   const [returnTo] = useState(safeReturnPath);
   const handoffStarted = useRef(false);
 
@@ -65,6 +71,7 @@ function AuthPage() {
       : null;
 
   async function finishAccountHandoff(nextSession: Session, destination = returnTo) {
+    setHandoffError(null);
     const linked = await linkLokeroAccount(nextSession);
     rememberLinkedProfile(linked);
     window.location.assign(destination || "/");
@@ -89,15 +96,18 @@ function AuthPage() {
     handoffStarted.current = true;
     setBusy(true);
     void finishAccountHandoff(session).catch((error) => {
+      const message = error instanceof Error ? error.message : "Konto konnte nicht mit Spareno verbunden werden";
       handoffStarted.current = false;
       setBusy(false);
-      toast.error(error instanceof Error ? error.message : "Konto konnte nicht mit Spareno verbunden werden");
+      setHandoffError(message);
+      toast.error(message);
     });
   }, [session, returnTo, recoveryMode]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    setHandoffError(null);
     try {
       if (mode === "login") {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -105,7 +115,10 @@ function AuthPage() {
         if (!data.session) throw new Error("Anmeldung konnte nicht abgeschlossen werden.");
         toast.success("Willkommen zurück!");
         await finishAccountHandoff(data.session);
-      } else if (mode === "signup") {
+        return;
+      }
+
+      if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -121,15 +134,20 @@ function AuthPage() {
 
         setConfirmationPending(true);
         toast.success("Konto erstellt – bitte E-Mail bestätigen.");
-      } else {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/auth`,
-        });
-        if (error) throw error;
-        toast.success("Wenn ein Konto existiert, wurde ein Link zum Zurücksetzen versendet.");
+        setBusy(false);
+        return;
       }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth`,
+      });
+      if (error) throw error;
+      toast.success("Wenn ein Konto existiert, wurde ein Link zum Zurücksetzen versendet.");
+      setBusy(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Aktion fehlgeschlagen");
+      const message = err instanceof Error ? err.message : "Aktion fehlgeschlagen";
+      setHandoffError(returnTo !== "/" ? message : null);
+      toast.error(message);
       setBusy(false);
     }
   }
@@ -177,6 +195,20 @@ function AuthPage() {
       setResending(false);
     }
   }
+
+  const retryHandoff = () => {
+    if (!session || busy) return;
+    handoffStarted.current = true;
+    setBusy(true);
+    setHandoffError(null);
+    void finishAccountHandoff(session).catch((error) => {
+      const message = error instanceof Error ? error.message : "Konto konnte nicht mit Spareno verbunden werden";
+      handoffStarted.current = false;
+      setBusy(false);
+      setHandoffError(message);
+      toast.error(message);
+    });
+  };
 
   return (
     <div className="min-h-dvh px-5 pt-[max(1.25rem,env(safe-area-inset-top))]">
@@ -228,7 +260,17 @@ function AuthPage() {
         <div className="mt-10 surface-card p-6 text-center">
           <p className="text-sm text-muted-foreground">Angemeldet als</p>
           <p className="mt-1 break-all text-lg font-semibold">{user.email ?? "Spareno-Konto"}</p>
-          {returnHint ? <p className="mt-3 rounded-xl bg-primary-soft px-3 py-2 text-xs text-primary">{busy ? "Konto wird verbunden …" : returnHint}</p> : (
+          {returnHint ? (
+            <>
+              <p className="mt-3 rounded-xl bg-primary-soft px-3 py-2 text-xs text-primary">{busy ? "Konto wird verbunden …" : returnHint}</p>
+              {handoffError && (
+                <div className="mt-3 rounded-xl border border-destructive/15 bg-destructive/5 p-3 text-left">
+                  <p className="text-xs text-destructive">{handoffError}</p>
+                  <button type="button" onClick={retryHandoff} disabled={busy} className="mt-2 text-xs font-semibold text-primary disabled:opacity-50">Erneut verbinden</button>
+                </div>
+              )}
+            </>
+          ) : (
             <p className="mt-2 text-xs text-muted-foreground">
               Diese Anmeldung kann auch aus einer früheren Test-Session stammen.
             </p>
@@ -270,6 +312,7 @@ function AuthPage() {
                   onClick={() => {
                     setMode(m);
                     setConfirmationPending(false);
+                    setHandoffError(null);
                   }}
                   className={cn(
                     "flex-1 rounded-xl py-2 text-sm font-semibold transition-colors",
@@ -313,6 +356,10 @@ function AuthPage() {
               {busy ? "Bitte warten …" : mode === "login" ? "Anmelden" : mode === "signup" ? "Registrieren" : "Reset-Link senden"}
             </button>
           </form>
+
+          {handoffError && returnTo !== "/" && (
+            <p className="mt-3 rounded-xl border border-destructive/15 bg-destructive/5 p-3 text-xs text-destructive">{handoffError}</p>
+          )}
 
           {mode === "login" ? (
             <button
