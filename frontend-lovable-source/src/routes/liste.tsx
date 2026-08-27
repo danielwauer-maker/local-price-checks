@@ -273,7 +273,7 @@ function ListScreen() {
                   {market && <MarketLogo chain={market.chain} size="sm" />}
                   <div className="min-w-0 flex-1">
                     <h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{group.marketName}</h2>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">{group.entries.length} {group.entries.length === 1 ? "Artikel" : "Artikel"}{market ? ` · ${formatKm(group.distanceKm)}` : ""}</p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">{group.entries.length} Artikel{market ? ` · ${formatKm(group.distanceKm)}` : ""}</p>
                   </div>
                   {group.subtotal != null && <div className="shrink-0 text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
                   <span className="ml-1 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground" aria-hidden="true">{collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span>
@@ -293,10 +293,10 @@ function ListScreen() {
                               <p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p>
                               <p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p>
                             </button>
-                            <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
-                              <button type="button" onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}>
+                              <button type="button" disabled={checked} onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button>
                               <span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span>
-                              <button type="button" onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                              <button type="button" disabled={checked} onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button>
                             </div>
                           </article>
                         </SwipeableRow>
@@ -316,7 +316,7 @@ function ListScreen() {
             return (
               <section className="overflow-hidden rounded-2xl border border-border bg-surface">
                 <button type="button" onClick={() => toggleGroup(key)} className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}>
-                  <div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} {manualListItems.length === 1 ? "Artikel" : "Artikel"} · ohne Preisvergleich</p></div>
+                  <div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} Artikel · ohne Preisvergleich</p></div>
                   <div className="flex items-center gap-2"><span className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</span>{collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}</div>
                 </button>
                 {!collapsed && (
@@ -329,10 +329,10 @@ function ListScreen() {
                           <article className={`flex items-center gap-2.5 p-3 transition-opacity ${checked ? "opacity-55" : ""}`}>
                             <button type="button" onClick={() => toggleListChecked(itemKey)} aria-label={checked ? `${item.name} wieder öffnen` : `${item.name} abhaken`} className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-transparent"}`}><Check className="h-3.5 w-3.5" /></button>
                             <button type="button" onClick={() => toggleListChecked(itemKey)} className="min-w-0 flex-1 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p></button>
-                            <div className="flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1">
-                              <button type="button" onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Minus className="h-3.5 w-3.5" /></button>
+                            <div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}>
+                              <button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button>
                               <span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span>
-                              <button type="button" onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy"><Plus className="h-3.5 w-3.5" /></button>
+                              <button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button>
                             </div>
                           </article>
                         </SwipeableRow>
