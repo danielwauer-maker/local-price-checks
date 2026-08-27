@@ -58,4 +58,4 @@ jobs:
           PORT="${DEPLOY_PORT:-22}"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "bash /opt/local-price-checks/scripts/deploy-production.sh '$TARGET_SHA'"
+            "cd /opt/local-price-checks && git fetch --prune origin main && git show '${TARGET_SHA}:scripts/deploy-production.sh' > /tmp/local-price-checks-deploy.sh && chmod 700 /tmp/local-price-checks-deploy.sh && bash /tmp/local-price-checks-deploy.sh '$TARGET_SHA'"

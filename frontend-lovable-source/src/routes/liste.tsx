@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, Check, ChevronDown, ChevronRight, Clock3, ListChecks, Mic, Minus, Plus, Save, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ChevronRight, Clock3, ListChecks, Mic, Minus, Plus, Save, Search, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { Tabs } from "@/components/lokero/FilterChips";
@@ -112,10 +112,14 @@ function ListScreen() {
     removeManualListItem,
     clearList,
     toggleListChecked,
+    sharingEnabled,
+    activeShoppingListIsPersonal,
+    activeShoppingListMembers,
   } = useStore();
   const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures });
   const trip = useQuery({ queryKey: ["optimized-trip"], queryFn: fetchOptimizedTrip });
-  const optimizationEnabled = features.data?.features.optimization !== false && trip.data?.enabled !== false;
+  const collaborativeListActive = sharingEnabled && (!activeShoppingListIsPersonal || activeShoppingListMembers.length > 1);
+  const optimizationEnabled = !collaborativeListActive && features.data?.features.optimization !== false && trip.data?.enabled !== false;
 
   const groups = useMemo<ListGroup[]>(() => {
     const byMarket = new Map<string, ListGroup>();
@@ -234,9 +238,17 @@ function ListScreen() {
 
       {tab === "optimiert" && (
         <div className="space-y-3 px-4 pt-4">
-          {(features.isLoading || trip.isLoading) && <SkeletonList count={3} />}
-          {trip.isError && <ErrorState onRetry={() => trip.refetch()} />}
-          {!features.isLoading && !trip.isLoading && !optimizationEnabled && (
+          {!collaborativeListActive && (features.isLoading || trip.isLoading) && <SkeletonList count={3} />}
+          {!collaborativeListActive && trip.isError && <ErrorState onRetry={() => trip.refetch()} />}
+          {collaborativeListActive && (
+            <section className="card-surface p-5 text-center">
+              <span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary-soft text-primary"><Users className="h-5 w-5" /></span>
+              <h2 className="mt-3 text-[15px] font-semibold text-navy">Optimierung für gemeinsame Listen folgt</h2>
+              <p className="mx-auto mt-1 max-w-[310px] text-[12px] leading-relaxed text-muted-foreground">Diese Liste wird live mit anderen Personen synchronisiert. Damit Spareno dir keine falsche Marktkombination zeigt, ist die Einkaufsoptimierung für gemeinsame Listen vorerst bewusst deaktiviert.</p>
+              <button type="button" onClick={() => changeTab("meine")} className="mt-4 h-11 rounded-xl bg-primary px-4 text-[13px] font-semibold text-primary-foreground">Gemeinsame Liste ansehen</button>
+            </section>
+          )}
+          {!collaborativeListActive && !features.isLoading && !trip.isLoading && !optimizationEnabled && (
             <section className="card-surface p-5 text-center">
               <span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-primary-soft text-primary"><Clock3 className="h-5 w-5" /></span>
               <h2 className="mt-3 text-[15px] font-semibold text-navy">Einkaufsoptimierung wird vorbereitet</h2>
@@ -244,7 +256,7 @@ function ListScreen() {
               <button type="button" onClick={() => changeTab("meine")} className="mt-4 h-11 rounded-xl bg-primary px-4 text-[13px] font-semibold text-primary-foreground">Liste ansehen</button>
             </section>
           )}
-          {optimizationEnabled && trip.data && <><OptimizedTripSummary trip={trip.data} /><TripRouteRow trip={trip.data} />{trip.data.stops.map((s) => <ShoppingMarketGroup key={s.marketId} stop={s} />)}<button type="button" onClick={() => toast.success("Route wird in deiner Karten-App geöffnet")} className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground">Route & Einkauf starten <ArrowRight className="h-4 w-4" /></button><button type="button" onClick={() => toast.success("Liste gespeichert")} className="flex w-full items-center justify-center gap-2 py-1 text-[13px] font-medium text-muted-foreground"><Save className="h-4 w-4" /> Liste speichern</button></>}
+          {!collaborativeListActive && optimizationEnabled && trip.data && <><OptimizedTripSummary trip={trip.data} /><TripRouteRow trip={trip.data} />{trip.data.stops.map((s) => <ShoppingMarketGroup key={s.marketId} stop={s} />)}<button type="button" onClick={() => toast.success("Route wird in deiner Karten-App geöffnet")} className="flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-primary-foreground">Route & Einkauf starten <ArrowRight className="h-4 w-4" /></button><button type="button" onClick={() => toast.success("Liste gespeichert")} className="flex w-full items-center justify-center gap-2 py-1 text-[13px] font-medium text-muted-foreground"><Save className="h-4 w-4" /> Liste speichern</button></>}
         </div>
       )}
 
@@ -257,7 +269,7 @@ function ListScreen() {
               <button type="button" onClick={startVoiceInput} className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border ${isListening ? "border-primary bg-primary-soft text-primary" : "border-border bg-surface text-muted-foreground"}`} aria-label={isListening ? "Spracheingabe beenden" : "Artikel per Sprache hinzufügen"}><Mic className="h-4 w-4" /></button>
               <button type="submit" disabled={!manualName.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40" aria-label="Freien Artikel hinzufügen"><Plus className="h-4 w-4" /></button>
             </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Tippen oder sprechen. Freie Artikel bleiben auf diesem Gerät gespeichert.</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Tippen oder sprechen. In gemeinsamen Listen werden freie Artikel ebenfalls mit allen Mitgliedern synchronisiert.</p>
           </form>
 
           {!hasAnyItems && <EmptyState icon={ListChecks} title="Deine Einkaufsliste ist noch leer." description="Füge oben einen freien Artikel ein oder übernimm Produkte direkt aus den Angeboten." action={<div className="flex flex-wrap justify-center gap-2"><Link to="/angebote" className="inline-flex h-11 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground"><Plus className="h-4 w-4" /> Angebote ansehen</Link><Link to="/suche" className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-navy"><Search className="h-4 w-4" /> Produkt suchen</Link></div>} />}

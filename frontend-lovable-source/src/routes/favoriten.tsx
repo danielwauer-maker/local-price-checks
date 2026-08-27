@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Bell, Heart, Plus, Store, X } from "lucide-react";
+import { Heart, Plus, Store, X } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { Tabs } from "@/components/lokero/FilterChips";
 import { AlternativeCard, FavoriteCard, PriceAlertCard } from "@/components/lokero/FavoriteCard";
 import { MarketCard } from "@/components/lokero/MarketCard";
 import { EmptyState, SkeletonList } from "@/components/lokero/States";
+import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 import { useStore } from "@/lib/app-store";
 import { fetchFavoriteMarkets, fetchFavoriteProducts, fetchFeatures, getProduct } from "@/services/lokero-api";
 import { fetchCategories } from "@/services/lokero-categories-api";
@@ -15,7 +16,7 @@ import { fetchFavoriteAlternatives, fetchFavoritePreferences, persistFavoriteAlt
 import { fetchFavoriteFamilies, fetchProductFamilies, setFavoriteFamily } from "@/services/lokero-personalization-api";
 
 export const Route = createFileRoute("/favoriten")({
-  head: () => ({ meta: [{ title: "Favoriten – Lokero" }] }),
+  head: () => ({ meta: [{ title: "Favoriten – Spareno" }] }),
   component: FavoritesScreen,
 });
 
@@ -75,6 +76,10 @@ function FavoritesScreen() {
   return (
     <div>
       <PageHeader title="Favoriten" />
+      <div className="bg-surface px-4 pb-3">
+        <FavoriteSharingControls />
+        <FriendFavoriteAlerts />
+      </div>
       <div className="bg-surface px-4"><Tabs options={tabs} value={tab === "alarm" && !priceAlertsEnabled ? "produkte" : tab} onChange={setTab} /></div>
       <div className="px-4 pt-4">
         {tab === "produkte" && (
@@ -118,7 +123,7 @@ function FavoritesScreen() {
           </section>
         )}
 
-        {tab === "maerkte" && <section className="space-y-2.5">{markets.isLoading && <SkeletonList count={2} />}{markets.isSuccess && favoriteMarkets.length === 0 && <EmptyState icon={Store} title="Noch keine Lieblingsmärkte" description="Markiere Märkte, damit Lokero deine Einkäufe darauf abstimmt." />}{(markets.data ?? []).filter((m) => favoriteMarkets.includes(m.id)).map((m) => <MarketCard key={m.id} market={m} isFavorite onToggleFavorite={() => toggleFavoriteMarket(m.id)} />)}</section>}
+        {tab === "maerkte" && <section className="space-y-2.5">{markets.isLoading && <SkeletonList count={2} />}{markets.isSuccess && favoriteMarkets.length === 0 && <EmptyState icon={Store} title="Noch keine Lieblingsmärkte" description="Markiere Märkte, damit Spareno deine Einkäufe darauf abstimmt." />}{(markets.data ?? []).filter((m) => favoriteMarkets.includes(m.id)).map((m) => <MarketCard key={m.id} market={m} isFavorite onToggleFavorite={() => toggleFavoriteMarket(m.id)} />)}</section>}
 
         {priceAlertsEnabled && tab === "alarm" && <section className="space-y-3">{Object.entries(alerts).map(([productId, a]) => { const product = getProduct(productId); if (!product) return null; return <div key={productId}><FavoriteCard product={product} isFavorite={favoriteProducts.includes(productId)} onToggleFavorite={() => toggleFavoriteProduct(productId)} /><PriceAlertCard targetPrice={a.targetPrice} active={a.active} onToggle={() => setAlert(productId, a.targetPrice, !a.active)} /></div>; })}</section>}
       </div>

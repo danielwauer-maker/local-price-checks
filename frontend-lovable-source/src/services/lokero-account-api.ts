@@ -1,5 +1,7 @@
 import type { Session } from "@supabase/supabase-js";
 
+export const ACCOUNT_PROFILE_STORAGE_KEY = "lokero.account.profile-id";
+
 export type AccountLinkResult = {
   linked: boolean;
   profileId?: number;
@@ -21,4 +23,9 @@ export async function linkLokeroAccount(session: Session): Promise<AccountLinkRe
     throw new Error(body?.detail || `Account-Link fehlgeschlagen (${response.status})`);
   }
   return (await response.json()) as AccountLinkResult;
+}
+
+export function rememberLinkedProfile(result: AccountLinkResult) {
+  if (typeof window === "undefined" || result.profileId == null) return;
+  window.localStorage.setItem(ACCOUNT_PROFILE_STORAGE_KEY, String(result.profileId));
 }

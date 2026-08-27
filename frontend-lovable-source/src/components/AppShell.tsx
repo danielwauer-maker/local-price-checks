@@ -14,6 +14,8 @@ import type { ReactNode } from "react";
 import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { SparenoWordmark } from "@/components/brand/SparenoLogo";
+import { SharedListControls } from "@/components/sharing/SharedListControls";
+import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 
 const NAV = [
   { to: "/", label: "Start", icon: Home },
@@ -121,6 +123,7 @@ export function TopBar() {
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </label>
       </div>
+      <FriendFavoriteAlerts />
     </header>
   );
 }
@@ -135,12 +138,16 @@ export function PageHeader({
   subtitle?: string;
 }) {
   return (
-    <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-surface px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
-      <div className="min-w-0">
-        <h1 className="truncate text-[22px] font-bold text-navy">{title}</h1>
-        {subtitle && <p className="truncate text-[12px] text-muted-foreground">{subtitle}</p>}
+    <header className="bg-surface px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+        <div className="min-w-0">
+          <h1 className="truncate text-[22px] font-bold text-navy">{title}</h1>
+          {subtitle && <p className="truncate text-[12px] text-muted-foreground">{subtitle}</p>}
+        </div>
+        {action}
       </div>
-      {action}
+      {title === "Einkaufsliste" && <SharedListControls />}
+      {title === "Favoriten" && <FavoriteSharingControls />}
     </header>
   );
 }

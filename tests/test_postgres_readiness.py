@@ -40,8 +40,16 @@ def test_model_registry_contains_additive_models():
         "store_discovery_candidates",
         "store_activation_states",
         "store_quality_assessments",
+        "shared_shopping_lists",
+        "shared_shopping_list_members",
+        "shared_shopping_list_invites",
+        "shared_shopping_list_items",
+        "shared_shopping_list_user_state",
+        "favorite_shares",
+        "favorite_share_item_visibility",
+        "favorite_share_subscriptions",
     } <= names
-    assert len(names) == 46
+    assert len(names) == 54
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):

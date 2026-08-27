@@ -2,9 +2,17 @@ import { useEffect, useRef } from "react";
 import type { Session } from "@supabase/supabase-js";
 
 import { supabase } from "@/integrations/supabase/client";
-import { linkLokeroAccount } from "@/services/lokero-account-api";
+import {
+  ACCOUNT_PROFILE_STORAGE_KEY,
+  linkLokeroAccount,
+  rememberLinkedProfile,
+} from "@/services/lokero-account-api";
 
-const PROFILE_STORAGE_KEY = "lokero.account.profile-id";
+function authOwnsHandoff() {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname === "/auth"
+    && new URLSearchParams(window.location.search).has("returnTo");
+}
 
 export function AccountSessionSync() {
   const lastLinkedUserId = useRef<string | null>(null);
@@ -14,6 +22,7 @@ export function AccountSessionSync() {
 
     async function applySession(session: Session | null) {
       if (cancelled || !session?.user?.id) return;
+      if (authOwnsHandoff()) return;
       if (lastLinkedUserId.current === session.user.id) return;
 
       try {
@@ -22,13 +31,13 @@ export function AccountSessionSync() {
         lastLinkedUserId.current = session.user.id;
 
         const profileId = result.profileId == null ? "" : String(result.profileId);
-        const previousProfileId = window.localStorage.getItem(PROFILE_STORAGE_KEY) ?? "";
+        const previousProfileId = window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY) ?? "";
         if (profileId && profileId !== previousProfileId) {
-          window.localStorage.setItem(PROFILE_STORAGE_KEY, profileId);
+          rememberLinkedProfile(result);
           window.location.reload();
         }
       } catch (error) {
-        console.error("[Lokero] Account-Link fehlgeschlagen", error);
+        console.error("[Spareno] Account-Link fehlgeschlagen", error);
       }
     }
 
@@ -37,7 +46,7 @@ export function AccountSessionSync() {
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session?.user?.id) {
         lastLinkedUserId.current = null;
-        window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+        window.localStorage.removeItem(ACCOUNT_PROFILE_STORAGE_KEY);
         return;
       }
       void applySession(session);

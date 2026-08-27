@@ -21,6 +21,7 @@ from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
 from .lokero_media_routes import router as lokero_media_router
+from .sharing_routes import router as sharing_router
 from . import model_registry as model_registry  # noqa: F401 - registers the complete schema
 from .coverage_models import CoverageRegion  # noqa: F401 - imported for existing route references
 from .client_models import (  # noqa: F401 - registers additive tables before startup create_all
@@ -115,6 +116,7 @@ app.include_router(lokero_router)
 app.include_router(lokero_state_router)
 app.include_router(lokero_admin_router)
 app.include_router(lokero_media_router)
+app.include_router(sharing_router)
 app.include_router(media_router)
 app.include_router(ux_router)
 app.include_router(prospect_router)
