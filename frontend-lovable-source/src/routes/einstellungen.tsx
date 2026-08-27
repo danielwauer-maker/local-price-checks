@@ -4,6 +4,7 @@ import {
   Bell,
   BookOpen,
   Car,
+  ChevronRight,
   Download,
   Info,
   LogIn,
@@ -225,7 +226,7 @@ function SettingsPage() {
               <button
                 type="button"
                 onClick={signOut}
-                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-destructive/25 bg-destructive/5 text-[13px] font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                className="tap-target flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-destructive/25 bg-destructive/5 text-[13px] font-semibold text-destructive transition-colors hover:bg-destructive/10 active:bg-destructive/15"
               >
                 <LogOut className="h-4 w-4" /> Abmelden
               </button>
@@ -245,15 +246,16 @@ function SettingsPage() {
           <button
             type="button"
             onClick={replayOnboarding}
-            className="tap-target flex w-full items-center gap-3 rounded-xl border border-primary/20 bg-primary/[0.055] px-3 py-3 text-left transition-colors hover:bg-primary/[0.09]"
+            className="tap-target group flex min-h-14 w-full items-center gap-3 rounded-xl bg-primary/[0.035] px-2.5 py-2 text-left transition-colors hover:bg-primary/[0.065] active:bg-primary/[0.08]"
           >
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary">
               <BookOpen className="h-4 w-4" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold text-navy">Einführung erneut ansehen</span>
-              <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">Die 4 Spareno-Karten mit Märkten, Angeboten, Einkaufsliste und Sparvergleich öffnen.</span>
+              <span className="block text-[13px] font-semibold text-navy">Einführung</span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">Die 4 Spareno-Karten erneut ansehen</span>
             </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
           </button>
           <ReviewerSettings />
           <Row label="Über Spareno" hint="Besser einkaufen." action={<Info className="h-4 w-4 text-muted-foreground" />} />
