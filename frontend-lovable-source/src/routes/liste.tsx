@@ -169,6 +169,14 @@ function ListScreen() {
 
   const startVoiceInput = () => {
     if (typeof window === "undefined") return;
+
+    const isIOS = /iPad|iPhone|iPod/.test(window.navigator.userAgent)
+      || (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+    if (isIOS) {
+      toast.info("Spracheingabe ist auf iPhone und iPad aktuell deaktiviert. Du kannst Artikel weiterhin über die iOS-Diktierfunktion der Tastatur einsprechen.");
+      return;
+    }
+
     const speechWindow = window as typeof window & {
       SpeechRecognition?: SpeechRecognitionConstructor;
       webkitSpeechRecognition?: SpeechRecognitionConstructor;
@@ -179,28 +187,44 @@ function ListScreen() {
       return;
     }
     if (isListening) {
-      recognitionRef.current?.stop();
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        recognitionRef.current = null;
+        setIsListening(false);
+      }
       return;
     }
-    const recognition = new Recognition();
-    recognition.lang = "de-DE";
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      const transcript = event.results?.[0]?.[0]?.transcript?.trim();
-      if (!transcript) return;
-      const names = transcript.split(/,| und /i).map((item) => item.trim()).filter(Boolean).slice(0, 10);
-      names.forEach((name) => addManualListItem(name));
-      toast.success(names.length > 1 ? `${names.length} Artikel hinzugefügt` : `${names[0]} hinzugefügt`);
-    };
-    recognition.onerror = () => toast.error("Spracheingabe konnte nicht erkannt werden.");
-    recognition.onend = () => {
-      setIsListening(false);
+
+    try {
+      const recognition = new Recognition();
+      recognition.lang = "de-DE";
+      recognition.interimResults = false;
+      recognition.continuous = false;
+      recognition.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+        if (!transcript) return;
+        const names = transcript.split(/,| und /i).map((item) => item.trim()).filter(Boolean).slice(0, 10);
+        names.forEach((name) => addManualListItem(name));
+        toast.success(names.length > 1 ? `${names.length} Artikel hinzugefügt` : `${names[0]} hinzugefügt`);
+      };
+      recognition.onerror = () => {
+        setIsListening(false);
+        recognitionRef.current = null;
+        toast.error("Spracheingabe konnte nicht erkannt werden.");
+      };
+      recognition.onend = () => {
+        setIsListening(false);
+        recognitionRef.current = null;
+      };
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+    } catch {
       recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    recognition.start();
+      setIsListening(false);
+      toast.error("Spracheingabe konnte nicht gestartet werden.");
+    }
   };
 
   return (
