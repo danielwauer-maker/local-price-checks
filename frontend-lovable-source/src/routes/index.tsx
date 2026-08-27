@@ -6,6 +6,7 @@ import { SavingsHero } from "@/components/lokero/SavingsHero";
 import { OfferTile } from "@/components/lokero/OfferCard";
 import { SkeletonCard } from "@/components/lokero/States";
 import { RegionAvailabilityCard } from "@/components/lokero/RegionAvailabilityCard";
+import { FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 import { fetchFeatures, fetchMarkets, fetchRegionStatus, fetchWeeklySavings } from "@/services/lokero-api";
 import { fetchMatchedFavoriteOffers } from "@/services/lokero-personalization-api";
 import { OPTIMIZED_TRIP } from "@/data/lokero";
@@ -71,6 +72,8 @@ function StartScreen() {
             </Link>
           </section>
         )}
+
+        <FriendFavoriteAlerts />
 
         <section>
           <div className="flex items-baseline justify-between gap-3">
