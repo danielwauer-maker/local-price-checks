@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronDown, Search, Store, Tag } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
+import { CategoryGrid } from "@/components/lokero/CategoryGrid";
 import { OfferRow } from "@/components/lokero/OfferCard";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
 import { fetchOffers, fetchOfferWeek } from "@/services/lokero-api";
@@ -21,7 +22,7 @@ export const Route = createFileRoute("/angebote")({
   validateSearch: (search: Record<string, unknown>): OfferSearch => ({
     ...(search["category"] ? { category: search["category"] as CategoryId } : {}),
   }),
-  head: () => ({ meta: [{ title: "Aktuelle Angebote deiner Märkte – Lokero" }] }),
+  head: () => ({ meta: [{ title: "Aktuelle Angebote deiner Märkte – Spareno" }] }),
   component: OffersScreen,
 });
 
@@ -75,6 +76,16 @@ function OffersScreen() {
       window.sessionStorage.setItem(OFFERS_OPEN_CATEGORIES_KEY, JSON.stringify([...openCategories]));
     }
   }, [openCategories]);
+
+  useEffect(() => {
+    if (!initial.category) return;
+    setOpenCategories((current) => {
+      if (current.has(initial.category!)) return current;
+      const next = new Set(current);
+      next.add(initial.category!);
+      return next;
+    });
+  }, [initial.category]);
 
   const groups = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("de");
@@ -136,10 +147,18 @@ function OffersScreen() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Angebote durchsuchen"
+                placeholder="Produkte oder Angebote suchen"
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-navy outline-none placeholder:text-muted-foreground"
               />
             </label>
+
+            <section>
+              <div className="mb-2 flex items-baseline justify-between">
+                <h2 className="text-[13px] font-semibold text-navy">Kategorien</h2>
+                <span className="text-[10px] text-muted-foreground">Schnell entdecken</span>
+              </div>
+              <CategoryGrid />
+            </section>
 
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5">
               <CalendarDays className="h-4 w-4 shrink-0 text-primary" />
