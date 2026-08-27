@@ -38,6 +38,7 @@ type StoreState = {
   location: Location;
   radius: number;
   list: Record<string, number>;
+  checkedListItems: string[];
   favoriteProducts: string[];
   favoriteMarkets: string[];
   alerts: Record<string, { targetPrice: number; active: boolean }>;
@@ -55,6 +56,7 @@ const initialState: StoreState = {
   location: DEFAULT_LOCATION,
   radius: 15,
   list: Object.fromEntries(DEFAULT_LIST.map((i) => [i.productId, i.qty])),
+  checkedListItems: [],
   favoriteProducts: FAVORITE_PRODUCTS.map((f) => f.productId),
   favoriteMarkets: FAVORITE_MARKET_IDS,
   alerts: Object.fromEntries(
@@ -82,6 +84,8 @@ type StoreContextValue = StoreState & {
   addToList: (productId: string, qty?: number) => void;
   setQty: (productId: string, qty: number) => void;
   clearList: () => void;
+  toggleListChecked: (productId: string) => void;
+  clearCheckedList: () => void;
   toggleFavoriteProduct: (id: string) => void;
   toggleFavoriteMarket: (id: string) => void;
   isFavoriteProduct: (id: string) => boolean;
@@ -112,13 +116,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     void fetchBootstrap().then((bootstrap) => {
       if (!bootstrap) return;
-      setState((current) => ({
-        ...current,
-        location: bootstrap.location ?? current.location,
-        radius: Number(bootstrap.radius ?? current.radius),
-        list: bootstrap.basket ?? current.list,
-        favoriteMarkets: bootstrap.favorites ?? bootstrap.selected ?? current.favoriteMarkets,
-      }));
+      setState((current) => {
+        const nextList = bootstrap.basket ?? current.list;
+        return {
+          ...current,
+          location: bootstrap.location ?? current.location,
+          radius: Number(bootstrap.radius ?? current.radius),
+          list: nextList,
+          checkedListItems: current.checkedListItems.filter((id) => Number(nextList[id] ?? 0) > 0),
+          favoriteMarkets: bootstrap.favorites ?? bootstrap.selected ?? current.favoriteMarkets,
+        };
+      });
       setBackendHydrated(true);
     });
   }, []);
@@ -155,7 +163,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
       addToList: (productId, qty = 1) => {
         const nextQty = (state.list[productId] ?? 0) + qty;
-        patch((s) => ({ list: { ...s.list, [productId]: nextQty } }));
+        patch((s) => ({
+          list: { ...s.list, [productId]: nextQty },
+          checkedListItems: s.checkedListItems.filter((id) => id !== productId),
+        }));
         void persistBasketQuantity(productId, nextQty);
       },
       setQty: (productId, qty) => {
@@ -163,14 +174,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           const next = { ...s.list };
           if (qty <= 0) delete next[productId];
           else next[productId] = qty;
-          return { list: next };
+          return {
+            list: next,
+            checkedListItems: qty <= 0 ? s.checkedListItems.filter((id) => id !== productId) : s.checkedListItems,
+          };
         });
         void persistBasketQuantity(productId, Math.max(0, qty));
       },
       clearList: () => {
-        patch({ list: {} });
+        patch({ list: {}, checkedListItems: [] });
         void persistBasketClear();
       },
+      toggleListChecked: (productId) =>
+        patch((s) => ({
+          checkedListItems: s.checkedListItems.includes(productId)
+            ? s.checkedListItems.filter((id) => id !== productId)
+            : [...s.checkedListItems, productId],
+        })),
+      clearCheckedList: () => patch({ checkedListItems: [] }),
       toggleFavoriteProduct: (id) => {
         const favorite = !state.favoriteProducts.includes(id);
         patch((s) => ({
