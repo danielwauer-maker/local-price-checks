@@ -1,9 +1,10 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ListChecks, LogIn, Users } from "lucide-react";
 import { useState } from "react";
 import { PageHeader } from "@/components/AppShell";
 import { useStore } from "@/lib/app-store";
+import { useAuth } from "@/lib/use-auth";
 import { acceptShoppingListInvite, inspectShoppingListInvite } from "@/services/sharing-api";
 
 export const Route = createFileRoute("/liste/einladung/$token")({
@@ -15,10 +16,13 @@ function ShoppingListInviteScreen() {
   const { token } = Route.useParams();
   const navigate = useNavigate();
   const { refreshShoppingSharing } = useStore();
+  const { user, loading: authLoading } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const invite = useQuery({ queryKey: ["shopping-list-invite", token], queryFn: () => inspectShoppingListInvite(token) });
+  const returnPath = `/liste/einladung/${encodeURIComponent(token)}`;
+  const authHref = `/auth?returnTo=${encodeURIComponent(returnPath)}`;
 
   const accept = async () => {
     setBusy(true);
@@ -44,7 +48,7 @@ function ShoppingListInviteScreen() {
           </span>
 
           {invite.isLoading && <p className="mt-4 text-[12px] text-muted-foreground">Einladung wird geprüft …</p>}
-          {invite.isError && <><h1 className="mt-4 text-[17px] font-semibold text-navy">Einladung nicht verfügbar</h1><p className="mt-1 text-[12px] text-muted-foreground">Der Link ist ungültig oder wurde bereits zurückgezogen.</p></>}
+          {invite.isError && <><h1 className="mt-4 text-[17px] font-semibold text-navy">Einladung nicht verfügbar</h1><p className="mt-1 text-[12px] text-muted-foreground">Der Link ist ungültig, abgelaufen oder wurde bereits verwendet.</p></>}
 
           {invite.data && !accepted && (
             <>
@@ -55,6 +59,17 @@ function ShoppingListInviteScreen() {
               {invite.data.invitedEmail && <p className="mt-3 rounded-lg bg-muted-surface px-3 py-2 text-[10px] text-muted-foreground">Einladung für {invite.data.invitedEmail}</p>}
               {!invite.data.valid ? (
                 <p className="mt-4 text-[12px] font-medium text-destructive">Diese Einladung ist nicht mehr gültig.</p>
+              ) : authLoading ? (
+                <button type="button" disabled className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground opacity-60">
+                  Konto wird geprüft …
+                </button>
+              ) : !user ? (
+                <>
+                  <a href={authHref} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground">
+                    <LogIn className="h-4.5 w-4.5" /> Anmelden & Liste beitreten
+                  </a>
+                  <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Für gemeinsame Listen brauchst du ein Spareno-Konto. Nach Anmeldung oder Registrierung kommst du automatisch zu dieser Einladung zurück.</p>
+                </>
               ) : (
                 <button type="button" disabled={busy} onClick={() => void accept()} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground disabled:opacity-50">
                   <ListChecks className="h-4.5 w-4.5" /> {busy ? "Wird verbunden …" : "Einkaufsliste beitreten"}
@@ -63,7 +78,7 @@ function ShoppingListInviteScreen() {
               {error && (
                 <div className="mt-3 rounded-xl border border-destructive/15 bg-destructive/5 p-3 text-left">
                   <p className="text-[11px] text-destructive">{error}</p>
-                  {error.toLowerCase().includes("account") && <Link to="/auth" className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary"><LogIn className="h-3.5 w-3.5" /> Anmelden oder registrieren</Link>}
+                  {error.toLowerCase().includes("account") && <a href={authHref} className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary"><LogIn className="h-3.5 w-3.5" /> Konto erneut verbinden</a>}
                 </div>
               )}
             </>
