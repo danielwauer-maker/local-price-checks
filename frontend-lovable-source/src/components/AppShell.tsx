@@ -15,6 +15,7 @@ import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { SparenoWordmark } from "@/components/brand/SparenoLogo";
 import { SharedListControls } from "@/components/sharing/SharedListControls";
+import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 
 const NAV = [
   { to: "/", label: "Start", icon: Home },
@@ -122,6 +123,7 @@ export function TopBar() {
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
         </label>
       </div>
+      <FriendFavoriteAlerts />
     </header>
   );
 }
@@ -145,6 +147,7 @@ export function PageHeader({
         {action}
       </div>
       {title === "Einkaufsliste" && <SharedListControls />}
+      {title === "Favoriten" && <FavoriteSharingControls />}
     </header>
   );
 }
