@@ -8,6 +8,12 @@ import {
   rememberLinkedProfile,
 } from "@/services/lokero-account-api";
 
+function authOwnsHandoff() {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname === "/auth"
+    && new URLSearchParams(window.location.search).has("returnTo");
+}
+
 export function AccountSessionSync() {
   const lastLinkedUserId = useRef<string | null>(null);
 
@@ -16,6 +22,7 @@ export function AccountSessionSync() {
 
     async function applySession(session: Session | null) {
       if (cancelled || !session?.user?.id) return;
+      if (authOwnsHandoff()) return;
       if (lastLinkedUserId.current === session.user.id) return;
 
       try {
@@ -27,9 +34,7 @@ export function AccountSessionSync() {
         const previousProfileId = window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY) ?? "";
         if (profileId && profileId !== previousProfileId) {
           rememberLinkedProfile(result);
-          const authHandoff = window.location.pathname === "/auth"
-            && new URLSearchParams(window.location.search).has("returnTo");
-          if (!authHandoff) window.location.reload();
+          window.location.reload();
         }
       } catch (error) {
         console.error("[Spareno] Account-Link fehlgeschlagen", error);
