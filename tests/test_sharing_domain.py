@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+import app.sharing_routes as sharing_routes
 from app.db import SessionLocal, engine
 from app.models import FavoriteProduct, MasterProduct, ShoppingItem, UserProfile
 from app.sharing_models import (
@@ -123,6 +130,45 @@ def test_shared_snapshot_contains_members_and_collaborative_item_state():
         assert snapshot["items"][0]["checked"] is True
         assert snapshot["items"][0]["addedBy"] == "Partner"
         assert snapshot["items"][0]["checkedBy"] == "Owner"
+    finally:
+        if user_ids or product_ids:
+            _cleanup(db, user_ids, product_ids)
+        db.close()
+
+
+def test_shopping_invite_is_single_use(monkeypatch):
+    _ensure_tables()
+    db = SessionLocal()
+    user_ids: list[int] = []
+    product_ids: list[int] = []
+    try:
+        owner = UserProfile(display_name="Invite Owner", radius_km=15)
+        partner = UserProfile(display_name="Invite Partner", radius_km=15)
+        db.add_all([owner, partner])
+        db.flush()
+        user_ids.extend([owner.id, partner.id])
+        shopping_list = SharedShoppingList(owner_user_id=owner.id, name="Familie", revision=1)
+        db.add(shopping_list)
+        db.flush()
+        db.add(SharedShoppingListMember(list_id=shopping_list.id, user_id=owner.id, role="owner"))
+        invite = SharedShoppingListInvite(
+            list_id=shopping_list.id,
+            token="single-use-sharing-token",
+            created_by_user_id=owner.id,
+            expires_at=datetime.utcnow() + timedelta(days=1),
+        )
+        db.add(invite)
+        db.commit()
+
+        monkeypatch.setattr(sharing_routes, "_require_linked_user", lambda _db: (partner, SimpleNamespace(email=None)))
+        first = sharing_routes.accept_list_invite(invite.token, db)
+        assert first["list"]["id"] == str(shopping_list.id)
+        assert db.query(SharedShoppingListMember).filter_by(list_id=shopping_list.id, user_id=partner.id).count() == 1
+
+        with pytest.raises(HTTPException) as exc:
+            sharing_routes.accept_list_invite(invite.token, db)
+        assert exc.value.status_code == 404
+        assert db.query(SharedShoppingListMember).filter_by(list_id=shopping_list.id, user_id=partner.id).count() == 1
     finally:
         if user_ids or product_ids:
             _cleanup(db, user_ids, product_ids)
