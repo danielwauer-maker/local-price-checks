@@ -26,6 +26,7 @@ import {
 import { persistProductFavorite } from "@/services/lokero-state-api";
 
 type Location = { lat: number; lng: number; label: string };
+export type ManualListItem = { id: string; name: string; qty: number };
 
 export type NotificationSettings = {
   priceAlerts: boolean;
@@ -38,6 +39,7 @@ type StoreState = {
   location: Location;
   radius: number;
   list: Record<string, number>;
+  manualListItems: ManualListItem[];
   checkedListItems: string[];
   favoriteProducts: string[];
   favoriteMarkets: string[];
@@ -51,11 +53,13 @@ type StoreState = {
 };
 
 const STORAGE_KEY = "lokero.state.v1";
+export const manualListKey = (id: string) => `manual:${id}`;
 
 const initialState: StoreState = {
   location: DEFAULT_LOCATION,
   radius: 15,
   list: Object.fromEntries(DEFAULT_LIST.map((i) => [i.productId, i.qty])),
+  manualListItems: [],
   checkedListItems: [],
   favoriteProducts: FAVORITE_PRODUCTS.map((f) => f.productId),
   favoriteMarkets: FAVORITE_MARKET_IDS,
@@ -83,8 +87,11 @@ type StoreContextValue = StoreState & {
   setRadius: (km: number) => void;
   addToList: (productId: string, qty?: number) => void;
   setQty: (productId: string, qty: number) => void;
+  addManualListItem: (name: string, qty?: number) => void;
+  setManualListQty: (id: string, qty: number) => void;
+  removeManualListItem: (id: string) => void;
   clearList: () => void;
-  toggleListChecked: (productId: string) => void;
+  toggleListChecked: (itemKey: string) => void;
   clearCheckedList: () => void;
   toggleFavoriteProduct: (id: string) => void;
   toggleFavoriteMarket: (id: string) => void;
@@ -118,12 +125,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (!bootstrap) return;
       setState((current) => {
         const nextList = bootstrap.basket ?? current.list;
+        const validManualKeys = new Set(current.manualListItems.map((item) => manualListKey(item.id)));
         return {
           ...current,
           location: bootstrap.location ?? current.location,
           radius: Number(bootstrap.radius ?? current.radius),
           list: nextList,
-          checkedListItems: current.checkedListItems.filter((id) => Number(nextList[id] ?? 0) > 0),
+          checkedListItems: current.checkedListItems.filter(
+            (id) => Number(nextList[id] ?? 0) > 0 || validManualKeys.has(id),
+          ),
           favoriteMarkets: bootstrap.favorites ?? bootstrap.selected ?? current.favoriteMarkets,
         };
       });
@@ -181,15 +191,46 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         });
         void persistBasketQuantity(productId, Math.max(0, qty));
       },
+      addManualListItem: (name, qty = 1) => {
+        const cleanName = name.trim().replace(/\s+/g, " ");
+        if (!cleanName) return;
+        patch((s) => {
+          const existing = s.manualListItems.find((item) => item.name.toLocaleLowerCase("de-DE") === cleanName.toLocaleLowerCase("de-DE"));
+          if (existing) {
+            return {
+              manualListItems: s.manualListItems.map((item) => item.id === existing.id ? { ...item, qty: item.qty + qty } : item),
+              checkedListItems: s.checkedListItems.filter((key) => key !== manualListKey(existing.id)),
+            };
+          }
+          const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          return { manualListItems: [...s.manualListItems, { id, name: cleanName, qty: Math.max(1, qty) }] };
+        });
+      },
+      setManualListQty: (id, qty) =>
+        patch((s) => ({
+          manualListItems: qty <= 0
+            ? s.manualListItems.filter((item) => item.id !== id)
+            : s.manualListItems.map((item) => item.id === id ? { ...item, qty } : item),
+          checkedListItems: qty <= 0
+            ? s.checkedListItems.filter((key) => key !== manualListKey(id))
+            : s.checkedListItems,
+        })),
+      removeManualListItem: (id) =>
+        patch((s) => ({
+          manualListItems: s.manualListItems.filter((item) => item.id !== id),
+          checkedListItems: s.checkedListItems.filter((key) => key !== manualListKey(id)),
+        })),
       clearList: () => {
-        patch({ list: {}, checkedListItems: [] });
+        patch({ list: {}, manualListItems: [], checkedListItems: [] });
         void persistBasketClear();
       },
-      toggleListChecked: (productId) =>
+      toggleListChecked: (itemKey) =>
         patch((s) => ({
-          checkedListItems: s.checkedListItems.includes(productId)
-            ? s.checkedListItems.filter((id) => id !== productId)
-            : [...s.checkedListItems, productId],
+          checkedListItems: s.checkedListItems.includes(itemKey)
+            ? s.checkedListItems.filter((id) => id !== itemKey)
+            : [...s.checkedListItems, itemKey],
         })),
       clearCheckedList: () => patch({ checkedListItems: [] }),
       toggleFavoriteProduct: (id) => {
