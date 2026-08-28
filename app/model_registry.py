@@ -13,6 +13,7 @@ from . import lokero_models as lokero_models
 from . import market_activation as market_activation
 from . import models as models
 from . import prospect_models as prospect_models
+from . import push_models as push_models
 from . import sharing_models as sharing_models
 from . import ux_routes as ux_routes
 from .db import Base
