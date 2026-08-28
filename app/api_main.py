@@ -5,6 +5,7 @@ from .main import app
 from . import account_change_events as account_change_events  # noqa: F401 - publishes canonical account changes
 from . import sharing_change_events as sharing_change_events  # noqa: F401 - publishes shared-list revisions
 from . import push_change_events as push_change_events  # noqa: F401 - aggregates shared-list push notifications
+from . import offer_push_events as offer_push_events  # noqa: F401 - publishes favorite-offer push digests
 from .api_routes import router
 from .bootstrap_routes import router as bootstrap_router
 from .product_detail_routes import router as product_detail_router
