@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { SparenoWordmark } from "@/components/brand/SparenoLogo";
+import { AccountStateSync } from "@/components/AccountStateSync";
 import { SharedListControls } from "@/components/sharing/SharedListControls";
 import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 
@@ -28,6 +29,7 @@ const NAV = [
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-frame flex flex-col">
+      <AccountStateSync />
       <div className="flex-1 pb-[92px]">{children}</div>
       <BottomNavigation />
     </div>
