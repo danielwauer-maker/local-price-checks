@@ -18,7 +18,18 @@ export type AccountNotificationSettings = {
 export type AccountState = {
   linked: boolean;
   profileId?: number;
+  profile?: {
+    displayName: string;
+    postalCode: string | null;
+    city: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    radiusKm: number;
+  };
   favoriteProductIds?: string[];
+  favoriteMarketIds?: string[];
+  favoriteFamilies?: string[];
+  favoritePreferences?: Array<{ productId: string; allowAlternatives: boolean }>;
   preferencesInitialized?: boolean;
   preferences?: {
     travelCostPerKm: number;
