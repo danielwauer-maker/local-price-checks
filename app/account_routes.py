@@ -14,7 +14,8 @@ from .account_realtime import publish_account_event, subscribe_account_events
 from .client_context import get_client_key
 from .client_models import AccountAppPreferences, AccountClientLink, AccountIdentity, UserClient
 from .db import get_db
-from .models import FavoriteProduct, UserProfile
+from .lokero_models import FavoriteProductFamily, FavoriteProductPreference
+from .models import FavoriteProduct, FavoriteStore, UserProfile
 from .services import current_user
 from .supabase_auth import verify_supabase_access_token
 
@@ -115,10 +116,45 @@ def _account_state_payload(db: Session, profile: UserProfile) -> dict:
         .order_by(FavoriteProduct.master_product_id.asc())
         .all()
     ]
+    favorite_market_ids = [
+        str(row.store_id)
+        for row in db.query(FavoriteStore)
+        .filter(FavoriteStore.user_id == profile.id)
+        .order_by(FavoriteStore.store_id.asc())
+        .all()
+    ]
+    favorite_families = [
+        row.family_slug
+        for row in db.query(FavoriteProductFamily)
+        .filter(FavoriteProductFamily.user_id == profile.id)
+        .order_by(FavoriteProductFamily.family_slug.asc())
+        .all()
+    ]
+    favorite_preferences = [
+        {
+            "productId": str(row.master_product_id),
+            "allowAlternatives": bool(row.allow_alternatives),
+        }
+        for row in db.query(FavoriteProductPreference)
+        .filter(FavoriteProductPreference.user_id == profile.id)
+        .order_by(FavoriteProductPreference.master_product_id.asc())
+        .all()
+    ]
     return {
         "linked": True,
         "profileId": profile.id,
+        "profile": {
+            "displayName": profile.display_name or "",
+            "postalCode": profile.postal_code,
+            "city": profile.city,
+            "latitude": profile.latitude,
+            "longitude": profile.longitude,
+            "radiusKm": float(profile.radius_km or 15),
+        },
         "favoriteProductIds": favorite_ids,
+        "favoriteMarketIds": favorite_market_ids,
+        "favoriteFamilies": favorite_families,
+        "favoritePreferences": favorite_preferences,
         "preferencesInitialized": prefs is not None,
         "preferences": _preferences_payload(prefs),
     }
@@ -188,7 +224,7 @@ async def account_events(request: Request, db: Session = Depends(get_db)):
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    event = await asyncio.wait_for(queue.get(), timeout=20.0)
                     yield f"event: {event.kind}\ndata: {{}}\n\n"
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
@@ -198,7 +234,11 @@ async def account_events(request: Request, db: Session = Depends(get_db)):
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 
