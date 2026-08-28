@@ -25,22 +25,17 @@ def _collect_push_changes(session: Session, _flush_context) -> None:
     for row in session.dirty:
         if not isinstance(row, SharedShoppingListItem):
             continue
-        state = inspect(row)
-        checked_history = state.attrs.checked.history
-        if not checked_history.has_changes():
-            continue
-        if bool(row.checked):
+        checked_history = inspect(row).attrs.checked.history
+        if checked_history.has_changes() and bool(row.checked):
+            # checked_by_user_id is set by the mutation route, so the actor is unambiguous.
             _collect(session, row.list_id, row.checked_by_user_id, "completed")
-        else:
-            # Reopening is attributable to the last writer only if the route cleared checked_by.
-            actor = row.checked_by_user_id or row.added_by_user_id
-            _collect(session, row.list_id, actor, "reopened")
+        # Re-opening is deliberately silent for now. The model clears checked_by_user_id
+        # on reopen, so guessing the actor from added_by would notify the wrong person.
 
 
 @event.listens_for(Session, "after_commit")
 def _queue_push_changes(session: Session) -> None:
     rows = session.info.pop(_INFO_KEY, [])
-    # Aggregate identical actions from one transaction before entering the timed batch.
     grouped: dict[tuple[int, int, str], int] = {}
     for list_id, actor_user_id, action in rows:
         key = (list_id, actor_user_id, action)
