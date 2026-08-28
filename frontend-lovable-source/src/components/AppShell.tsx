@@ -15,6 +15,7 @@ import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { SparenoWordmark } from "@/components/brand/SparenoLogo";
 import { AccountStateSync } from "@/components/AccountStateSync";
+import { PushSubscriptionSync } from "@/components/PushSubscriptionSync";
 import { SharedListControls } from "@/components/sharing/SharedListControls";
 import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 
@@ -30,6 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-frame flex flex-col">
       <AccountStateSync />
+      <PushSubscriptionSync />
       <div className="flex-1 pb-[92px]">{children}</div>
       <BottomNavigation />
     </div>
