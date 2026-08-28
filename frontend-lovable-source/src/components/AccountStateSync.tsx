@@ -23,26 +23,22 @@ export function AccountStateSync() {
   const pendingSync = useRef(false);
   const mutationDepth = useRef(0);
   const favoriteProductsRef = useRef(store.favoriteProducts);
-  const favoriteMarketsRef = useRef(store.favoriteMarkets);
   const locationRef = useRef(store.location);
   const radiusRef = useRef(store.radius);
   const travelCostRef = useRef(store.travelCostPerKm);
   const notificationsRef = useRef(store.notifications);
   const toggleFavoriteRef = useRef(store.toggleFavoriteProduct);
-  const toggleMarketRef = useRef(store.toggleFavoriteMarket);
   const setLocationRef = useRef(store.setLocation);
   const setRadiusRef = useRef(store.setRadius);
   const setTravelCostRef = useRef(store.setTravelCostPerKm);
   const setNotificationRef = useRef(store.setNotification);
 
   useEffect(() => { favoriteProductsRef.current = store.favoriteProducts; }, [store.favoriteProducts]);
-  useEffect(() => { favoriteMarketsRef.current = store.favoriteMarkets; }, [store.favoriteMarkets]);
   useEffect(() => { locationRef.current = store.location; }, [store.location]);
   useEffect(() => { radiusRef.current = store.radius; }, [store.radius]);
   useEffect(() => { travelCostRef.current = store.travelCostPerKm; }, [store.travelCostPerKm]);
   useEffect(() => { notificationsRef.current = store.notifications; }, [store.notifications]);
   useEffect(() => { toggleFavoriteRef.current = store.toggleFavoriteProduct; }, [store.toggleFavoriteProduct]);
-  useEffect(() => { toggleMarketRef.current = store.toggleFavoriteMarket; }, [store.toggleFavoriteMarket]);
   useEffect(() => { setLocationRef.current = store.setLocation; }, [store.setLocation]);
   useEffect(() => { setRadiusRef.current = store.setRadius; }, [store.setRadius]);
   useEffect(() => { setTravelCostRef.current = store.setTravelCostPerKm; }, [store.setTravelCostPerKm]);
@@ -66,20 +62,6 @@ export function AccountStateSync() {
       });
       favoriteProductsRef.current = [...serverFavorites];
       notifyFavoritesChanged();
-    }
-
-    const serverMarkets = state.favoriteMarketIds ?? [];
-    const localMarkets = favoriteMarketsRef.current;
-    if (!sameSet(localMarkets, serverMarkets)) {
-      const current = new Set(localMarkets);
-      const wanted = new Set(serverMarkets);
-      for (const marketId of serverMarkets) {
-        if (!current.has(marketId)) toggleMarketRef.current(marketId);
-      }
-      for (const marketId of localMarkets) {
-        if (!wanted.has(marketId)) toggleMarketRef.current(marketId);
-      }
-      favoriteMarketsRef.current = [...serverMarkets];
     }
 
     const profile = state.profile;
@@ -107,7 +89,9 @@ export function AccountStateSync() {
     if (state.favoritePreferences) {
       queryClient.setQueryData(["favorite-preferences"], state.favoritePreferences);
     }
-    // Family rows need their labels/metadata; invalidate so the canonical API refetches them.
+    // These resources are canonical backend views and are safe to refetch on every account event.
+    // Favorite markets are not toggled locally here because their legacy API is toggle-based;
+    // refetching avoids accidentally reversing a remote change.
     void queryClient.invalidateQueries({ queryKey: ["favorite-families"] });
     void queryClient.invalidateQueries({ queryKey: ["favorite-matched-offers"] });
     void queryClient.invalidateQueries({ queryKey: ["favorite-markets"] });
@@ -202,14 +186,11 @@ export function AccountStateSync() {
       events.addEventListener("state", onRemoteState);
       events.addEventListener("favorites", onRemoteState);
       events.onerror = () => {
-        // EventSource reconnects automatically. Reconcile immediately as a safety net.
         window.setTimeout(() => void sync(), 250);
       };
     }
 
-    // Safety reconciliation for suspended mobile browsers or lost SSE events.
-    // Normal synchronization remains event-driven; 15s is deliberately conservative
-    // for the closed beta and still cheap at the current user volume.
+    // Closed-beta safety net for suspended iOS/WebKit sessions. Normal active sync is SSE-driven.
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void sync();
     }, 15_000);
