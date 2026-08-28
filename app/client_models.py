@@ -79,6 +79,23 @@ class AccountClientLink(Base):
     client: Mapped[UserClient] = relationship()
 
 
+class AccountAppPreferences(Base):
+    """Account-scoped UI preferences shared by every linked Spareno device."""
+
+    __tablename__ = "account_app_preferences"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_account_app_preferences_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_profiles.id"), index=True)
+    travel_cost_per_km: Mapped[float] = mapped_column(Float, default=0.3)
+    notifications_json: Mapped[str] = mapped_column(Text, default='{"priceAlerts":true,"newOffers":true,"regionAvailable":true,"favoriteOffers":false}')
+    preferred_chains_json: Mapped[str] = mapped_column(Text, default='["REWE","Lidl","ALDI SÜD","Netto","EDEKA"]')
+    diet_json: Mapped[str] = mapped_column(Text, default="[]")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    user: Mapped[UserProfile] = relationship()
+
+
 class ClientDevice(Base):
     """Normalized, privacy-conscious device metadata for one anonymous client."""
 
