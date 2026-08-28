@@ -2,6 +2,7 @@ import re
 import secrets
 
 from .main import app
+from . import account_change_events as account_change_events  # noqa: F401 - publishes canonical account changes
 from .api_routes import router
 from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
