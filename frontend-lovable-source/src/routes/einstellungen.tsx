@@ -11,6 +11,7 @@ import {
   LogOut,
   MapPin,
   Navigation,
+  Save,
   ShieldCheck,
   Sparkles,
   User,
@@ -19,10 +20,11 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { SPARENO_ONBOARDING_REPLAY_EVENT } from "@/components/FirstStartOnboarding";
 import { ReviewerSettings } from "@/components/lokero/ReviewerSettings";
+import { PushSettingsCard } from "@/components/settings/PushSettingsCard";
 import { useStore } from "@/lib/app-store";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
-import { persistAccountPreferences } from "@/services/lokero-account-api";
+import { fetchAccountState, persistAccountPreferences, persistAccountProfile } from "@/services/lokero-account-api";
 
 export const Route = createFileRoute("/einstellungen")({
   head: () => ({
@@ -94,6 +96,10 @@ function SettingsPage() {
   const navigate = useNavigate();
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [postalCode, setPostalCode] = useState("");
+  const [city, setCity] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
   const [installed] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches,
   );
@@ -118,6 +124,17 @@ function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void fetchAccountState().then((state) => {
+      if (!active || !state.linked || !state.profile) return;
+      setProfileName(state.profile.displayName || "");
+      setPostalCode(state.profile.postalCode || "");
+      setCity(state.profile.city || "");
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   async function signOut() {
     await supabase.auth.signOut();
     toast.success("Abgemeldet");
@@ -139,6 +156,36 @@ function SettingsPage() {
     void persistAccountPreferences({ notifications: { [key]: value } }).catch(() => {});
   }
 
+  async function saveProfile() {
+    if (!postalCode.trim() || !city.trim()) {
+      toast.error("Bitte PLZ und Ort eingeben");
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      const state = await persistAccountProfile({
+        displayName: profileName.trim() || undefined,
+        postalCode: postalCode.trim(),
+        city: city.trim(),
+        radiusKm: store.radius,
+      });
+      const profile = state.profile;
+      if (profile?.latitude != null && profile.longitude != null) {
+        store.setLocation({
+          lat: profile.latitude,
+          lng: profile.longitude,
+          label: [profile.postalCode, profile.city].filter(Boolean).join(" ") || "Mein Standort",
+        });
+      }
+      if (profile?.radiusKm) store.setRadius(profile.radiusKm);
+      toast.success("Standort gespeichert");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Standort konnte nicht gespeichert werden");
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
   return (
     <div className="pb-4">
       <PageHeader title="Einstellungen" subtitle="Spareno an deinen Einkauf anpassen" />
@@ -146,9 +193,26 @@ function SettingsPage() {
       <div className="space-y-3 px-4 pt-1">
         <Section icon={MapPin} title="Standort">
           <Row label="Aktueller Standort" hint={store.location.label} action={<span />} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-[11px] font-medium text-muted-foreground">Name</span>
+              <input value={profileName} onChange={(e) => setProfileName(e.target.value)} placeholder="Dein Name" maxLength={100} className="h-10 w-full rounded-xl border border-border bg-surface px-3 text-[13px] text-navy outline-none focus:border-primary" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[11px] font-medium text-muted-foreground">PLZ</span>
+              <input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} inputMode="numeric" placeholder="57614" maxLength={10} className="h-10 w-full rounded-xl border border-border bg-surface px-3 text-[13px] text-navy outline-none focus:border-primary" />
+            </label>
+            <label className="space-y-1">
+              <span className="text-[11px] font-medium text-muted-foreground">Ort</span>
+              <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Steimel" maxLength={100} className="h-10 w-full rounded-xl border border-border bg-surface px-3 text-[13px] text-navy outline-none focus:border-primary" />
+            </label>
+          </div>
+          <button type="button" disabled={profileBusy} onClick={() => void saveProfile()} className="tap-target flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground disabled:opacity-60">
+            <Save className="h-4 w-4" /> {profileBusy ? "Speichert …" : "Standort & Profil speichern"}
+          </button>
           <div className="flex gap-2">
             <Link to="/regionen" className="tap-target flex h-10 flex-1 items-center justify-center rounded-xl border border-border bg-surface text-[13px] font-semibold text-navy">
-              Standort ändern
+              Regionen prüfen
             </Link>
             <button
               type="button"
@@ -156,9 +220,9 @@ function SettingsPage() {
                 (pos) => store.setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, label: "Mein Standort" }),
                 () => toast.error("Standortfreigabe wurde abgelehnt"),
               )}
-              className="tap-target flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary text-[13px] font-semibold text-primary-foreground"
+              className="tap-target flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-primary/20 bg-primary-soft text-[13px] font-semibold text-primary"
             >
-              <Navigation className="h-4 w-4" /> Standort freigeben
+              <Navigation className="h-4 w-4" /> GPS verwenden
             </button>
           </div>
         </Section>
@@ -216,6 +280,7 @@ function SettingsPage() {
               action={<Toggle checked={store.notifications[key]} onChange={(v) => changeNotification(key, v)} label={label} />}
             />
           ))}
+          <PushSettingsCard />
         </Section>
 
         <Section icon={ShieldCheck} title="Datenschutz">
