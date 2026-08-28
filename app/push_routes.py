@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -17,6 +18,18 @@ from .push_service import send_push_to_user, vapid_public_key
 
 router = APIRouter(tags=["push"])
 
+_TRUSTED_PUSH_HOSTS = {
+    "fcm.googleapis.com",
+    "updates.push.services.mozilla.com",
+    "push.services.mozilla.com",
+    "web.push.apple.com",
+}
+_TRUSTED_PUSH_SUFFIXES = (
+    ".push.services.mozilla.com",
+    ".push.apple.com",
+    ".notify.windows.com",
+)
+
 
 class PushKeys(BaseModel):
     p256dh: str = Field(min_length=1)
@@ -30,6 +43,19 @@ class PushSubscriptionPayload(BaseModel):
 
 class PushUnsubscribePayload(BaseModel):
     endpoint: str = Field(min_length=8, max_length=4096)
+
+
+def _trusted_push_endpoint(endpoint: str) -> bool:
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        return False
+    if parsed.port not in {None, 443}:
+        return False
+    return host in _TRUSTED_PUSH_HOSTS or any(host.endswith(suffix) for suffix in _TRUSTED_PUSH_SUFFIXES)
 
 
 @router.get("/api/push/config")
@@ -62,6 +88,8 @@ def register_push_subscription(
     profile = _linked_profile(db)
     if profile is None:
         raise HTTPException(403, "Für Push-Benachrichtigungen ist ein Spareno-Konto erforderlich.")
+    if not _trusted_push_endpoint(payload.endpoint):
+        raise HTTPException(400, "Ungültiger Web-Push-Endpunkt.")
     row = db.query(PushSubscription).filter(PushSubscription.endpoint == payload.endpoint).first()
     if row is None:
         row = PushSubscription(
