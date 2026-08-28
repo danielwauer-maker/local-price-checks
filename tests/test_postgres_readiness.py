@@ -33,6 +33,7 @@ def test_model_registry_contains_additive_models():
     names = set(metadata().tables)
     assert {
         "account_client_links",
+        "account_app_preferences",
         "client_devices",
         "shopping_item_checks",
         "collection_quality_snapshots",
@@ -49,7 +50,7 @@ def test_model_registry_contains_additive_models():
         "favorite_share_item_visibility",
         "favorite_share_subscriptions",
     } <= names
-    assert len(names) == 54
+    assert len(names) == 55
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):

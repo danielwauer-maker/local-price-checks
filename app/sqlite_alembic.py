@@ -25,9 +25,15 @@ from .db_transfer import (
 from .model_registry import metadata as application_metadata
 
 BASELINE_REVISION = "20260825_01"
-PREVIOUS_REVISION = "20260826_01"
-TARGET_REVISION = "20260827_01"
-HISTORICAL_REVISIONS = {BASELINE_REVISION, "20260825_02", "20260825_03", PREVIOUS_REVISION}
+PREVIOUS_REVISION = "20260827_01"
+TARGET_REVISION = "20260828_01"
+HISTORICAL_REVISIONS = {
+    BASELINE_REVISION,
+    "20260825_02",
+    "20260825_03",
+    "20260826_01",
+    PREVIOUS_REVISION,
+}
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -73,7 +79,7 @@ def _run_alembic(path: Path, *arguments: str) -> None:
         raise MigrationSafetyError(f"Alembic {' '.join(arguments)} failed: {detail}")
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def revision_metadata(revision: str) -> MetaData:
     """Reflect exactly one historical Alembic revision for semantic validation.
 

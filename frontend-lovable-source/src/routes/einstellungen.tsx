@@ -22,6 +22,7 @@ import { ReviewerSettings } from "@/components/lokero/ReviewerSettings";
 import { useStore } from "@/lib/app-store";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { persistAccountPreferences } from "@/services/lokero-account-api";
 
 export const Route = createFileRoute("/einstellungen")({
   head: () => ({
@@ -127,6 +128,17 @@ function SettingsPage() {
     window.dispatchEvent(new Event(SPARENO_ONBOARDING_REPLAY_EVENT));
   }
 
+  function changeTravelCost(value: number) {
+    const next = Number.isFinite(value) ? Math.max(0, value) : 0;
+    store.setTravelCostPerKm(next);
+    void persistAccountPreferences({ travelCostPerKm: next }).catch(() => {});
+  }
+
+  function changeNotification(key: keyof typeof store.notifications, value: boolean) {
+    store.setNotification(key, value);
+    void persistAccountPreferences({ notifications: { [key]: value } }).catch(() => {});
+  }
+
   return (
     <div className="pb-4">
       <PageHeader title="Einstellungen" subtitle="Spareno an deinen Einkauf anpassen" />
@@ -182,7 +194,7 @@ function SettingsPage() {
                   min={0}
                   step={0.05}
                   value={store.travelCostPerKm}
-                  onChange={(e) => store.setTravelCostPerKm(Number(e.target.value))}
+                  onChange={(e) => changeTravelCost(Number(e.target.value))}
                   className="tabular w-16 bg-transparent text-right text-[13px] font-semibold text-navy outline-none"
                 />
                 <span className="text-[12px] text-muted-foreground">€/km</span>
@@ -201,7 +213,7 @@ function SettingsPage() {
             <Row
               key={key}
               label={label}
-              action={<Toggle checked={store.notifications[key]} onChange={(v) => store.setNotification(key, v)} label={label} />}
+              action={<Toggle checked={store.notifications[key]} onChange={(v) => changeNotification(key, v)} label={label} />}
             />
           ))}
         </Section>
@@ -253,7 +265,7 @@ function SettingsPage() {
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-[13px] font-semibold text-navy">Einführung</span>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">Die 4 Spareno-Karten erneut ansehen</span>
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">Die 5 Spareno-Karten erneut ansehen</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
           </button>

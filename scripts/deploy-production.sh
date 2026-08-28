@@ -99,12 +99,17 @@ SCHEMA_FILES="$(grep -E '^(alembic\.ini|alembic/|migrations/|app/.+migration|app
 CONTROLLED_SCHEMA_RELEASE=0
 
 if [[ -n "$SCHEMA_FILES" ]]; then
-  # This release path is intentionally narrow. Any future schema change must be
-  # reviewed and explicitly added instead of silently inheriting this procedure.
+  # Every schema change gets an explicit allow-list. This keeps production
+  # fail-closed while still allowing a reviewed migration to use the verified
+  # SQLite dry-run + external-backup path.
   if grep -Fxq 'migrations/versions/20260827_01_sharing_lists_favorites.py' <<<"$SCHEMA_FILES" \
     && ! grep -Evq '^(migrations/versions/20260827_01_sharing_lists_favorites\.py|app/sharing_models\.py)$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: shared lists + friend favorites."
+  elif grep -Fxq 'migrations/versions/20260828_01_account_app_preferences.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(migrations/versions/20260828_01_account_app_preferences\.py|app/client_models\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled schema release recognized: account app preferences."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
@@ -193,7 +198,7 @@ if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
   fi
 
   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-  BACKUP_PATH="$BACKUP_DIR/local_price_checks-pre-sharing-$STAMP.sqlite3"
+  BACKUP_PATH="$BACKUP_DIR/local_price_checks-pre-migration-$STAMP.sqlite3"
 
   echo "Stopping backend briefly for an atomic SQLite migration..."
   docker compose stop app

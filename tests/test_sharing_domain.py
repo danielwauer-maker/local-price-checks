@@ -175,7 +175,7 @@ def test_shopping_invite_is_single_use(monkeypatch):
         db.close()
 
 
-def test_hidden_favorite_and_disabled_share_do_not_leak_public_items():
+def test_hidden_favorite_disabled_share_and_shopping_items_do_not_leak_public_items():
     _ensure_tables()
     db = SessionLocal()
     user_ids: list[int] = []
@@ -184,23 +184,28 @@ def test_hidden_favorite_and_disabled_share_do_not_leak_public_items():
         owner = UserProfile(display_name="Favorite Owner", radius_km=15)
         visible = MasterProduct(name="Visible Favorite", normalized_key="sharing-visible")
         hidden = MasterProduct(name="Hidden Favorite", normalized_key="sharing-hidden")
-        db.add_all([owner, visible, hidden])
+        shopping_only = MasterProduct(name="Shopping list only", normalized_key="shopping-list-only")
+        db.add_all([owner, visible, hidden, shopping_only])
         db.flush()
         user_ids.append(owner.id)
-        product_ids.extend([visible.id, hidden.id])
+        product_ids.extend([visible.id, hidden.id, shopping_only.id])
         db.add_all([
             FavoriteProduct(user_id=owner.id, master_product_id=visible.id),
             FavoriteProduct(user_id=owner.id, master_product_id=hidden.id),
             FavoriteShareItemVisibility(owner_user_id=owner.id, master_product_id=hidden.id, visible=False),
+            ShoppingItem(user_id=owner.id, master_product_id=shopping_only.id, quantity=4),
         ])
         share = FavoriteShare(owner_user_id=owner.id, token="sharing-domain-token", enabled=True)
         db.add(share)
         db.commit()
 
+        # The shopping-only product must never become part of the share. Sharing
+        # is driven exclusively by FavoriteProduct rows.
         assert _visible_favorite_ids(db, owner.id) == [visible.id]
         public = public_favorites(share.token, db)
         assert public["available"] is True
         assert [item["id"] for item in public["items"]] == [str(visible.id)]
+        assert str(shopping_only.id) not in {item["id"] for item in public["items"]}
 
         share.enabled = False
         db.commit()

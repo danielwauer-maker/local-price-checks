@@ -8,6 +8,42 @@ export type AccountLinkResult = {
   email?: string | null;
 };
 
+export type AccountNotificationSettings = {
+  priceAlerts: boolean;
+  newOffers: boolean;
+  regionAvailable: boolean;
+  favoriteOffers: boolean;
+};
+
+export type AccountState = {
+  linked: boolean;
+  profileId?: number;
+  favoriteProductIds?: string[];
+  preferencesInitialized?: boolean;
+  preferences?: {
+    travelCostPerKm: number;
+    notifications: AccountNotificationSettings;
+    preferredChains: string[];
+    diet: string[];
+  };
+};
+
+export type AccountPreferencesPatch = {
+  travelCostPerKm?: number;
+  notifications?: Partial<AccountNotificationSettings>;
+  preferredChains?: string[];
+  diet?: string[];
+  initializeOnly?: boolean;
+};
+
+async function parseJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(body?.detail || `Spareno API ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
 export async function linkLokeroAccount(session: Session): Promise<AccountLinkResult> {
   const response = await fetch("/api/account/link", {
     method: "POST",
@@ -18,11 +54,25 @@ export async function linkLokeroAccount(session: Session): Promise<AccountLinkRe
     },
   });
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(body?.detail || `Account-Link fehlgeschlagen (${response.status})`);
-  }
-  return (await response.json()) as AccountLinkResult;
+  return parseJson<AccountLinkResult>(response);
+}
+
+export async function fetchAccountState(): Promise<AccountState> {
+  const response = await fetch("/api/account/state", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  return parseJson<AccountState>(response);
+}
+
+export async function persistAccountPreferences(patch: AccountPreferencesPatch): Promise<AccountState> {
+  const response = await fetch("/api/account/preferences", {
+    method: "PUT",
+    credentials: "include",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJson<AccountState>(response);
 }
 
 export function rememberLinkedProfile(result: AccountLinkResult) {
