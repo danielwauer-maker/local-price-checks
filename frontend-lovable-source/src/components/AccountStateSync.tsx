@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/lib/app-store";
 import { ACCOUNT_PROFILE_STORAGE_KEY, fetchAccountState, persistAccountPreferences, type AccountState } from "@/services/lokero-account-api";
 import {
@@ -17,20 +18,33 @@ function sameSet(a: string[], b: string[]) {
 
 export function AccountStateSync() {
   const store = useStore();
+  const queryClient = useQueryClient();
   const syncing = useRef(false);
   const pendingSync = useRef(false);
   const mutationDepth = useRef(0);
   const favoriteProductsRef = useRef(store.favoriteProducts);
+  const favoriteMarketsRef = useRef(store.favoriteMarkets);
+  const locationRef = useRef(store.location);
+  const radiusRef = useRef(store.radius);
   const travelCostRef = useRef(store.travelCostPerKm);
   const notificationsRef = useRef(store.notifications);
   const toggleFavoriteRef = useRef(store.toggleFavoriteProduct);
+  const toggleMarketRef = useRef(store.toggleFavoriteMarket);
+  const setLocationRef = useRef(store.setLocation);
+  const setRadiusRef = useRef(store.setRadius);
   const setTravelCostRef = useRef(store.setTravelCostPerKm);
   const setNotificationRef = useRef(store.setNotification);
 
   useEffect(() => { favoriteProductsRef.current = store.favoriteProducts; }, [store.favoriteProducts]);
+  useEffect(() => { favoriteMarketsRef.current = store.favoriteMarkets; }, [store.favoriteMarkets]);
+  useEffect(() => { locationRef.current = store.location; }, [store.location]);
+  useEffect(() => { radiusRef.current = store.radius; }, [store.radius]);
   useEffect(() => { travelCostRef.current = store.travelCostPerKm; }, [store.travelCostPerKm]);
   useEffect(() => { notificationsRef.current = store.notifications; }, [store.notifications]);
   useEffect(() => { toggleFavoriteRef.current = store.toggleFavoriteProduct; }, [store.toggleFavoriteProduct]);
+  useEffect(() => { toggleMarketRef.current = store.toggleFavoriteMarket; }, [store.toggleFavoriteMarket]);
+  useEffect(() => { setLocationRef.current = store.setLocation; }, [store.setLocation]);
+  useEffect(() => { setRadiusRef.current = store.setRadius; }, [store.setRadius]);
   useEffect(() => { setTravelCostRef.current = store.setTravelCostPerKm; }, [store.setTravelCostPerKm]);
   useEffect(() => { setNotificationRef.current = store.setNotification; }, [store.setNotification]);
 
@@ -39,8 +53,7 @@ export function AccountStateSync() {
 
     const serverFavorites = state.favoriteProductIds ?? [];
     const localFavorites = favoriteProductsRef.current;
-    const favoritesChanged = !sameSet(localFavorites, serverFavorites);
-    if (favoritesChanged) {
+    if (!sameSet(localFavorites, serverFavorites)) {
       const current = new Set(localFavorites);
       const wanted = new Set(serverFavorites);
       runWithoutFavoritePersistence(() => {
@@ -55,6 +68,50 @@ export function AccountStateSync() {
       notifyFavoritesChanged();
     }
 
+    const serverMarkets = state.favoriteMarketIds ?? [];
+    const localMarkets = favoriteMarketsRef.current;
+    if (!sameSet(localMarkets, serverMarkets)) {
+      const current = new Set(localMarkets);
+      const wanted = new Set(serverMarkets);
+      for (const marketId of serverMarkets) {
+        if (!current.has(marketId)) toggleMarketRef.current(marketId);
+      }
+      for (const marketId of localMarkets) {
+        if (!wanted.has(marketId)) toggleMarketRef.current(marketId);
+      }
+      favoriteMarketsRef.current = [...serverMarkets];
+    }
+
+    const profile = state.profile;
+    if (profile) {
+      const nextRadius = Number(profile.radiusKm || 15);
+      if (Math.abs(radiusRef.current - nextRadius) > 0.001) {
+        setRadiusRef.current(nextRadius);
+        radiusRef.current = nextRadius;
+      }
+      if (profile.latitude != null && profile.longitude != null) {
+        const label = [profile.postalCode, profile.city].filter(Boolean).join(" ") || "Mein Standort";
+        const current = locationRef.current;
+        if (
+          Math.abs(current.lat - profile.latitude) > 0.00001 ||
+          Math.abs(current.lng - profile.longitude) > 0.00001 ||
+          current.label !== label
+        ) {
+          const next = { lat: profile.latitude, lng: profile.longitude, label };
+          setLocationRef.current(next);
+          locationRef.current = next;
+        }
+      }
+    }
+
+    if (state.favoritePreferences) {
+      queryClient.setQueryData(["favorite-preferences"], state.favoritePreferences);
+    }
+    // Family rows need their labels/metadata; invalidate so the canonical API refetches them.
+    void queryClient.invalidateQueries({ queryKey: ["favorite-families"] });
+    void queryClient.invalidateQueries({ queryKey: ["favorite-matched-offers"] });
+    void queryClient.invalidateQueries({ queryKey: ["favorite-markets"] });
+
     const prefs = state.preferences;
     if (!prefs) return;
     if (Math.abs(travelCostRef.current - prefs.travelCostPerKm) > 0.0001) {
@@ -67,7 +124,7 @@ export function AccountStateSync() {
         notificationsRef.current = { ...notificationsRef.current, [key]: prefs.notifications[key] };
       }
     }
-  }, []);
+  }, [queryClient]);
 
   const sync = useCallback(async () => {
     if (!store.hydrated) return;
@@ -138,28 +195,33 @@ export function AccountStateSync() {
     if (window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY)) {
       events = new EventSource("/api/account/events", { withCredentials: true });
       const onRemoteState = () => {
-        // Family/alternative changes are separate cached resources, while
-        // product favorites/settings are part of /api/account/state.
         notifyFavoritesChanged();
         void sync();
       };
+      events.addEventListener("ready", onRemoteState);
       events.addEventListener("state", onRemoteState);
       events.addEventListener("favorites", onRemoteState);
+      events.onerror = () => {
+        // EventSource reconnects automatically. Reconcile immediately as a safety net.
+        window.setTimeout(() => void sync(), 250);
+      };
     }
 
-    // Sparse safety net for temporary SSE/network failures. Normal active
-    // synchronization is event-driven and therefore does not create constant
-    // database traffic per logged-in device.
+    // Safety reconciliation for suspended mobile browsers or lost SSE events.
+    // Normal synchronization remains event-driven; 15s is deliberately conservative
+    // for the closed beta and still cheap at the current user volume.
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void sync();
-    }, 60_000);
+    }, 15_000);
     const onVisible = () => { if (document.visibilityState === "visible") void sync(); };
     window.addEventListener("focus", sync);
+    window.addEventListener("online", sync);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       events?.close();
       window.clearInterval(interval);
       window.removeEventListener("focus", sync);
+      window.removeEventListener("online", sync);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [store.hydrated, sync]);
