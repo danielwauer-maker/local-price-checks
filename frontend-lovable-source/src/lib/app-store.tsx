@@ -436,11 +436,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
       toggleFavoriteMarket: (id) => { patch((current) => ({ favoriteMarkets: current.favoriteMarkets.includes(id) ? current.favoriteMarkets.filter((marketId) => marketId !== id) : [...current.favoriteMarkets, id] })); void persistMarketToggle(id); },
       isFavoriteProduct: (id) => state.favoriteProducts.includes(id),
-      setAlert: (productId, targetPrice, active) => patch((current) => ({ alerts: { ...current.alerts, [productId]: { targetPrice, active } })),
+      setAlert: (productId, targetPrice, active) => patch((current) => ({ alerts: { ...current.alerts, [productId]: { targetPrice, active } } })),
       removeAlert: (productId) => patch((current) => { const next = { ...current.alerts }; delete next[productId]; return { alerts: next }; }),
       togglePreferredChain: (chain) => patch((current) => ({ preferredChains: current.preferredChains.includes(chain) ? current.preferredChains.filter((item) => item !== chain) : [...current.preferredChains, chain] })),
       setTravelCostPerKm: (travelCostPerKm) => patch({ travelCostPerKm }),
-      setNotification: (key, value) => patch((current) => ({ notifications: { ...current.notifications, [key]: value } })),
+      setNotification: (key, value) => patch((current) => ({ notifications: { ...current.notifications, [key]: value })),
       toggleDiet: (tag) => patch((current) => ({ diet: current.diet.includes(tag) ? current.diet.filter((item) => item !== tag) : [...current.diet, tag] })),
       setRegionStatusOverride: (regionStatusOverride) => patch({ regionStatusOverride }),
     };
