@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Eye, EyeOff, HeartHandshake, LockKeyhole, LogIn, QrCode, RefreshCw, Share2 } from "lucide-react";
+import { ChevronLeft, Copy, Eye, EyeOff, HeartHandshake, LockKeyhole, LogIn, QrCode, RefreshCw, Share2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
@@ -98,6 +98,11 @@ function FavoriteShareScreen() {
   return (
     <div>
       <PageHeader title="Favoriten teilen" subtitle="Du entscheidest, was Freunde sehen" />
+      <div className="px-4 pt-3">
+        <Link to="/favoriten" className="inline-flex h-9 items-center gap-1 rounded-xl border border-border bg-surface px-3 text-[11px] font-semibold text-navy">
+          <ChevronLeft className="h-4 w-4" /> Zurück zu Favoriten
+        </Link>
+      </div>
       <div className="space-y-3 px-4 pt-3">
         {settings.isLoading && <div className="card-surface h-32 animate-pulse" />}
 
