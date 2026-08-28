@@ -23,24 +23,24 @@ export function AccountStateSync() {
   const pendingSync = useRef(false);
   const mutationDepth = useRef(0);
   const favoriteProductsRef = useRef(store.favoriteProducts);
+  const favoriteMarketsRef = useRef(store.favoriteMarkets);
   const locationRef = useRef(store.location);
   const radiusRef = useRef(store.radius);
   const travelCostRef = useRef(store.travelCostPerKm);
   const notificationsRef = useRef(store.notifications);
   const toggleFavoriteRef = useRef(store.toggleFavoriteProduct);
-  const setLocationRef = useRef(store.setLocation);
-  const setRadiusRef = useRef(store.setRadius);
+  const reconcileAccountStateRef = useRef(store.reconcileAccountState);
   const setTravelCostRef = useRef(store.setTravelCostPerKm);
   const setNotificationRef = useRef(store.setNotification);
 
   useEffect(() => { favoriteProductsRef.current = store.favoriteProducts; }, [store.favoriteProducts]);
+  useEffect(() => { favoriteMarketsRef.current = store.favoriteMarkets; }, [store.favoriteMarkets]);
   useEffect(() => { locationRef.current = store.location; }, [store.location]);
   useEffect(() => { radiusRef.current = store.radius; }, [store.radius]);
   useEffect(() => { travelCostRef.current = store.travelCostPerKm; }, [store.travelCostPerKm]);
   useEffect(() => { notificationsRef.current = store.notifications; }, [store.notifications]);
   useEffect(() => { toggleFavoriteRef.current = store.toggleFavoriteProduct; }, [store.toggleFavoriteProduct]);
-  useEffect(() => { setLocationRef.current = store.setLocation; }, [store.setLocation]);
-  useEffect(() => { setRadiusRef.current = store.setRadius; }, [store.setRadius]);
+  useEffect(() => { reconcileAccountStateRef.current = store.reconcileAccountState; }, [store.reconcileAccountState]);
   useEffect(() => { setTravelCostRef.current = store.setTravelCostPerKm; }, [store.setTravelCostPerKm]);
   useEffect(() => { setNotificationRef.current = store.setNotification; }, [store.setNotification]);
 
@@ -64,11 +64,16 @@ export function AccountStateSync() {
       notifyFavoritesChanged();
     }
 
+    const reconcile: {
+      location?: { lat: number; lng: number; label: string };
+      radius?: number;
+      favoriteMarkets?: string[];
+    } = {};
     const profile = state.profile;
     if (profile) {
       const nextRadius = Number(profile.radiusKm || 15);
       if (Math.abs(radiusRef.current - nextRadius) > 0.001) {
-        setRadiusRef.current(nextRadius);
+        reconcile.radius = nextRadius;
         radiusRef.current = nextRadius;
       }
       if (profile.latitude != null && profile.longitude != null) {
@@ -80,18 +85,24 @@ export function AccountStateSync() {
           current.label !== label
         ) {
           const next = { lat: profile.latitude, lng: profile.longitude, label };
-          setLocationRef.current(next);
+          reconcile.location = next;
           locationRef.current = next;
         }
       }
     }
 
+    const serverFavoriteMarkets = state.favoriteMarketIds ?? [];
+    if (!sameSet(favoriteMarketsRef.current, serverFavoriteMarkets)) {
+      reconcile.favoriteMarkets = [...serverFavoriteMarkets];
+      favoriteMarketsRef.current = [...serverFavoriteMarkets];
+    }
+    if (Object.keys(reconcile).length > 0) {
+      reconcileAccountStateRef.current(reconcile);
+    }
+
     if (state.favoritePreferences) {
       queryClient.setQueryData(["favorite-preferences"], state.favoritePreferences);
     }
-    // These resources are canonical backend views and are safe to refetch on every account event.
-    // Favorite markets are not toggled locally here because their legacy API is toggle-based;
-    // refetching avoids accidentally reversing a remote change.
     void queryClient.invalidateQueries({ queryKey: ["favorite-families"] });
     void queryClient.invalidateQueries({ queryKey: ["favorite-matched-offers"] });
     void queryClient.invalidateQueries({ queryKey: ["favorite-markets"] });
