@@ -6,6 +6,7 @@ from . import account_change_events as account_change_events  # noqa: F401 - pub
 from . import sharing_change_events as sharing_change_events  # noqa: F401 - publishes shared-list revisions
 from . import push_change_events as push_change_events  # noqa: F401 - aggregates shared-list push notifications
 from .api_routes import router
+from .bootstrap_routes import router as bootstrap_router
 from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
 from .activity_routes import router as activity_router
@@ -104,6 +105,8 @@ async def persistent_client_identity(request, call_next):
     return response
 
 
+# Optimized bootstrap is intentionally registered before the legacy /api/bootstrap route.
+app.include_router(bootstrap_router)
 app.include_router(router)
 app.include_router(product_detail_router)
 app.include_router(client_router)
