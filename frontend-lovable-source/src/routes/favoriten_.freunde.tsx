@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { BellRing, Bell, BellOff, Heart, HeartHandshake, Trash2, Users } from "lucide-react";
+import { BellRing, Bell, BellOff, ChevronLeft, Heart, HeartHandshake, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { fetchFriendFavorites, unsubscribeFromFavoriteShare, updateFriendFavoriteSettings } from "@/services/sharing-api";
@@ -41,6 +41,11 @@ function FriendFavoritesScreen() {
   return (
     <div>
       <PageHeader title="Favoriten von Freunden" subtitle="Gespeicherte Vorlieben & passende Angebote" />
+      <div className="px-4 pt-3">
+        <Link to="/favoriten" className="inline-flex h-9 items-center gap-1 rounded-xl border border-border bg-surface px-3 text-[11px] font-semibold text-navy">
+          <ChevronLeft className="h-4 w-4" /> Zurück zu Favoriten
+        </Link>
+      </div>
       <div className="space-y-4 px-4 pt-3">
         {overview.isLoading && <div className="card-surface h-28 animate-pulse" />}
 
