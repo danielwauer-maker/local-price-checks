@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .client_models import AccountAppPreferences
 from .db import SessionLocal
+from .market_activation import store_is_public
 from .models import FavoriteProduct, FavoriteStore, Offer, Store, UserProfile
 from .push_service import send_push_to_user
 from .sharing_models import FavoriteShare, FavoriteShareItemVisibility, FavoriteShareSubscription
@@ -29,8 +30,16 @@ def _favorite_offer_enabled(row: AccountAppPreferences | None) -> bool:
         return False
 
 
-def _queue_digest(user_id: int, kind: str, product_ids: set[int], friend_name: str | None = None) -> None:
-    key = (int(user_id), kind if friend_name is None else f"{kind}:{friend_name}")
+def _queue_digest(
+    user_id: int,
+    kind: str,
+    product_ids: set[int],
+    *,
+    friend_name: str | None = None,
+    digest_scope: str | int | None = None,
+) -> None:
+    scope = str(digest_scope) if digest_scope is not None else "own"
+    key = (int(user_id), f"{kind}:{scope}")
     with _LOCK:
         row = _PENDING.get(key)
         if row is None:
@@ -53,14 +62,14 @@ def _flush_digest(key: tuple[int, str]) -> None:
         return
     friend_name = row.get("friend")
     if friend_name:
-        title = "Favoriten von Freunden im Angebot"
-        body = f"{count} {'Favorit ist' if count == 1 else 'Favoriten sind'} von {friend_name} aktuell im Angebot."
-        tag = f"friend-favorites-{user_id}-{friend_name}"
+        title = "Neue Angebote für Freundesfavoriten"
+        body = f"Für {count} {'Favorit' if count == 1 else 'Favoriten'} von {friend_name} gibt es ein neues Angebot."
+        tag = f"friend-favorites-{user_id}-{key[1]}"
         data = {"type": "friend_favorite_offer", "count": count}
         url = "/favoriten/freunde"
     else:
-        title = "Deine Favoriten im Angebot"
-        body = f"{count} deiner {'Favoriten ist' if count == 1 else 'Favoriten sind'} aktuell im Angebot."
+        title = "Neue Angebote für deine Favoriten"
+        body = f"Für {count} deiner {'Favoriten' if count != 1 else 'Favoriten'} gibt es ein neues Angebot."
         tag = f"favorite-offers-{user_id}"
         data = {"type": "favorite_offer", "count": count}
         url = "/favoriten"
@@ -74,18 +83,25 @@ def _flush_digest(key: tuple[int, str]) -> None:
 def _dispatch_candidates(candidates: list[tuple[int, int]]) -> None:
     if not candidates:
         return
-    by_store: dict[int, set[int]] = defaultdict(set)
+    raw_by_store: dict[int, set[int]] = defaultdict(set)
     for store_id, product_id in candidates:
-        by_store[int(store_id)].add(int(product_id))
+        raw_by_store[int(store_id)].add(int(product_id))
 
     db = SessionLocal()
     try:
+        stores = db.query(Store).filter(Store.id.in_(raw_by_store.keys())).all()
+        public_store_ids = {store.id for store in stores if store_is_public(store)}
+        by_store = {
+            store_id: product_ids
+            for store_id, product_ids in raw_by_store.items()
+            if store_id in public_store_ids
+        }
         store_ids = set(by_store)
         product_ids = set().union(*by_store.values()) if by_store else set()
         if not store_ids or not product_ids:
             return
 
-        # Own favorites: only opted-in users and only their favorite markets.
+        # Own favorites: only opted-in users and only their favorite public markets.
         prefs_by_user = {
             row.user_id: row
             for row in db.query(AccountAppPreferences).filter(AccountAppPreferences.user_id.isnot(None)).all()
@@ -157,7 +173,13 @@ def _dispatch_candidates(candidates: list[tuple[int, int]]) -> None:
             }
             if matches:
                 friend_name = (owner.display_name or "Spareno-Freund").strip()
-                _queue_digest(subscriber.id, "friend", matches, friend_name=friend_name)
+                _queue_digest(
+                    subscriber.id,
+                    "friend",
+                    matches,
+                    friend_name=friend_name,
+                    digest_scope=share.id,
+                )
     finally:
         db.close()
 
