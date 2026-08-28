@@ -8,7 +8,7 @@ import { Tabs } from "@/components/lokero/FilterChips";
 import { AlternativeCard, FavoriteCard, PriceAlertCard } from "@/components/lokero/FavoriteCard";
 import { MarketCard } from "@/components/lokero/MarketCard";
 import { EmptyState, SkeletonList } from "@/components/lokero/States";
-import { FavoriteSharingControls, FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
+import { FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 import { useStore } from "@/lib/app-store";
 import { fetchFavoriteMarkets, fetchFavoriteProducts, fetchFeatures, getProduct } from "@/services/lokero-api";
 import { fetchCategories } from "@/services/lokero-categories-api";
@@ -77,7 +77,6 @@ function FavoritesScreen() {
     <div>
       <PageHeader title="Favoriten" />
       <div className="bg-surface px-4 pb-3">
-        <FavoriteSharingControls />
         <FriendFavoriteAlerts />
       </div>
       <div className="bg-surface px-4"><Tabs options={tabs} value={tab === "alarm" && !priceAlertsEnabled ? "produkte" : tab} onChange={setTab} /></div>
