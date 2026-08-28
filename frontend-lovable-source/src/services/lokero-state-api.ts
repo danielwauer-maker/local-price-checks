@@ -3,6 +3,7 @@ import type { AlternativeKind, Product } from "@/data/lokero";
 export const ACCOUNT_MUTATION_START_EVENT = "spareno:account-mutation-start";
 export const ACCOUNT_MUTATION_END_EVENT = "spareno:account-mutation-end";
 export const ACCOUNT_SYNC_REQUEST_EVENT = "spareno:account-sync-request";
+export const FAVORITES_CHANGED_EVENT = "spareno:favorites-changed";
 
 let suppressFavoritePersistence = 0;
 
@@ -17,6 +18,10 @@ export function runWithoutFavoritePersistence<T>(fn: () => T): T {
 
 function dispatchAccountEvent(name: string) {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(name));
+}
+
+export function notifyFavoritesChanged() {
+  dispatchAccountEvent(FAVORITES_CHANGED_EVENT);
 }
 
 async function request(path: string, init: RequestInit) {
@@ -48,6 +53,7 @@ export async function persistProductFavorite(productId: string, favorite: boolea
       method: favorite ? "PUT" : "DELETE",
     });
   } finally {
+    notifyFavoritesChanged();
     dispatchAccountEvent(ACCOUNT_MUTATION_END_EVENT);
     dispatchAccountEvent(ACCOUNT_SYNC_REQUEST_EVENT);
   }
@@ -71,10 +77,12 @@ export async function fetchFavoritePreferences(): Promise<FavoritePreference[]> 
 }
 
 export async function persistFavoriteAlternativePreference(productId: string, allowAlternatives: boolean) {
-  return request(`/api/lokero/favorites/products/${encodeURIComponent(productId)}/preferences`, {
+  const ok = await request(`/api/lokero/favorites/products/${encodeURIComponent(productId)}/preferences`, {
     method: "PUT",
     body: JSON.stringify({ allowAlternatives }),
   });
+  if (ok) notifyFavoritesChanged();
+  return ok;
 }
 
 export async function fetchFavoriteAlternatives(productId: string): Promise<FavoriteAlternative[]> {

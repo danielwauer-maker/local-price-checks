@@ -5,6 +5,7 @@ import {
   ACCOUNT_MUTATION_END_EVENT,
   ACCOUNT_MUTATION_START_EVENT,
   ACCOUNT_SYNC_REQUEST_EVENT,
+  notifyFavoritesChanged,
   runWithoutFavoritePersistence,
 } from "@/services/lokero-state-api";
 
@@ -16,96 +17,109 @@ function sameSet(a: string[], b: string[]) {
 
 export function AccountStateSync() {
   const store = useStore();
-  const latestStore = useRef(store);
   const syncing = useRef(false);
-  const mutationDepth = useRef(0);
-  const mutationEpoch = useRef(0);
   const pendingSync = useRef(false);
-  latestStore.current = store;
+  const mutationDepth = useRef(0);
+  const favoriteProductsRef = useRef(store.favoriteProducts);
+  const travelCostRef = useRef(store.travelCostPerKm);
+  const notificationsRef = useRef(store.notifications);
+  const toggleFavoriteRef = useRef(store.toggleFavoriteProduct);
+  const setTravelCostRef = useRef(store.setTravelCostPerKm);
+  const setNotificationRef = useRef(store.setNotification);
+
+  useEffect(() => { favoriteProductsRef.current = store.favoriteProducts; }, [store.favoriteProducts]);
+  useEffect(() => { travelCostRef.current = store.travelCostPerKm; }, [store.travelCostPerKm]);
+  useEffect(() => { notificationsRef.current = store.notifications; }, [store.notifications]);
+  useEffect(() => { toggleFavoriteRef.current = store.toggleFavoriteProduct; }, [store.toggleFavoriteProduct]);
+  useEffect(() => { setTravelCostRef.current = store.setTravelCostPerKm; }, [store.setTravelCostPerKm]);
+  useEffect(() => { setNotificationRef.current = store.setNotification; }, [store.setNotification]);
 
   const applyState = useCallback((state: AccountState) => {
     if (!state.linked) return;
-    const currentStore = latestStore.current;
 
     const serverFavorites = state.favoriteProductIds ?? [];
-    if (!sameSet(currentStore.favoriteProducts, serverFavorites)) {
-      const current = new Set(currentStore.favoriteProducts);
+    const localFavorites = favoriteProductsRef.current;
+    const favoritesChanged = !sameSet(localFavorites, serverFavorites);
+    if (favoritesChanged) {
+      const current = new Set(localFavorites);
       const wanted = new Set(serverFavorites);
       runWithoutFavoritePersistence(() => {
         for (const productId of serverFavorites) {
-          if (!current.has(productId)) currentStore.toggleFavoriteProduct(productId);
+          if (!current.has(productId)) toggleFavoriteRef.current(productId);
         }
-        for (const productId of currentStore.favoriteProducts) {
-          if (!wanted.has(productId)) currentStore.toggleFavoriteProduct(productId);
+        for (const productId of localFavorites) {
+          if (!wanted.has(productId)) toggleFavoriteRef.current(productId);
         }
       });
+      favoriteProductsRef.current = [...serverFavorites];
+      notifyFavoritesChanged();
     }
 
     const prefs = state.preferences;
     if (!prefs) return;
-    if (Math.abs(currentStore.travelCostPerKm - prefs.travelCostPerKm) > 0.0001) {
-      currentStore.setTravelCostPerKm(prefs.travelCostPerKm);
+    if (Math.abs(travelCostRef.current - prefs.travelCostPerKm) > 0.0001) {
+      setTravelCostRef.current(prefs.travelCostPerKm);
+      travelCostRef.current = prefs.travelCostPerKm;
     }
     for (const key of ["priceAlerts", "newOffers", "regionAvailable", "favoriteOffers"] as const) {
-      if (currentStore.notifications[key] !== prefs.notifications[key]) {
-        currentStore.setNotification(key, prefs.notifications[key]);
+      if (notificationsRef.current[key] !== prefs.notifications[key]) {
+        setNotificationRef.current(key, prefs.notifications[key]);
+        notificationsRef.current = { ...notificationsRef.current, [key]: prefs.notifications[key] };
       }
     }
   }, []);
 
   const sync = useCallback(async () => {
-    const currentStore = latestStore.current;
-    if (syncing.current || !currentStore.hydrated || mutationDepth.current > 0) {
+    if (!store.hydrated) return;
+    if (mutationDepth.current > 0) {
       pendingSync.current = true;
       return;
     }
-
-    pendingSync.current = false;
+    if (syncing.current) {
+      pendingSync.current = true;
+      return;
+    }
     syncing.current = true;
-    const startedAtEpoch = mutationEpoch.current;
     try {
       let state = await fetchAccountState();
-      if (!state.linked) return;
+      if (!state.linked || mutationDepth.current > 0) {
+        if (mutationDepth.current > 0) pendingSync.current = true;
+        return;
+      }
       if (!state.preferencesInitialized) {
-        const latest = latestStore.current;
         state = await persistAccountPreferences({
           initializeOnly: true,
-          travelCostPerKm: latest.travelCostPerKm,
-          notifications: latest.notifications,
+          travelCostPerKm: travelCostRef.current,
+          notifications: notificationsRef.current,
         });
-      }
-
-      // Never let an older GET overwrite a heart/settings change that started
-      // while this request was in flight. The mutation completion requests a
-      // fresh sync instead.
-      if (startedAtEpoch !== mutationEpoch.current || mutationDepth.current > 0) {
-        pendingSync.current = true;
-        return;
+        if (mutationDepth.current > 0) {
+          pendingSync.current = true;
+          return;
+        }
       }
       applyState(state);
     } catch {
-      // Offline/temporary backend failures keep the local state usable.
+      // Offline/temporary backend failures keep the cached UI usable.
     } finally {
       syncing.current = false;
       if (pendingSync.current && mutationDepth.current === 0) {
-        window.setTimeout(() => window.dispatchEvent(new Event(ACCOUNT_SYNC_REQUEST_EVENT)), 0);
+        pendingSync.current = false;
+        window.setTimeout(() => void sync(), 40);
       }
     }
-  }, [applyState]);
+  }, [applyState, store.hydrated]);
 
   useEffect(() => {
-    const onMutationStart = () => {
-      mutationDepth.current += 1;
-      mutationEpoch.current += 1;
-    };
+    if (!store.hydrated) return;
+    const onMutationStart = () => { mutationDepth.current += 1; };
     const onMutationEnd = () => {
       mutationDepth.current = Math.max(0, mutationDepth.current - 1);
+      if (mutationDepth.current === 0 && pendingSync.current) window.setTimeout(() => void sync(), 40);
     };
     const onSyncRequest = () => {
       pendingSync.current = true;
-      void sync();
+      if (mutationDepth.current === 0) window.setTimeout(() => void sync(), 40);
     };
-
     window.addEventListener(ACCOUNT_MUTATION_START_EVENT, onMutationStart);
     window.addEventListener(ACCOUNT_MUTATION_END_EVENT, onMutationEnd);
     window.addEventListener(ACCOUNT_SYNC_REQUEST_EVENT, onSyncRequest);
@@ -114,23 +128,20 @@ export function AccountStateSync() {
       window.removeEventListener(ACCOUNT_MUTATION_END_EVENT, onMutationEnd);
       window.removeEventListener(ACCOUNT_SYNC_REQUEST_EVENT, onSyncRequest);
     };
-  }, [sync]);
+  }, [store.hydrated, sync]);
 
   useEffect(() => {
     if (!store.hydrated) return;
-
     void sync();
-    const interval = window.setInterval(() => void sync(), 15_000);
-    const onVisible = () => {
+    const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void sync();
-    };
-    const onFocus = () => void sync();
-
-    window.addEventListener("focus", onFocus);
+    }, 15_000);
+    const onVisible = () => { if (document.visibilityState === "visible") void sync(); };
+    window.addEventListener("focus", sync);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", sync);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [store.hydrated, sync]);

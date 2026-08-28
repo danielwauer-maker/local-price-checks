@@ -1,5 +1,6 @@
 import type { CategoryId, Market, Offer, Product } from "@/data/lokero";
 import type { OfferView } from "@/services/lokero-api";
+import { notifyFavoritesChanged } from "@/services/lokero-state-api";
 
 export type ProductFamily = {
   slug: string;
@@ -48,6 +49,7 @@ export async function setFavoriteFamily(slug: string, favorite: boolean): Promis
       method: favorite ? "PUT" : "DELETE",
       headers: { Accept: "application/json" },
     });
+    if (response.ok) notifyFavoritesChanged();
     return response.ok;
   } catch {
     return false;
