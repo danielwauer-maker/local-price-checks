@@ -1,5 +1,24 @@
 import type { AlternativeKind, Product } from "@/data/lokero";
 
+export const ACCOUNT_MUTATION_START_EVENT = "spareno:account-mutation-start";
+export const ACCOUNT_MUTATION_END_EVENT = "spareno:account-mutation-end";
+export const ACCOUNT_SYNC_REQUEST_EVENT = "spareno:account-sync-request";
+
+let suppressFavoritePersistence = 0;
+
+export function runWithoutFavoritePersistence<T>(fn: () => T): T {
+  suppressFavoritePersistence += 1;
+  try {
+    return fn();
+  } finally {
+    suppressFavoritePersistence = Math.max(0, suppressFavoritePersistence - 1);
+  }
+}
+
+function dispatchAccountEvent(name: string) {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(name));
+}
+
 async function request(path: string, init: RequestInit) {
   try {
     const response = await fetch(path, { credentials: "include", ...init, headers: { Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}), ...(init.headers ?? {}) } });
@@ -21,9 +40,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T | nul
 
 /** Best-effort persistence. Local state remains usable in Lovable preview/offline. */
 export async function persistProductFavorite(productId: string, favorite: boolean) {
-  return request(`/api/lokero/favorites/products/${encodeURIComponent(productId)}`, {
-    method: favorite ? "PUT" : "DELETE",
-  });
+  if (suppressFavoritePersistence > 0) return true;
+
+  dispatchAccountEvent(ACCOUNT_MUTATION_START_EVENT);
+  try {
+    return await request(`/api/lokero/favorites/products/${encodeURIComponent(productId)}`, {
+      method: favorite ? "PUT" : "DELETE",
+    });
+  } finally {
+    dispatchAccountEvent(ACCOUNT_MUTATION_END_EVENT);
+    dispatchAccountEvent(ACCOUNT_SYNC_REQUEST_EVENT);
+  }
 }
 
 export type FavoritePreference = {
