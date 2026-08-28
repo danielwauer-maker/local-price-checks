@@ -11,7 +11,14 @@ from sqlalchemy.orm import Session
 
 from .admin_learning import audit
 from .admin_routes import _admin
-from .client_models import AccountIdentity, ClientAppRating, ClientDevice, ClientPricingFeedback, UserClient
+from .client_models import (
+    AccountClientLink,
+    AccountIdentity,
+    ClientAppRating,
+    ClientDevice,
+    ClientPricingFeedback,
+    UserClient,
+)
 from .db import get_db
 from .models import FavoriteStore, Store
 from .user_deletion import RegisteredAccountDeletionBlocked, delete_anonymous_user
@@ -35,40 +42,61 @@ def admin_users(
     feedback_by_client = {row.client_id: row for row in feedback_rows}
     rating_by_client = {row.client_id: row for row in rating_rows}
     identities = db.query(AccountIdentity).all()
-    identity_by_user = {row.user_id: row for row in identities}
-    rows = []
-    for client in clients:
-        user = client.user
-        fav_rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
-        favorites = [store_by_id[row.store_id] for row in fav_rows if row.store_id in store_by_id]
-        rows.append({
-            "client": client,
-            "device": client.device,
-            "user": user,
-            "favorites": favorites,
-            "feedback": feedback_by_client.get(client.id),
-            "rating": rating_by_client.get(client.id),
-            "identity": identity_by_user.get(user.id),
-        })
+    links = db.query(AccountClientLink).all()
+    identity_by_id = {row.id: row for row in identities}
+    link_by_client = {row.client_id: row for row in links}
 
+    logical: dict[tuple[str, int], dict] = {}
+    for client in clients:
+        link = link_by_client.get(client.id)
+        identity = identity_by_id.get(link.identity_id) if link else None
+        key = ("account", identity.id) if identity else ("client", client.id)
+        row = logical.get(key)
+        if row is None:
+            canonical_user = identity.user if identity else client.user
+            fav_rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == canonical_user.id).all()
+            favorites = [store_by_id[fav.store_id] for fav in fav_rows if fav.store_id in store_by_id]
+            row = {
+                "user": canonical_user,
+                "identity": identity,
+                "favorites": favorites,
+                "clients": [],
+                "feedback": None,
+                "rating": None,
+                "last_seen": client.last_seen_at,
+            }
+            logical[key] = row
+        row["clients"].append({"client": client, "device": client.device})
+        if row["last_seen"] is None or (client.last_seen_at and client.last_seen_at > row["last_seen"]):
+            row["last_seen"] = client.last_seen_at
+        feedback = feedback_by_client.get(client.id)
+        if feedback and (row["feedback"] is None or feedback.submitted_at > row["feedback"].submitted_at):
+            row["feedback"] = feedback
+        rating = rating_by_client.get(client.id)
+        if rating and (row["rating"] is None or rating.submitted_at > row["rating"].submitted_at):
+            row["rating"] = rating
+
+    rows = sorted(logical.values(), key=lambda row: row["last_seen"] or datetime.min, reverse=True)
     devices = db.query(ClientDevice).all()
     cutoff = datetime.utcnow() - timedelta(days=7)
     price_counts = Counter(row.monthly_price for row in feedback_rows)
     savings_counts = Counter(row.savings_value for row in feedback_rows)
     rating_counts = Counter(row.rating for row in rating_rows)
     rating_average = round(sum(row.rating for row in rating_rows) / len(rating_rows), 2) if rating_rows else None
+    registered_rows = [row for row in rows if row["identity"] is not None]
+    anonymous_rows = [row for row in rows if row["identity"] is None]
     stats = {
-        "users": len(clients),
-        "registered": len({row.user_id for row in identities}),
-        "anonymous": sum(1 for c in clients if c.user_id not in identity_by_user),
+        "users": len(rows),
+        "registered": len(registered_rows),
+        "anonymous": len(anonymous_rows),
         "devices": len(devices),
         "installed": sum(1 for c in clients if c.pwa_installed),
-        "active7": sum(1 for c in clients if c.last_seen_at and c.last_seen_at >= cutoff),
+        "active7": sum(1 for row in rows if row["last_seen"] and row["last_seen"] >= cutoff),
         "mobile": sum(1 for d in devices if d.device_type == "mobile"),
         "desktop": sum(1 for d in devices if d.device_type == "desktop"),
         "ios": sum(1 for d in devices if d.os_name in {"iOS", "iPadOS"}),
         "android": sum(1 for d in devices if d.os_name == "Android"),
-        "with_location": sum(1 for c in clients if c.user and c.user.latitude is not None and c.user.longitude is not None),
+        "with_location": sum(1 for row in rows if row["user"] and row["user"].latitude is not None and row["user"].longitude is not None),
         "feedback_total": len(feedback_rows),
         "rating_total": len(rating_rows),
         "rating_average": rating_average,

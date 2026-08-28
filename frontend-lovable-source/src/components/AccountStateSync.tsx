@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useStore } from "@/lib/app-store";
-import { fetchAccountState, persistAccountPreferences, type AccountState } from "@/services/lokero-account-api";
+import { ACCOUNT_PROFILE_STORAGE_KEY, fetchAccountState, persistAccountPreferences, type AccountState } from "@/services/lokero-account-api";
 import {
   ACCOUNT_MUTATION_END_EVENT,
   ACCOUNT_MUTATION_START_EVENT,
@@ -133,13 +133,31 @@ export function AccountStateSync() {
   useEffect(() => {
     if (!store.hydrated) return;
     void sync();
+
+    let events: EventSource | null = null;
+    if (window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY)) {
+      events = new EventSource("/api/account/events", { withCredentials: true });
+      const onRemoteState = () => {
+        // Family/alternative changes are separate cached resources, while
+        // product favorites/settings are part of /api/account/state.
+        notifyFavoritesChanged();
+        void sync();
+      };
+      events.addEventListener("state", onRemoteState);
+      events.addEventListener("favorites", onRemoteState);
+    }
+
+    // Sparse safety net for temporary SSE/network failures. Normal active
+    // synchronization is event-driven and therefore does not create constant
+    // database traffic per logged-in device.
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void sync();
-    }, 15_000);
+    }, 60_000);
     const onVisible = () => { if (document.visibilityState === "visible") void sync(); };
     window.addEventListener("focus", sync);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      events?.close();
       window.clearInterval(interval);
       window.removeEventListener("focus", sync);
       document.removeEventListener("visibilitychange", onVisible);
