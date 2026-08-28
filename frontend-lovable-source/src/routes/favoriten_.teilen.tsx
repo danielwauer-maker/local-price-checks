@@ -20,8 +20,8 @@ export const Route = createFileRoute("/favoriten/teilen")({
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-primary" : "bg-border"}`}>
-      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-6" : "translate-x-1"}`} />
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} className={`relative h-7 w-12 shrink-0 overflow-hidden rounded-full border transition-colors ${checked ? "border-primary bg-primary" : "border-border bg-muted-surface"}`}>
+      <span className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-5" : "translate-x-0"}`} />
     </button>
   );
 }
@@ -167,7 +167,7 @@ function FavoriteShareScreen() {
 
             <section className="flex gap-2 rounded-xl border border-border bg-muted-surface/55 p-3">
               <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              <p className="text-[10px] leading-relaxed text-muted-foreground">Über diesen Link werden nur dein Anzeigename und die von dir freigegebenen Favoriten gezeigt. E-Mail, Standort, Lieblingsmärkte, Suchradius und Einkaufsliste bleiben privat.</p>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">Geteilt werden ausschließlich deine Produktfavoriten, niemals Artikel aus deiner Einkaufsliste. Über den Link erscheinen nur dein Anzeigename und die von dir freigegebenen Favoriten. E-Mail, Standort, Lieblingsmärkte und Suchradius bleiben privat.</p>
             </section>
           </>
         )}
