@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .account_linking import AccountLinkConflict, account_profile_for_client, link_verified_identity
+from .account_realtime import publish_account_event, subscribe_account_events
 from .client_context import get_client_key
 from .client_models import AccountAppPreferences, AccountClientLink, AccountIdentity, UserClient
 from .db import get_db
@@ -44,7 +47,6 @@ def _bearer_token(authorization: str | None) -> str:
 
 
 def _current_client(db: Session) -> UserClient:
-    # Ensure the anonymous profile/client exists before linking.
     current_user(db)
     key = get_client_key()
     if not key:
@@ -139,12 +141,8 @@ def link_account(
         )
     except AccountLinkConflict as exc:
         raise HTTPException(status_code=409, detail="Dieses Gerät ist bereits mit einem anderen Konto verknüpft.") from exc
-
-    return {
-        "linked": True,
-        "profileId": profile.id,
-        "email": verified.email,
-    }
+    publish_account_event(profile.id, "state")
+    return {"linked": True, "profileId": profile.id, "email": verified.email}
 
 
 @router.get("/status")
@@ -164,11 +162,7 @@ def account_status(db: Session = Depends(get_db)):
         .filter(AccountClientLink.client_id == client.id)
         .first()
     )
-    return {
-        "linked": True,
-        "profileId": profile.id,
-        "email": identity.email if identity else None,
-    }
+    return {"linked": True, "profileId": profile.id, "email": identity.email if identity else None}
 
 
 @router.get("/state")
@@ -177,6 +171,35 @@ def account_state(db: Session = Depends(get_db)):
     if profile is None:
         return {"linked": False}
     return _account_state_payload(db, profile)
+
+
+@router.get("/events")
+async def account_events(request: Request, db: Session = Depends(get_db)):
+    profile = _linked_profile(db)
+    if profile is None:
+        raise HTTPException(status_code=403, detail="Für Realtime-Synchronisierung ist ein Spareno-Account erforderlich.")
+    user_id = int(profile.id)
+    queue, unsubscribe = subscribe_account_events(user_id)
+
+    async def stream():
+        try:
+            yield "event: ready\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    yield f"event: {event.kind}\ndata: {{}}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            unsubscribe()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.put("/preferences")
@@ -208,4 +231,5 @@ def update_account_preferences(payload: AccountPreferencesPayload, db: Session =
         row.diet_json = json.dumps([str(item) for item in payload.diet], separators=(",", ":"), ensure_ascii=False)
     row.updated_at = datetime.utcnow()
     db.commit()
+    publish_account_event(profile.id, "state")
     return _account_state_payload(db, profile)
