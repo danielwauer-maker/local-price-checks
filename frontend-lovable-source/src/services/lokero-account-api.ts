@@ -47,6 +47,13 @@ export type AccountPreferencesPatch = {
   initializeOnly?: boolean;
 };
 
+export type AccountProfilePatch = {
+  displayName?: string;
+  postalCode: string;
+  city: string;
+  radiusKm?: number;
+};
+
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { detail?: string } | null;
@@ -78,6 +85,16 @@ export async function fetchAccountState(): Promise<AccountState> {
 
 export async function persistAccountPreferences(patch: AccountPreferencesPatch): Promise<AccountState> {
   const response = await fetch("/api/account/preferences", {
+    method: "PUT",
+    credentials: "include",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJson<AccountState>(response);
+}
+
+export async function persistAccountProfile(patch: AccountProfilePatch): Promise<AccountState> {
+  const response = await fetch("/api/account/profile", {
     method: "PUT",
     credentials: "include",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
