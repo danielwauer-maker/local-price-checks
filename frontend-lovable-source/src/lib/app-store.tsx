@@ -139,6 +139,7 @@ type StoreContextValue = StoreState & {
   refreshShoppingSharing: () => Promise<void>;
   selectShoppingList: (listId: string) => Promise<void>;
   createSharedShoppingList: (name: string) => Promise<SharedListSummary>;
+  reconcileAccountState: (value: { location?: Location; radius?: number; favoriteMarkets?: string[] }) => void;
   setLocation: (loc: Location) => void;
   setRadius: (km: number) => void;
   addToList: (productId: string, qty?: number) => void;
@@ -179,6 +180,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => { sharedRevisionRef.current = state.sharedRevision; }, [state.sharedRevision]);
+
+  const refreshActiveShoppingList = useCallback(async () => {
+    try {
+      const snapshot = await fetchActiveShoppingList();
+      patch({ sharingEnabled: true, ...snapshotState(snapshot) });
+    } catch {
+      // Keep cached list state; reconnect/fallback will retry.
+    }
+  }, [patch]);
 
   const refreshShoppingSharing = useCallback(async () => {
     try {
@@ -240,16 +250,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         }
         let snapshot = await fetchActiveShoppingList();
         if (cancelled) return;
+        const current = stateRef.current;
         const serverManual = snapshot.items.filter((item) => item.manualText);
-        if (snapshot.list.isPersonal && serverManual.length === 0 && state.manualListItems.length > 0) {
-          const checkedNames = new Set(state.manualListItems.filter((item) => state.checkedListItems.includes(manualListKey(item.id))).map((item) => item.name.trim().toLocaleLowerCase("de-DE")));
-          for (const item of state.manualListItems) snapshot = await addSharedManualItem(snapshot.list.id, item.name, item.qty);
+        if (snapshot.list.isPersonal && serverManual.length === 0 && current.manualListItems.length > 0) {
+          const checkedNames = new Set(current.manualListItems.filter((item) => current.checkedListItems.includes(manualListKey(item.id))).map((item) => item.name.trim().toLocaleLowerCase("de-DE")));
+          for (const item of current.manualListItems) snapshot = await addSharedManualItem(snapshot.list.id, item.name, item.qty);
           for (const item of snapshot.items) {
             if (item.manualText && !item.checked && checkedNames.has(item.manualText.trim().toLocaleLowerCase("de-DE"))) snapshot = await patchSharedListItem(snapshot.list.id, item.id, { checked: true });
           }
         }
         for (const item of snapshot.items) {
-          if (item.productId && !item.checked && state.checkedListItems.includes(item.productId)) snapshot = await patchSharedListItem(snapshot.list.id, item.id, { checked: true });
+          if (item.productId && !item.checked && current.checkedListItems.includes(item.productId)) snapshot = await patchSharedListItem(snapshot.list.id, item.id, { checked: true });
         }
         if (!cancelled) patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshot) });
       } catch {
@@ -258,34 +269,81 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
     void initialize();
     return () => { cancelled = true; };
-  }, [hydrated]);
+  }, [hydrated, patch]);
 
   useEffect(() => {
     if (!state.sharingEnabled || !state.activeShoppingListId || typeof EventSource === "undefined") return;
     const listId = state.activeShoppingListId;
-    const source = new EventSource(`/api/sharing/lists/${encodeURIComponent(listId)}/events`);
+    let source: EventSource | null = null;
     let fallback: number | null = null;
+    let reconnect: number | null = null;
+    let reconnectDelay = 1_000;
+    let stopped = false;
+
     const stopFallback = () => {
       if (fallback != null) window.clearInterval(fallback);
       fallback = null;
     };
     const startFallback = () => {
       if (fallback != null) return;
-      fallback = window.setInterval(() => void refreshShoppingSharing(), 20_000);
+      void refreshActiveShoppingList();
+      fallback = window.setInterval(() => {
+        if (document.visibilityState === "visible") void refreshActiveShoppingList();
+      }, 10_000);
+    };
+    const scheduleReconnect = () => {
+      if (stopped || reconnect != null || !navigator.onLine) return;
+      reconnect = window.setTimeout(() => {
+        reconnect = null;
+        connect();
+      }, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10_000);
     };
     const onRevision = (event: MessageEvent<string>) => {
       try {
         const revision = Number((JSON.parse(event.data) as { revision?: number }).revision ?? 0);
         if (revision && revision === sharedRevisionRef.current) return;
       } catch { /* refresh below */ }
-      void refreshShoppingSharing();
+      void refreshActiveShoppingList();
     };
-    source.addEventListener("revision", onRevision as EventListener);
-    source.addEventListener("access_revoked", () => void refreshShoppingSharing());
-    source.onopen = () => { stopFallback(); void refreshShoppingSharing(); };
-    source.onerror = startFallback;
-    return () => { stopFallback(); source.close(); };
-  }, [state.sharingEnabled, state.activeShoppingListId, refreshShoppingSharing]);
+    const connect = () => {
+      if (stopped || source || !navigator.onLine) return;
+      const next = new EventSource(`/api/sharing/lists/${encodeURIComponent(listId)}/events`);
+      source = next;
+      next.addEventListener("revision", onRevision as EventListener);
+      next.addEventListener("access_revoked", () => void refreshShoppingSharing());
+      next.onopen = () => {
+        reconnectDelay = 1_000;
+        stopFallback();
+        void refreshActiveShoppingList();
+      };
+      next.onerror = () => {
+        if (source === next) source = null;
+        next.close();
+        startFallback();
+        scheduleReconnect();
+      };
+    };
+    const resume = () => {
+      if (document.visibilityState !== "visible" || !navigator.onLine) return;
+      void refreshActiveShoppingList();
+      if (!source) connect();
+    };
+
+    connect();
+    window.addEventListener("online", resume);
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      stopped = true;
+      stopFallback();
+      if (reconnect != null) window.clearTimeout(reconnect);
+      source?.close();
+      window.removeEventListener("online", resume);
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [state.sharingEnabled, state.activeShoppingListId, refreshActiveShoppingList, refreshShoppingSharing]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -317,6 +375,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshot) });
         return created;
       },
+      reconcileAccountState: (value) => patch((current) => ({
+        location: value.location ?? current.location,
+        radius: value.radius ?? current.radius,
+        favoriteMarkets: value.favoriteMarkets ? [...value.favoriteMarkets] : current.favoriteMarkets,
+      })),
       setLocation: (location) => { const next = patch({ location }); void persistLocation({ ...location, radius: next.radius }); },
       setRadius: (radius) => { const next = patch({ radius }); void persistLocation({ ...next.location, radius }); },
       addToList: (productId, qty = 1) => {
@@ -373,7 +436,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
       toggleFavoriteMarket: (id) => { patch((current) => ({ favoriteMarkets: current.favoriteMarkets.includes(id) ? current.favoriteMarkets.filter((marketId) => marketId !== id) : [...current.favoriteMarkets, id] })); void persistMarketToggle(id); },
       isFavoriteProduct: (id) => state.favoriteProducts.includes(id),
-      setAlert: (productId, targetPrice, active) => patch((current) => ({ alerts: { ...current.alerts, [productId]: { targetPrice, active } } })),
+      setAlert: (productId, targetPrice, active) => patch((current) => ({ alerts: { ...current.alerts, [productId]: { targetPrice, active } })),
       removeAlert: (productId) => patch((current) => { const next = { ...current.alerts }; delete next[productId]; return { alerts: next }; }),
       togglePreferredChain: (chain) => patch((current) => ({ preferredChains: current.preferredChains.includes(chain) ? current.preferredChains.filter((item) => item !== chain) : [...current.preferredChains, chain] })),
       setTravelCostPerKm: (travelCostPerKm) => patch({ travelCostPerKm }),
