@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { ArrowRight, Heart, Store } from "lucide-react";
 import { TopBar } from "@/components/AppShell";
 import { SavingsHero } from "@/components/lokero/SavingsHero";
@@ -9,6 +10,7 @@ import { RegionAvailabilityCard } from "@/components/lokero/RegionAvailabilityCa
 import { FriendFavoriteAlerts } from "@/components/sharing/FavoriteSharingControls";
 import { fetchFeatures, fetchMarkets, fetchRegionStatus, fetchWeeklySavings } from "@/services/lokero-api";
 import { fetchMatchedFavoriteOffers } from "@/services/lokero-personalization-api";
+import { FAVORITES_CHANGED_EVENT } from "@/services/lokero-state-api";
 import { OPTIMIZED_TRIP } from "@/data/lokero";
 import { useStore } from "@/lib/app-store";
 
@@ -18,18 +20,27 @@ export const Route = createFileRoute("/")({
 });
 
 function StartScreen() {
+  const queryClient = useQueryClient();
   const { radius, regionStatusOverride, favoriteMarkets } = useStore();
   const hasFavoriteMarkets = favoriteMarkets.length > 0;
   const favoriteMarketKey = [...favoriteMarkets].sort().join(",");
-  const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures });
-  const savings = useQuery({ queryKey: ["weekly-savings"], queryFn: fetchWeeklySavings });
+  const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures, staleTime: 5 * 60_000 });
+  const savings = useQuery({ queryKey: ["weekly-savings"], queryFn: fetchWeeklySavings, staleTime: 30_000 });
   const matchedOffers = useQuery({
     queryKey: ["favorite-matched-offers", favoriteMarketKey],
     queryFn: fetchMatchedFavoriteOffers,
     enabled: hasFavoriteMarkets,
+    staleTime: 15_000,
+    placeholderData: (previous) => previous,
   });
-  const markets = useQuery({ queryKey: ["markets", radius], queryFn: () => fetchMarkets(radius) });
-  const region = useQuery({ queryKey: ["region-status", regionStatusOverride], queryFn: () => fetchRegionStatus(regionStatusOverride === "auto" ? undefined : regionStatusOverride) });
+  const markets = useQuery({ queryKey: ["markets", radius], queryFn: () => fetchMarkets(radius), staleTime: 60_000 });
+  const region = useQuery({ queryKey: ["region-status", regionStatusOverride], queryFn: () => fetchRegionStatus(regionStatusOverride === "auto" ? undefined : regionStatusOverride), staleTime: 60_000 });
+
+  useEffect(() => {
+    const refresh = () => void queryClient.invalidateQueries({ queryKey: ["favorite-matched-offers"] });
+    window.addEventListener(FAVORITES_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(FAVORITES_CHANGED_EVENT, refresh);
+  }, [queryClient]);
 
   const flags = features.data?.features;
   const showRegion = flags?.region_availability !== false;
@@ -89,7 +100,7 @@ function StartScreen() {
             </div>
           )}
 
-          {hasFavoriteMarkets && matchedOffers.isLoading && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>}
+          {hasFavoriteMarkets && matchedOffers.isLoading && !matchedOffers.data && <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>}
           {hasFavoriteMarkets && !matchedOffers.isLoading && prioritizedMatchedOffers.length === 0 && (
             <div className="mt-3 rounded-2xl border border-border bg-surface p-4 text-center">
               <Heart className="mx-auto h-5 w-5 text-discount" />
