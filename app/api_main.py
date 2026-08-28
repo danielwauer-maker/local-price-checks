@@ -10,6 +10,7 @@ from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
 from .activity_routes import router as activity_router
 from .account_routes import router as account_router
+from .profile_routes import router as profile_router
 from .push_routes import router as push_router
 from .realtime_routes import router as realtime_router
 from .admin_routes import router as admin_router
@@ -108,6 +109,7 @@ app.include_router(product_detail_router)
 app.include_router(client_router)
 app.include_router(activity_router)
 app.include_router(account_router)
+app.include_router(profile_router)
 app.include_router(push_router)
 # Register the event-driven list stream before the legacy polling route with the same path.
 app.include_router(realtime_router)
