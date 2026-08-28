@@ -165,11 +165,18 @@ const Ctx = createContext<StoreContextValue | null>(null);
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StoreState>(initialState);
+  const stateRef = useRef<StoreState>(initialState);
   const [hydrated, setHydrated] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
   const sharedRevisionRef = useRef(0);
 
-  const patch = useCallback((p: Partial<StoreState> | ((s: StoreState) => Partial<StoreState>)) => setState((s) => ({ ...s, ...(typeof p === "function" ? p(s) : p) })), []);
+  const patch = useCallback((value: Partial<StoreState> | ((current: StoreState) => Partial<StoreState>)) => {
+    const current = stateRef.current;
+    const next = { ...current, ...(typeof value === "function" ? value(current) : value) };
+    stateRef.current = next;
+    setState(next);
+    return next;
+  }, []);
 
   useEffect(() => { sharedRevisionRef.current = state.sharedRevision; }, [state.sharedRevision]);
 
@@ -192,14 +199,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const stored = JSON.parse(raw) as Partial<StoreState>;
-        setState({ ...initialState, ...stored, sharingEnabled: false, shoppingLists: [], activeShoppingListId: null, activeShoppingListMembers: [], sharedItemIds: {}, sharedRevision: 0 });
+        patch({ ...initialState, ...stored, sharingEnabled: false, shoppingLists: [], activeShoppingListId: null, activeShoppingListMembers: [], sharedItemIds: {}, sharedRevision: 0 });
       }
     } catch { /* ignore */ }
     setHydrated(true);
 
     void fetchBootstrap().then((bootstrap) => {
       if (!bootstrap) return;
-      setState((current) => {
+      patch((current) => {
         const nextList = bootstrap.basket ?? current.list;
         const validManualKeys = new Set(current.manualListItems.map((item) => manualListKey(item.id)));
         return {
@@ -213,7 +220,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       });
       setBackendHydrated(true);
     });
-  }, []);
+  }, [patch]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -280,6 +287,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return () => { stopFallback(); source.close(); };
   }, [state.sharingEnabled, state.activeShoppingListId, refreshShoppingSharing]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    document.documentElement.dataset.appReady = "true";
+    return () => {
+      delete document.documentElement.dataset.appReady;
+    };
+  }, [hydrated]);
+
   const value = useMemo<StoreContextValue>(() => {
     const listEntries = Object.entries(state.list).filter(([, qty]) => qty > 0).map(([productId, qty]) => ({ productId, qty }));
     const applyShared = (promise: Promise<SharedListSnapshot>) => { void promise.then((snapshot) => patch(snapshotState(snapshot))).catch(() => void refreshShoppingSharing()); };
@@ -302,21 +317,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshot) });
         return created;
       },
-      setLocation: (location) => { patch({ location }); void persistLocation({ ...location, radius: state.radius }); },
-      setRadius: (radius) => { patch({ radius }); void persistLocation({ ...state.location, radius }); },
+      setLocation: (location) => { const next = patch({ location }); void persistLocation({ ...location, radius: next.radius }); },
+      setRadius: (radius) => { const next = patch({ radius }); void persistLocation({ ...next.location, radius }); },
       addToList: (productId, qty = 1) => {
-        const nextQty = (state.list[productId] ?? 0) + qty;
-        patch((current) => ({ list: { ...current.list, [productId]: nextQty }, checkedListItems: current.checkedListItems.filter((id) => id !== productId) }));
-        if (state.sharingEnabled && state.activeShoppingListId) applyShared(putSharedProduct(state.activeShoppingListId, productId, nextQty));
+        const next = patch((current) => ({ list: { ...current.list, [productId]: (current.list[productId] ?? 0) + qty }, checkedListItems: current.checkedListItems.filter((id) => id !== productId) }));
+        const nextQty = next.list[productId] ?? 0;
+        if (next.sharingEnabled && next.activeShoppingListId) applyShared(putSharedProduct(next.activeShoppingListId, productId, nextQty));
         else void persistBasketQuantity(productId, nextQty);
       },
       setQty: (productId, qty) => {
-        patch((current) => {
-          const next = { ...current.list };
-          if (qty <= 0) delete next[productId]; else next[productId] = qty;
-          return { list: next, checkedListItems: qty <= 0 ? current.checkedListItems.filter((id) => id !== productId) : current.checkedListItems };
+        const next = patch((current) => {
+          const list = { ...current.list };
+          if (qty <= 0) delete list[productId]; else list[productId] = qty;
+          return { list, checkedListItems: qty <= 0 ? current.checkedListItems.filter((id) => id !== productId) : current.checkedListItems };
         });
-        if (state.sharingEnabled && state.activeShoppingListId) applyShared(putSharedProduct(state.activeShoppingListId, productId, Math.max(0, qty)));
+        if (next.sharingEnabled && next.activeShoppingListId) applyShared(putSharedProduct(next.activeShoppingListId, productId, Math.max(0, qty)));
         else void persistBasketQuantity(productId, Math.max(0, qty));
       },
       addManualListItem: (name, qty = 1) => {
@@ -349,8 +364,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
       clearCheckedList: () => patch({ checkedListItems: [] }),
       toggleFavoriteProduct: (id) => {
-        const favorite = !state.favoriteProducts.includes(id);
-        patch((current) => ({ favoriteProducts: favorite ? [...current.favoriteProducts, id] : current.favoriteProducts.filter((productId) => productId !== id) }));
+        const next = patch((current) => {
+          const favorite = !current.favoriteProducts.includes(id);
+          return { favoriteProducts: favorite ? [...current.favoriteProducts, id] : current.favoriteProducts.filter((productId) => productId !== id) };
+        });
+        const favorite = next.favoriteProducts.includes(id);
         void persistProductFavorite(id, favorite);
       },
       toggleFavoriteMarket: (id) => { patch((current) => ({ favoriteMarkets: current.favoriteMarkets.includes(id) ? current.favoriteMarkets.filter((marketId) => marketId !== id) : [...current.favoriteMarkets, id] })); void persistMarketToggle(id); },

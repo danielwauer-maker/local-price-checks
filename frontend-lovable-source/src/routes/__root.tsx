@@ -20,8 +20,8 @@ import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
 import { SplashScreen } from "@/components/brand/SplashScreen";
 
-const SPLASH_DURATION_MS = 2500;
-const SPLASH_EXIT_MS = 420;
+const SPLASH_DURATION_MS = 800;
+const SPLASH_EXIT_MS = 250;
 
 function NotFoundComponent() {
   return (

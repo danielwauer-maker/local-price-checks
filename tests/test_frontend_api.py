@@ -25,8 +25,9 @@ def _seed():
         db.add(product)
         db.commit()
         db.refresh(product)
+    user_id, product_id = user.id, product.id
     db.close()
-    return user.id, product.id
+    return user_id, product_id
 
 
 def test_bootstrap_exposes_real_app_state():

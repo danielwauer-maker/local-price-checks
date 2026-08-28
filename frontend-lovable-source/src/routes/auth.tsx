@@ -59,7 +59,7 @@ function AuthPage() {
   const [resending, setResending] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [handoffError, setHandoffError] = useState<string | null>(null);
-  const [returnTo] = useState(safeReturnPath);
+  const [returnTo, setReturnTo] = useState("/");
   const handoffStarted = useRef(false);
 
   const isInviteReturn = returnTo.startsWith("/liste/einladung/");
@@ -69,6 +69,10 @@ function AuthPage() {
     : isFavoriteReturn
       ? "Nach der Anmeldung kommst du automatisch zu den geteilten Favoriten zurück."
       : null;
+
+  useEffect(() => {
+    setReturnTo(safeReturnPath());
+  }, []);
 
   async function finishAccountHandoff(nextSession: Session, destination = returnTo) {
     setHandoffError(null);

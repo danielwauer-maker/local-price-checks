@@ -173,8 +173,8 @@ function FavoritesScreen() {
 
       {familyPickerOpen && (
         <div className="fixed inset-0 z-50 flex items-end bg-navy/30" onClick={() => setFamilyPickerOpen(false)}>
-          <div className="w-full rounded-t-3xl bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between"><div><h2 className="text-[16px] font-semibold text-navy">Produktfamilie hinzufügen</h2><p className="text-[11px] text-muted-foreground">Du bekommst alle passenden lokalen Angebote dieser Produktart.</p></div><button type="button" onClick={() => setFamilyPickerOpen(false)} className="grid h-9 w-9 place-items-center"><X className="h-5 w-5" /></button></div>
+          <div role="dialog" aria-modal="true" aria-labelledby="family-picker-title" className="w-full rounded-t-3xl bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))]" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between"><div><h2 id="family-picker-title" className="text-[16px] font-semibold text-navy">Produktfamilie hinzufügen</h2><p className="text-[11px] text-muted-foreground">Du bekommst alle passenden lokalen Angebote dieser Produktart.</p></div><button type="button" aria-label="Produktfamilie schließen" onClick={() => setFamilyPickerOpen(false)} className="grid h-9 w-9 place-items-center"><X className="h-5 w-5" /></button></div>
             <div className="grid grid-cols-2 gap-2">
               {(families.data ?? []).map((family) => {
                 const active = activeFamilySlugs.has(family.slug);

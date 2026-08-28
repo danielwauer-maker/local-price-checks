@@ -115,6 +115,18 @@ uvicorn app.main:app --reload --host 0.0.0.0
 python -m pytest -q
 ```
 
+Die Frontend-E2E-Suite baut und testet das auslieferbare Frontend mit deterministischen Daten:
+
+```bash
+cd frontend-lovable-source
+bun install --frozen-lockfile
+bun run test:e2e:install
+bun run test:e2e:critical
+bun run test:e2e:matrix
+```
+
+Browsermatrix, Fixture-Architektur, CI-Gates und bewusst dokumentierte Umgebungsgrenzen stehen in **`docs/FRONTEND_E2E_HARDENING.md`**.
+
 ## Produkttaxonomie und Suche
 
 Die deterministische Backend-Suche versteht Produktnamen, Marken,
@@ -138,4 +150,4 @@ Familienabgrenzung und Migration sind in
 
 Nicht versioniert werden: produktive SQLite-Datenbanken, Prospekt-PDFs, Support-Exports, Cookies/Browserprofile, `.env`, lokale Zertifikate und Logs.
 
-Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/PRODUCT_TAXONOMY_AND_SEARCH.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.
+Weitere Details: `docs/MVP_SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, `docs/LOCAL_TESTING.md`, `docs/FRONTEND_E2E_HARDENING.md`, `docs/PRODUCT_TAXONOMY_AND_SEARCH.md`, `docs/POSTGRESQL_MIGRATION_RUNBOOK.md`.
