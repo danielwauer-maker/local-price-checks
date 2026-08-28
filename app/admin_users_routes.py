@@ -21,6 +21,7 @@ from .client_models import (
 )
 from .db import get_db
 from .models import FavoriteStore, Store
+from .push_models import PushSubscription
 from .user_deletion import RegisteredAccountDeletionBlocked, delete_anonymous_user
 
 BASE = Path(__file__).resolve().parent
@@ -32,6 +33,8 @@ router = APIRouter()
 def admin_users(
     request: Request,
     deleted: int | None = None,
+    push_user: int | None = None,
+    push_sent: int | None = None,
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
@@ -45,6 +48,8 @@ def admin_users(
     links = db.query(AccountClientLink).all()
     identity_by_id = {row.id: row for row in identities}
     link_by_client = {row.client_id: row for row in links}
+    push_rows = db.query(PushSubscription).filter(PushSubscription.enabled.is_(True)).all()
+    push_by_user = Counter(row.user_id for row in push_rows)
 
     logical: dict[tuple[str, int], dict] = {}
     for client in clients:
@@ -64,6 +69,7 @@ def admin_users(
                 "feedback": None,
                 "rating": None,
                 "last_seen": client.last_seen_at,
+                "push_count": int(push_by_user.get(canonical_user.id, 0)),
             }
             logical[key] = row
         row["clients"].append({"client": client, "device": client.device})
@@ -91,6 +97,7 @@ def admin_users(
         "anonymous": len(anonymous_rows),
         "devices": len(devices),
         "installed": sum(1 for c in clients if c.pwa_installed),
+        "push_devices": len(push_rows),
         "active7": sum(1 for row in rows if row["last_seen"] and row["last_seen"] >= cutoff),
         "mobile": sum(1 for d in devices if d.device_type == "mobile"),
         "desktop": sum(1 for d in devices if d.device_type == "desktop"),
@@ -113,6 +120,8 @@ def admin_users(
         "rating_counts": rating_counts,
         "rating_rows": rating_rows,
         "deleted": deleted,
+        "push_user": push_user,
+        "push_sent": push_sent,
     })
 
 
