@@ -110,6 +110,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^(migrations/versions/20260828_01_account_app_preferences\.py|app/client_models\.py)$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: account app preferences."
+  elif grep -Fxq 'migrations/versions/20260828_02_push_subscriptions.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(migrations/versions/20260828_02_push_subscriptions\.py|app/push_models\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled schema release recognized: web push subscriptions."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"

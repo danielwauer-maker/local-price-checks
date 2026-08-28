@@ -328,6 +328,12 @@ export type OfferFilter = {
 
 export type OfferView = Offer & { product: Product; market: Market };
 
+function mergeRuntimeOffers(incoming: Offer[]) {
+  const merged = new Map(runtimeOffers.map((offer) => [`${offer.productId}:${offer.marketId}`, offer]));
+  for (const offer of incoming) merged.set(`${offer.productId}:${offer.marketId}`, offer);
+  runtimeOffers = [...merged.values()];
+}
+
 export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]> {
   return realOrFallback(
     async () => {
@@ -344,7 +350,10 @@ export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]
       });
       runtimeProducts = Array.from(new Map([...runtimeProducts, ...mapped.map((x) => x.product)].map((p) => [p.id, p])).values());
       runtimeMarkets = Array.from(new Map([...runtimeMarkets, ...mapped.map((x) => x.market)].map((m) => [m.id, m])).values());
-      runtimeOffers = mapped.map(({ product: _p, market: _m, ...offer }) => offer);
+      const incomingOffers = mapped.map(({ product: _p, market: _m, ...offer }) => offer);
+      const scoped = Boolean(filter.query?.trim() || filter.categoryId || filter.marketIds?.length || filter.tag);
+      if (scoped) mergeRuntimeOffers(incomingOffers);
+      else runtimeOffers = incomingOffers;
       return filter.tag ? mapped.filter((o) => o.product.tags.includes(filter.tag!)) : mapped;
     },
     () => {

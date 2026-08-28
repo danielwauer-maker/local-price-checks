@@ -1,7 +1,7 @@
 import { expect, openApp, test } from "./fixtures";
 
 const routes = [
-  ["/", "Diese Woche kannst du"],
+  ["/", "Passende Angebote zu deinen Favoriten"],
   ["/angebote", "Angebote"],
   ["/favoriten", "Favoriten"],
   ["/liste", "Liste"],

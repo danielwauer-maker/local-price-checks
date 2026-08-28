@@ -68,6 +68,58 @@ test("adding an offer updates the shopping list immediately", async ({ page }) =
   await expect(page.getByText("Milbona Gouda jung").first()).toBeVisible();
 });
 
+test("scoped offer suggestions keep existing list market prices intact", async ({ page }) => {
+  const market = {
+    id: "rewe-puderbach",
+    name: "REWE Puderbach",
+    chain: "REWE",
+    street: "Teststraße 1",
+    city: "Puderbach",
+    lat: 50.6,
+    lng: 7.57,
+    distanceKm: 1.2,
+  };
+  const butter = {
+    productId: "butter",
+    marketId: market.id,
+    price: 1.79,
+    validFrom: "2026-08-25",
+    validUntil: "2026-08-31",
+    product: { id: "butter", name: "Butter mildgesäuert", brand: "Kerrygold", amount: "250 g", category: "molkerei", tags: [] },
+    market,
+  };
+  const gouda = {
+    productId: "gouda-milbona",
+    marketId: market.id,
+    price: 2.29,
+    validFrom: "2026-08-25",
+    validUntil: "2026-08-31",
+    product: { id: "gouda-milbona", name: "Milbona Gouda jung", brand: "Milbona", amount: "250 g", category: "kaese", tags: [] },
+    market,
+  };
+
+  await page.route("**/api/lokero/offers**", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q")?.trim().toLowerCase();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify(query ? [butter] : [butter, gouda]),
+    });
+  });
+
+  await openApp(page, "/angebote");
+  await page.getByRole("button", { name: "Käse", exact: true }).click();
+  await page.getByRole("button", { name: /Milbona Gouda jung zur Einkaufsliste hinzufügen/ }).click();
+  await openApp(page, "/liste");
+  const goudaRow = page.getByRole("article").filter({ hasText: "Milbona Gouda jung" });
+  await expect(goudaRow).toBeVisible();
+  await expect(goudaRow).toContainText("2,29 €");
+
+  await page.getByPlaceholder(/Butter, Milch/).fill("Butter");
+  await expect(page.getByText("Butter mildgesäuert").last()).toBeVisible();
+  await expect(goudaRow).toContainText("2,29 €");
+});
+
 test("product families and alternative preference persist deterministically", async ({ page }) => {
   await openApp(page, "/favoriten");
   await page.getByRole("button", { name: /Hinzufügen/ }).click();

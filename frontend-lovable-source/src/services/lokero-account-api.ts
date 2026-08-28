@@ -18,7 +18,18 @@ export type AccountNotificationSettings = {
 export type AccountState = {
   linked: boolean;
   profileId?: number;
+  profile?: {
+    displayName: string;
+    postalCode: string | null;
+    city: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    radiusKm: number;
+  };
   favoriteProductIds?: string[];
+  favoriteMarketIds?: string[];
+  favoriteFamilies?: string[];
+  favoritePreferences?: Array<{ productId: string; allowAlternatives: boolean }>;
   preferencesInitialized?: boolean;
   preferences?: {
     travelCostPerKm: number;
@@ -34,6 +45,13 @@ export type AccountPreferencesPatch = {
   preferredChains?: string[];
   diet?: string[];
   initializeOnly?: boolean;
+};
+
+export type AccountProfilePatch = {
+  displayName?: string;
+  postalCode: string;
+  city: string;
+  radiusKm?: number;
 };
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -67,6 +85,16 @@ export async function fetchAccountState(): Promise<AccountState> {
 
 export async function persistAccountPreferences(patch: AccountPreferencesPatch): Promise<AccountState> {
   const response = await fetch("/api/account/preferences", {
+    method: "PUT",
+    credentials: "include",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return parseJson<AccountState>(response);
+}
+
+export async function persistAccountProfile(patch: AccountProfilePatch): Promise<AccountState> {
+  const response = await fetch("/api/account/profile", {
     method: "PUT",
     credentials: "include",
     headers: { Accept: "application/json", "Content-Type": "application/json" },

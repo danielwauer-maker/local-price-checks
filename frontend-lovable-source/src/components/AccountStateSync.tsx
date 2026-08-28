@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/lib/app-store";
 import { ACCOUNT_PROFILE_STORAGE_KEY, fetchAccountState, persistAccountPreferences, type AccountState } from "@/services/lokero-account-api";
 import {
@@ -17,20 +18,29 @@ function sameSet(a: string[], b: string[]) {
 
 export function AccountStateSync() {
   const store = useStore();
+  const queryClient = useQueryClient();
   const syncing = useRef(false);
   const pendingSync = useRef(false);
   const mutationDepth = useRef(0);
   const favoriteProductsRef = useRef(store.favoriteProducts);
+  const favoriteMarketsRef = useRef(store.favoriteMarkets);
+  const locationRef = useRef(store.location);
+  const radiusRef = useRef(store.radius);
   const travelCostRef = useRef(store.travelCostPerKm);
   const notificationsRef = useRef(store.notifications);
   const toggleFavoriteRef = useRef(store.toggleFavoriteProduct);
+  const reconcileAccountStateRef = useRef(store.reconcileAccountState);
   const setTravelCostRef = useRef(store.setTravelCostPerKm);
   const setNotificationRef = useRef(store.setNotification);
 
   useEffect(() => { favoriteProductsRef.current = store.favoriteProducts; }, [store.favoriteProducts]);
+  useEffect(() => { favoriteMarketsRef.current = store.favoriteMarkets; }, [store.favoriteMarkets]);
+  useEffect(() => { locationRef.current = store.location; }, [store.location]);
+  useEffect(() => { radiusRef.current = store.radius; }, [store.radius]);
   useEffect(() => { travelCostRef.current = store.travelCostPerKm; }, [store.travelCostPerKm]);
   useEffect(() => { notificationsRef.current = store.notifications; }, [store.notifications]);
   useEffect(() => { toggleFavoriteRef.current = store.toggleFavoriteProduct; }, [store.toggleFavoriteProduct]);
+  useEffect(() => { reconcileAccountStateRef.current = store.reconcileAccountState; }, [store.reconcileAccountState]);
   useEffect(() => { setTravelCostRef.current = store.setTravelCostPerKm; }, [store.setTravelCostPerKm]);
   useEffect(() => { setNotificationRef.current = store.setNotification; }, [store.setNotification]);
 
@@ -39,8 +49,7 @@ export function AccountStateSync() {
 
     const serverFavorites = state.favoriteProductIds ?? [];
     const localFavorites = favoriteProductsRef.current;
-    const favoritesChanged = !sameSet(localFavorites, serverFavorites);
-    if (favoritesChanged) {
+    if (!sameSet(localFavorites, serverFavorites)) {
       const current = new Set(localFavorites);
       const wanted = new Set(serverFavorites);
       runWithoutFavoritePersistence(() => {
@@ -55,6 +64,49 @@ export function AccountStateSync() {
       notifyFavoritesChanged();
     }
 
+    const reconcile: {
+      location?: { lat: number; lng: number; label: string };
+      radius?: number;
+      favoriteMarkets?: string[];
+    } = {};
+    const profile = state.profile;
+    if (profile) {
+      const nextRadius = Number(profile.radiusKm || 15);
+      if (Math.abs(radiusRef.current - nextRadius) > 0.001) {
+        reconcile.radius = nextRadius;
+        radiusRef.current = nextRadius;
+      }
+      if (profile.latitude != null && profile.longitude != null) {
+        const label = [profile.postalCode, profile.city].filter(Boolean).join(" ") || "Mein Standort";
+        const current = locationRef.current;
+        if (
+          Math.abs(current.lat - profile.latitude) > 0.00001 ||
+          Math.abs(current.lng - profile.longitude) > 0.00001 ||
+          current.label !== label
+        ) {
+          const next = { lat: profile.latitude, lng: profile.longitude, label };
+          reconcile.location = next;
+          locationRef.current = next;
+        }
+      }
+    }
+
+    const serverFavoriteMarkets = state.favoriteMarketIds ?? [];
+    if (!sameSet(favoriteMarketsRef.current, serverFavoriteMarkets)) {
+      reconcile.favoriteMarkets = [...serverFavoriteMarkets];
+      favoriteMarketsRef.current = [...serverFavoriteMarkets];
+    }
+    if (Object.keys(reconcile).length > 0) {
+      reconcileAccountStateRef.current(reconcile);
+    }
+
+    if (state.favoritePreferences) {
+      queryClient.setQueryData(["favorite-preferences"], state.favoritePreferences);
+    }
+    void queryClient.invalidateQueries({ queryKey: ["favorite-families"] });
+    void queryClient.invalidateQueries({ queryKey: ["favorite-matched-offers"] });
+    void queryClient.invalidateQueries({ queryKey: ["favorite-markets"] });
+
     const prefs = state.preferences;
     if (!prefs) return;
     if (Math.abs(travelCostRef.current - prefs.travelCostPerKm) > 0.0001) {
@@ -67,7 +119,7 @@ export function AccountStateSync() {
         notificationsRef.current = { ...notificationsRef.current, [key]: prefs.notifications[key] };
       }
     }
-  }, []);
+  }, [queryClient]);
 
   const sync = useCallback(async () => {
     if (!store.hydrated) return;
@@ -138,28 +190,30 @@ export function AccountStateSync() {
     if (window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY)) {
       events = new EventSource("/api/account/events", { withCredentials: true });
       const onRemoteState = () => {
-        // Family/alternative changes are separate cached resources, while
-        // product favorites/settings are part of /api/account/state.
         notifyFavoritesChanged();
         void sync();
       };
+      events.addEventListener("ready", onRemoteState);
       events.addEventListener("state", onRemoteState);
       events.addEventListener("favorites", onRemoteState);
+      events.onerror = () => {
+        window.setTimeout(() => void sync(), 250);
+      };
     }
 
-    // Sparse safety net for temporary SSE/network failures. Normal active
-    // synchronization is event-driven and therefore does not create constant
-    // database traffic per logged-in device.
+    // Closed-beta safety net for suspended iOS/WebKit sessions. Normal active sync is SSE-driven.
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void sync();
-    }, 60_000);
+    }, 15_000);
     const onVisible = () => { if (document.visibilityState === "visible") void sync(); };
     window.addEventListener("focus", sync);
+    window.addEventListener("online", sync);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       events?.close();
       window.clearInterval(interval);
       window.removeEventListener("focus", sync);
+      window.removeEventListener("online", sync);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [store.hydrated, sync]);

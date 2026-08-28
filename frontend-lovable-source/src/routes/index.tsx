@@ -21,7 +21,7 @@ export const Route = createFileRoute("/")({
 
 function StartScreen() {
   const queryClient = useQueryClient();
-  const { radius, regionStatusOverride, favoriteMarkets } = useStore();
+  const { radius, regionStatusOverride, favoriteMarkets, backendHydrated } = useStore();
   const hasFavoriteMarkets = favoriteMarkets.length > 0;
   const favoriteMarketKey = [...favoriteMarkets].sort().join(",");
   const features = useQuery({ queryKey: ["lokero-features"], queryFn: fetchFeatures, staleTime: 5 * 60_000 });
@@ -44,7 +44,9 @@ function StartScreen() {
 
   const flags = features.data?.features;
   const showRegion = flags?.region_availability !== false;
-  const showSavings = flags?.savings !== false && flags?.optimization !== false && savings.data?.enabled !== false;
+  // Never render an optimizer result from the previous/local basket while the canonical
+  // backend state is still hydrating. This removes the misleading startup flash seen on iOS.
+  const showSavings = backendHydrated && flags?.savings !== false && flags?.optimization !== false && savings.data?.enabled !== false;
   const prioritizedMatchedOffers = hasFavoriteMarkets
     ? [...(matchedOffers.data ?? [])].sort((a, b) => {
         const aFavorite = favoriteMarkets.includes(a.marketId) ? 1 : 0;

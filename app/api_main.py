@@ -3,11 +3,18 @@ import secrets
 
 from .main import app
 from . import account_change_events as account_change_events  # noqa: F401 - publishes canonical account changes
+from . import sharing_change_events as sharing_change_events  # noqa: F401 - publishes shared-list revisions
+from . import push_change_events as push_change_events  # noqa: F401 - aggregates shared-list push notifications
+from . import offer_push_events as offer_push_events  # noqa: F401 - publishes favorite-offer push digests
 from .api_routes import router
+from .bootstrap_routes import router as bootstrap_router
 from .product_detail_routes import router as product_detail_router
 from .client_routes import router as client_router
 from .activity_routes import router as activity_router
 from .account_routes import router as account_router
+from .profile_routes import router as profile_router
+from .push_routes import router as push_router
+from .realtime_routes import router as realtime_router
 from .admin_routes import router as admin_router
 from .admin_users_routes import router as admin_users_router
 from .admin_data_status_routes import router as admin_data_status_router
@@ -39,6 +46,7 @@ from .lokero_models import (  # noqa: F401 - registers additive Lokero tables
     RegionInterest,
     ReviewerDeviceGrant,
 )
+from .push_models import PushSubscription  # noqa: F401 - registers additive push table
 from .client_context import (
     reset_client_key,
     reset_legacy_client_key,
@@ -98,11 +106,17 @@ async def persistent_client_identity(request, call_next):
     return response
 
 
+# Optimized bootstrap is intentionally registered before the legacy /api/bootstrap route.
+app.include_router(bootstrap_router)
 app.include_router(router)
 app.include_router(product_detail_router)
 app.include_router(client_router)
 app.include_router(activity_router)
 app.include_router(account_router)
+app.include_router(profile_router)
+app.include_router(push_router)
+# Register the event-driven list stream before the legacy polling route with the same path.
+app.include_router(realtime_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
 app.include_router(admin_data_status_router)
