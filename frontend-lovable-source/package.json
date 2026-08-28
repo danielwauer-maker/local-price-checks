@@ -9,7 +9,12 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:e2e": "node ./scripts/run-e2e.mjs",
+    "test:e2e:critical": "node ./scripts/run-e2e.mjs --grep @critical --project=desktop-chromium",
+    "test:e2e:matrix": "node ./scripts/run-e2e.mjs --grep @critical",
+    "test:e2e:full": "node ./scripts/run-e2e.mjs",
+    "test:e2e:install": "node ./node_modules/@playwright/test/cli.js install chromium firefox webkit"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -71,8 +76,10 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "^2.15.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.16.5",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

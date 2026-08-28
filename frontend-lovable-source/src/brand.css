@@ -23,10 +23,12 @@
     linear-gradient(155deg, #0f3a80 0%, #0b2d6b 42%, #071c47 100%);
   color: var(--spareno-white);
   opacity: 1;
-  animation: spareno-splash-in 320ms ease-out both;
+  animation:
+    spareno-splash-in 320ms ease-out both,
+    spareno-splash-auto-exit 250ms ease 800ms forwards;
   transition:
-    opacity 420ms ease,
-    visibility 420ms ease;
+    opacity 250ms ease,
+    visibility 250ms ease;
   isolation: isolate;
 }
 
@@ -130,6 +132,16 @@
   }
 }
 
+/* CSS is the fail-safe: the shell must become interactive even if hydration
+   is interrupted before the React cleanup timers can remove the splash. */
+@keyframes spareno-splash-auto-exit {
+  to {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 @media (min-width: 768px) {
   .spareno-splash__brand {
     padding-bottom: 70px;
@@ -147,6 +159,7 @@
   }
 
   .spareno-splash {
+    animation: spareno-splash-auto-exit 1ms 200ms forwards;
     transition-duration: 120ms;
   }
 }

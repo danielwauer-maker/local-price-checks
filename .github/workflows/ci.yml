@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - main
-      - fix/spareno-png-browser-compat
   pull_request:
 permissions:
   contents: read
@@ -67,9 +66,36 @@ jobs:
           test -f public/brand/favicon-32.png
       - name: Production frontend build
         run: bun run build
-      - name: Frontend lint (advisory)
-        continue-on-error: true
+      - name: Frontend lint
         run: bun run lint
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    needs: frontend
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend-lovable-source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: node ./node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
+      - name: Critical browser matrix
+        run: node ./scripts/run-e2e.mjs --grep @critical
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-artifacts
+          path: |
+            frontend-lovable-source/test-results
+            frontend-lovable-source/playwright-report
+            frontend-lovable-source/blob-report
+          if-no-files-found: ignore
+          retention-days: 7
   docker:
     runs-on: ubuntu-latest
     steps:

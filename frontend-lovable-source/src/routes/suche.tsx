@@ -34,6 +34,15 @@ function SearchScreen() {
   const navigate = useNavigate();
   const [query, setQuery] = useState(q ?? "");
 
+  const updateQuery = (value: string) => {
+    setQuery(value);
+    void navigate({
+      to: "/suche",
+      search: value.trim() ? { q: value } : {},
+      replace: true,
+    });
+  };
+
   const results = useQuery({
     queryKey: ["search", query],
     queryFn: () => search(query),
@@ -51,7 +60,7 @@ function SearchScreen() {
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
-        <SearchBar defaultValue={query} autoFocus onChange={setQuery} />
+        <SearchBar defaultValue={query} autoFocus onChange={updateQuery} />
       </header>
 
       <div className="space-y-4 px-4 pt-4">
@@ -68,7 +77,7 @@ function SearchScreen() {
             {suggestions.map((s) => (
               <button
                 key={s}
-                onClick={() => setQuery(s)}
+                onClick={() => updateQuery(s)}
                 className="rounded-full border border-border bg-surface px-3 py-1.5 text-[12px] text-muted-foreground"
               >
                 {s}

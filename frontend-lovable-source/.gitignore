@@ -14,6 +14,11 @@ dist-ssr
 .vinxi
 .tanstack/**
 .nitro
+dev-dist/
+playwright-report/
+test-results/
+blob-report/
+package-lock.json
 *.local
 
 # Wrangler / Cloudflare

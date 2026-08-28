@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -98,13 +99,28 @@ const Ctx = createContext<StoreContextValue | null>(null);
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StoreState>(initialState);
+  const stateRef = useRef<StoreState>(initialState);
   const [hydrated, setHydrated] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
+
+  const patch = useCallback(
+    (value: Partial<StoreState> | ((current: StoreState) => Partial<StoreState>)) => {
+      const current = stateRef.current;
+      const next = {
+        ...current,
+        ...(typeof value === "function" ? value(current) : value),
+      };
+      stateRef.current = next;
+      setState(next);
+      return next;
+    },
+    [],
+  );
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setState({ ...initialState, ...(JSON.parse(raw) as StoreState) });
+      if (raw) patch({ ...initialState, ...(JSON.parse(raw) as StoreState) });
     } catch {
       /* ignore */
     }
@@ -112,8 +128,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     void fetchBootstrap().then((bootstrap) => {
       if (!bootstrap) return;
-      setState((current) => ({
-        ...current,
+      patch((current) => ({
         location: bootstrap.location ?? current.location,
         radius: Number(bootstrap.radius ?? current.radius),
         list: bootstrap.basket ?? current.list,
@@ -121,18 +136,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }));
       setBackendHydrated(true);
     });
-  }, []);
+  }, [patch]);
 
   useEffect(() => {
     if (!hydrated) return;
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state, hydrated]);
 
-  const patch = useCallback(
-    (p: Partial<StoreState> | ((s: StoreState) => Partial<StoreState>)) =>
-      setState((s) => ({ ...s, ...(typeof p === "function" ? p(s) : p) })),
-    [],
-  );
+  useEffect(() => {
+    if (!hydrated) return;
+    document.documentElement.dataset.appReady = "true";
+    return () => {
+      delete document.documentElement.dataset.appReady;
+    };
+  }, [hydrated]);
 
   const value = useMemo<StoreContextValue>(() => {
     const listEntries = Object.entries(state.list)
@@ -146,45 +163,53 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       listEntries,
       listCount: listEntries.reduce((s, e) => s + e.qty, 0),
       setLocation: (location) => {
-        patch({ location });
-        void persistLocation({ ...location, radius: state.radius });
+        const next = patch({ location });
+        void persistLocation({ ...location, radius: next.radius });
       },
       setRadius: (radius) => {
-        patch({ radius });
-        void persistLocation({ ...state.location, radius });
+        const next = patch({ radius });
+        void persistLocation({ ...next.location, radius });
       },
       addToList: (productId, qty = 1) => {
-        const nextQty = (state.list[productId] ?? 0) + qty;
-        patch((s) => ({ list: { ...s.list, [productId]: nextQty } }));
+        const next = patch((current) => ({
+          list: {
+            ...current.list,
+            [productId]: (current.list[productId] ?? 0) + qty,
+          },
+        }));
+        const nextQty = next.list[productId] ?? 0;
         void persistBasketQuantity(productId, nextQty);
       },
       setQty: (productId, qty) => {
-        patch((s) => {
-          const next = { ...s.list };
-          if (qty <= 0) delete next[productId];
-          else next[productId] = qty;
-          return { list: next };
+        const next = patch((current) => {
+          const list = { ...current.list };
+          if (qty <= 0) delete list[productId];
+          else list[productId] = qty;
+          return { list };
         });
-        void persistBasketQuantity(productId, Math.max(0, qty));
+        void persistBasketQuantity(productId, next.list[productId] ?? 0);
       },
       clearList: () => {
         patch({ list: {} });
         void persistBasketClear();
       },
       toggleFavoriteProduct: (id) => {
-        const favorite = !state.favoriteProducts.includes(id);
-        patch((s) => ({
-          favoriteProducts: favorite
-            ? [...s.favoriteProducts, id]
-            : s.favoriteProducts.filter((x) => x !== id),
-        }));
+        const next = patch((current) => {
+          const favorite = !current.favoriteProducts.includes(id);
+          return {
+            favoriteProducts: favorite
+              ? [...current.favoriteProducts, id]
+              : current.favoriteProducts.filter((productId) => productId !== id),
+          };
+        });
+        const favorite = next.favoriteProducts.includes(id);
         void persistProductFavorite(id, favorite);
       },
       toggleFavoriteMarket: (id) => {
-        patch((s) => ({
-          favoriteMarkets: s.favoriteMarkets.includes(id)
-            ? s.favoriteMarkets.filter((x) => x !== id)
-            : [...s.favoriteMarkets, id],
+        patch((current) => ({
+          favoriteMarkets: current.favoriteMarkets.includes(id)
+            ? current.favoriteMarkets.filter((marketId) => marketId !== id)
+            : [...current.favoriteMarkets, id],
         }));
         void persistMarketToggle(id);
       },

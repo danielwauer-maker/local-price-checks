@@ -26,8 +26,8 @@ export function SavingsHero({
       <p className="mt-1 text-center text-[15px] font-semibold text-white/95">sparen</p>
       <p className="mt-1 flex items-center justify-center gap-1 text-center text-[11px] text-white/75">
         mit deiner aktuellen Einkaufsliste
-        <span title={explanation} aria-label={explanation}>
-          <Info className="h-3 w-3" />
+        <span role="img" title={explanation} aria-label={explanation}>
+          <Info aria-hidden="true" className="h-3 w-3" />
         </span>
       </p>
 
