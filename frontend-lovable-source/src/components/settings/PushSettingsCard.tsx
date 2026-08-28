@@ -7,9 +7,18 @@ export function PushSettingsCard() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
   const [linked, setLinked] = useState(false);
-  const supported = pushSupported();
+  const [supported, setSupported] = useState(false);
+  const [supportChecked, setSupportChecked] = useState(false);
 
   useEffect(() => {
+    const currentSupport = pushSupported();
+    setSupported(currentSupport);
+    setSupportChecked(true);
+    if (!currentSupport) {
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     void fetchPushConfig()
       .then((config) => {
@@ -41,6 +50,21 @@ export function PushSettingsCard() {
       setLoading(false);
     }
   };
+
+  if (!supportChecked) {
+    return (
+      <div className="rounded-xl border border-border bg-muted-surface/35 p-3" aria-label="Push-Status wird geprüft">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><BellRing className="h-4 w-4" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold text-navy">Push auf diesem Gerät</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Unterstützung wird geprüft …</p>
+          </div>
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
+        </div>
+      </div>
+    );
+  }
 
   if (!supported) {
     return (
