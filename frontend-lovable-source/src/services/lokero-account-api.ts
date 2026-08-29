@@ -18,6 +18,7 @@ export type AccountNotificationSettings = {
 export type AccountState = {
   linked: boolean;
   profileId?: number;
+  revision?: number;
   profile?: {
     displayName: string;
     postalCode: string | null;

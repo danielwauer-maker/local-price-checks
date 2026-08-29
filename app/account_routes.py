@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .account_linking import AccountLinkConflict, account_profile_for_client, link_verified_identity
 from .account_realtime import publish_account_event, subscribe_account_events
 from .client_context import get_client_key
-from .client_models import AccountAppPreferences, AccountClientLink, AccountIdentity, UserClient
+from .client_models import AccountAppPreferences, AccountClientLink, AccountIdentity, AccountStateRevision, UserClient
 from .db import get_db
 from .lokero_models import FavoriteProductFamily, FavoriteProductPreference
 from .models import FavoriteProduct, FavoriteStore, UserProfile
@@ -109,6 +109,7 @@ def _preferences_payload(row: AccountAppPreferences | None) -> dict:
 
 def _account_state_payload(db: Session, profile: UserProfile) -> dict:
     prefs = db.query(AccountAppPreferences).filter(AccountAppPreferences.user_id == profile.id).first()
+    revision_row = db.query(AccountStateRevision).filter(AccountStateRevision.user_id == profile.id).first()
     favorite_ids = [
         str(row.master_product_id)
         for row in db.query(FavoriteProduct)
@@ -143,6 +144,7 @@ def _account_state_payload(db: Session, profile: UserProfile) -> dict:
     return {
         "linked": True,
         "profileId": profile.id,
+        "revision": int(revision_row.revision if revision_row else 0),
         "profile": {
             "displayName": profile.display_name or "",
             "postalCode": profile.postal_code,
@@ -216,16 +218,18 @@ async def account_events(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Für Realtime-Synchronisierung ist ein Spareno-Account erforderlich.")
     user_id = int(profile.id)
     queue, unsubscribe = subscribe_account_events(user_id)
+    revision_row = db.query(AccountStateRevision).filter(AccountStateRevision.user_id == user_id).first()
+    initial_revision = int(revision_row.revision if revision_row else 0)
 
     async def stream():
         try:
-            yield "event: ready\ndata: {}\n\n"
+            yield f"event: ready\ndata: {json.dumps({'revision': initial_revision})}\n\n"
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=20.0)
-                    yield f"event: {event.kind}\ndata: {{}}\n\n"
+                    yield f"event: {event.kind}\ndata: {json.dumps({'revision': event.revision})}\n\n"
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
@@ -271,5 +275,4 @@ def update_account_preferences(payload: AccountPreferencesPayload, db: Session =
         row.diet_json = json.dumps([str(item) for item in payload.diet], separators=(",", ":"), ensure_ascii=False)
     row.updated_at = datetime.utcnow()
     db.commit()
-    publish_account_event(profile.id, "state")
     return _account_state_payload(db, profile)

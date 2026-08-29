@@ -68,7 +68,7 @@ test("adding an offer updates the shopping list immediately", async ({ page }) =
   await expect(page.getByText("Milbona Gouda jung").first()).toBeVisible();
 });
 
-test("scoped offer suggestions keep existing list market prices intact", async ({ page }) => {
+test("@critical scoped offer suggestions keep existing list market prices intact", async ({ page }) => {
   const market = {
     id: "rewe-puderbach",
     name: "REWE Puderbach",
@@ -110,7 +110,8 @@ test("scoped offer suggestions keep existing list market prices intact", async (
   await openApp(page, "/angebote");
   await page.getByRole("button", { name: "Käse", exact: true }).click();
   await page.getByRole("button", { name: /Milbona Gouda jung zur Einkaufsliste hinzufügen/ }).click();
-  await openApp(page, "/liste");
+  await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("link", { name: "Liste" }).click();
+  await expect(page).toHaveURL(/\/liste$/);
   const goudaRow = page.getByRole("article").filter({ hasText: "Milbona Gouda jung" });
   await expect(goudaRow).toBeVisible();
   await expect(goudaRow).toContainText("2,29 €");

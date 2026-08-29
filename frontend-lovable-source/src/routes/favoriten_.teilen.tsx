@@ -13,7 +13,7 @@ import {
   setSharedFavoriteVisibility,
 } from "@/services/sharing-api";
 
-export const Route = createFileRoute("/favoriten/teilen")({
+export const Route = createFileRoute("/favoriten_/teilen")({
   head: () => ({ meta: [{ title: "Favoriten teilen – Spareno" }] }),
   component: FavoriteShareScreen,
 });

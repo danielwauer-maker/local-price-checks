@@ -1,5 +1,7 @@
+import logging
 import re
 import secrets
+from time import perf_counter
 
 from .main import app
 from . import account_change_events as account_change_events  # noqa: F401 - publishes canonical account changes
@@ -65,9 +67,16 @@ from .offer_review_routes import router as offer_review_router
 from .upcoming_routes import router as upcoming_router
 from .admin_seed import seed_admin_catalog
 from .normal_prices import backfill_explicit_references
-from .db import SessionLocal
+from .db import SessionLocal, begin_request_query_metrics, end_request_query_metrics
 
 _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
+_PERFORMANCE_PATHS = (
+    "/api/bootstrap",
+    "/api/account/",
+    "/api/sharing/lists",
+    "/api/push/",
+)
+_performance_logger = logging.getLogger("spareno.performance")
 
 
 @app.middleware("http")
@@ -104,6 +113,29 @@ async def persistent_client_identity(request, call_next):
         samesite="lax",
     )
     return response
+
+
+@app.middleware("http")
+async def request_performance_metrics(request, call_next):
+    if not request.url.path.startswith(_PERFORMANCE_PATHS):
+        return await call_next(request)
+    metrics, token = begin_request_query_metrics()
+    started = perf_counter()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = (perf_counter() - started) * 1000
+        _performance_logger.info(
+            "api_request method=%s path=%s status=%s duration_ms=%.2f query_count=%s",
+            request.method,
+            request.url.path,
+            getattr(response, "status_code", 500),
+            duration_ms,
+            metrics["queries"],
+        )
+        end_request_query_metrics(token)
 
 
 # Optimized bootstrap is intentionally registered before the legacy /api/bootstrap route.

@@ -18,6 +18,37 @@ test("@critical shared shopping list stays optimistic and applies realtime revis
   await expect(butter.getByText("5", { exact: true })).toBeVisible();
 });
 
+test("shopping rows only complete through the checkbox or one deliberate swipe", async ({ page, apiState }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Touch event semantics are verified on Chromium.");
+  apiState.accountLinked = true;
+  await openApp(page, "/liste");
+
+  let butter = page.getByRole("article").filter({ hasText: "Butter mildgesäuert" });
+  let checkbox = butter.getByRole("checkbox", { name: "Butter mildgesäuert als erledigt markieren" });
+  await expect(checkbox).toHaveAttribute("aria-checked", "false");
+
+  await butter.dispatchEvent("click");
+  await expect(checkbox).toHaveAttribute("aria-checked", "false");
+  await butter.getByRole("link", { name: /Butter mildgesäuert/ }).click();
+  await expect(page).toHaveURL(/\/produkt\/butter$/);
+  await page.goBack();
+
+  butter = page.getByRole("article").filter({ hasText: "Butter mildgesäuert" });
+  checkbox = butter.getByRole("checkbox", { name: "Butter mildgesäuert als erledigt markieren" });
+  await expect(checkbox).toHaveAttribute("aria-checked", "false");
+  await checkbox.click();
+  await expect(butter.getByRole("checkbox", { name: "Butter mildgesäuert wieder öffnen" })).toHaveAttribute("aria-checked", "true");
+  expect(apiState.sharedButterChecked).toBe(true);
+
+  await butter.getByRole("checkbox", { name: "Butter mildgesäuert wieder öffnen" }).click();
+  const row = page.getByLabel("Offener Listeneintrag").filter({ hasText: "Butter mildgesäuert" });
+  await row.dispatchEvent("touchstart", { touches: [{ identifier: 1, clientX: 20, clientY: 20 }] });
+  await row.dispatchEvent("touchmove", { touches: [{ identifier: 1, clientX: 110, clientY: 22 }] });
+  await row.dispatchEvent("touchend", { changedTouches: [{ identifier: 1, clientX: 110, clientY: 22 }] });
+  await expect(butter.getByRole("checkbox", { name: "Butter mildgesäuert wieder öffnen" })).toHaveAttribute("aria-checked", "true");
+  expect(apiState.sharedButterChecked).toBe(true);
+});
+
 test("@critical list invite preserves its return-to path through account entry", async ({ page }) => {
   await openApp(page, "/");
   await page.evaluate(() => {

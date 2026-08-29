@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .account_linking import account_profile_for_client
 from .client_context import get_client_key, get_legacy_client_key, get_request_method
-from .client_models import UserClient
+from .client_models import AccountClientLink, UserClient
 from .clock import app_today
 from .geo import haversine_km
 from .models import FavoriteStore, Offer, UserProfile
@@ -56,30 +56,36 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
     """
     client_key = get_client_key()
     if client_key:
+        if persist is None:
+            method = get_request_method()
+            persist = False if method in _SAFE_METHODS else True
         client = db.query(UserClient).filter(UserClient.client_key == client_key).first()
         if client:
-            client.last_seen_at = datetime.utcnow()
             account_user = account_profile_for_client(db, client)
-            db.flush()
+            if persist:
+                now = datetime.utcnow()
+                client.last_seen_at = now
+                link = db.query(AccountClientLink).filter(AccountClientLink.client_id == client.id).first()
+                if link is not None:
+                    link.last_seen_at = now
+                    link.identity.last_seen_at = now
+                db.flush()
             return account_user or client.user
 
         legacy_key = get_legacy_client_key()
         if legacy_key and legacy_key != client_key:
             legacy_client = db.query(UserClient).filter(UserClient.client_key == legacy_key).first()
             if legacy_client:
-                legacy_client.client_key = client_key
-                legacy_client.last_seen_at = datetime.utcnow()
-                if legacy_client.device is not None:
-                    legacy_client.device.device_key = client_key
-                    legacy_client.device.last_seen_at = legacy_client.last_seen_at
-                db.commit()
-                db.refresh(legacy_client)
+                if persist:
+                    legacy_client.client_key = client_key
+                    legacy_client.last_seen_at = datetime.utcnow()
+                    if legacy_client.device is not None:
+                        legacy_client.device.device_key = client_key
+                        legacy_client.device.last_seen_at = legacy_client.last_seen_at
+                    db.commit()
+                    db.refresh(legacy_client)
                 account_user = account_profile_for_client(db, legacy_client)
                 return account_user or legacy_client.user
-
-        if persist is None:
-            method = get_request_method()
-            persist = False if method in _SAFE_METHODS else True
 
         if not persist:
             return _unclaimed_profile(db) or _guest_profile()

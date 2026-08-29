@@ -16,10 +16,15 @@ import { Route as EinstellungenRouteImport } from './routes/einstellungen'
 import { Route as FavoritenRouteImport } from './routes/favoriten'
 import { Route as ListeRouteImport } from './routes/liste'
 import { Route as MaerkteRouteImport } from './routes/maerkte'
+import { Route as PruefungRouteImport } from './routes/pruefung'
 import { Route as RegionenRouteImport } from './routes/regionen'
 import { Route as ScannerRouteImport } from './routes/scanner'
 import { Route as SucheRouteImport } from './routes/suche'
+import { Route as FavoritenFreundeRouteImport } from './routes/favoriten_.freunde'
+import { Route as FavoritenTeilenRouteImport } from './routes/favoriten_.teilen'
 import { Route as ProduktProductIdRouteImport } from './routes/produkt.$productId'
+import { Route as FavoritenGeteiltTokenRouteImport } from './routes/favoriten_.geteilt.$token'
+import { Route as ListeEinladungTokenRouteImport } from './routes/liste_.einladung.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -56,6 +61,11 @@ const MaerkteRoute = MaerkteRouteImport.update({
   path: '/maerkte',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PruefungRoute = PruefungRouteImport.update({
+  id: '/pruefung',
+  path: '/pruefung',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RegionenRoute = RegionenRouteImport.update({
   id: '/regionen',
   path: '/regionen',
@@ -71,9 +81,29 @@ const SucheRoute = SucheRouteImport.update({
   path: '/suche',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FavoritenFreundeRoute = FavoritenFreundeRouteImport.update({
+  id: '/favoriten_/freunde',
+  path: '/favoriten/freunde',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FavoritenTeilenRoute = FavoritenTeilenRouteImport.update({
+  id: '/favoriten_/teilen',
+  path: '/favoriten/teilen',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProduktProductIdRoute = ProduktProductIdRouteImport.update({
   id: '/produkt/$productId',
   path: '/produkt/$productId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FavoritenGeteiltTokenRoute = FavoritenGeteiltTokenRouteImport.update({
+  id: '/favoriten_/geteilt/$token',
+  path: '/favoriten/geteilt/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ListeEinladungTokenRoute = ListeEinladungTokenRouteImport.update({
+  id: '/liste_/einladung/$token',
+  path: '/liste/einladung/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -85,10 +115,15 @@ export interface FileRoutesByFullPath {
   '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/pruefung': typeof PruefungRoute
   '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
   '/suche': typeof SucheRoute
+  '/favoriten/freunde': typeof FavoritenFreundeRoute
+  '/favoriten/teilen': typeof FavoritenTeilenRoute
   '/produkt/$productId': typeof ProduktProductIdRoute
+  '/favoriten/geteilt/$token': typeof FavoritenGeteiltTokenRoute
+  '/liste/einladung/$token': typeof ListeEinladungTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -98,10 +133,15 @@ export interface FileRoutesByTo {
   '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/pruefung': typeof PruefungRoute
   '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
   '/suche': typeof SucheRoute
+  '/favoriten/freunde': typeof FavoritenFreundeRoute
+  '/favoriten/teilen': typeof FavoritenTeilenRoute
   '/produkt/$productId': typeof ProduktProductIdRoute
+  '/favoriten/geteilt/$token': typeof FavoritenGeteiltTokenRoute
+  '/liste/einladung/$token': typeof ListeEinladungTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -112,10 +152,15 @@ export interface FileRoutesById {
   '/favoriten': typeof FavoritenRoute
   '/liste': typeof ListeRoute
   '/maerkte': typeof MaerkteRoute
+  '/pruefung': typeof PruefungRoute
   '/regionen': typeof RegionenRoute
   '/scanner': typeof ScannerRoute
   '/suche': typeof SucheRoute
+  '/favoriten_/freunde': typeof FavoritenFreundeRoute
+  '/favoriten_/teilen': typeof FavoritenTeilenRoute
   '/produkt/$productId': typeof ProduktProductIdRoute
+  '/favoriten_/geteilt/$token': typeof FavoritenGeteiltTokenRoute
+  '/liste_/einladung/$token': typeof ListeEinladungTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -127,10 +172,15 @@ export interface FileRouteTypes {
     | '/favoriten'
     | '/liste'
     | '/maerkte'
+    | '/pruefung'
     | '/regionen'
     | '/scanner'
     | '/suche'
+    | '/favoriten/freunde'
+    | '/favoriten/teilen'
     | '/produkt/$productId'
+    | '/favoriten/geteilt/$token'
+    | '/liste/einladung/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -140,10 +190,15 @@ export interface FileRouteTypes {
     | '/favoriten'
     | '/liste'
     | '/maerkte'
+    | '/pruefung'
     | '/regionen'
     | '/scanner'
     | '/suche'
+    | '/favoriten/freunde'
+    | '/favoriten/teilen'
     | '/produkt/$productId'
+    | '/favoriten/geteilt/$token'
+    | '/liste/einladung/$token'
   id:
     | '__root__'
     | '/'
@@ -153,10 +208,15 @@ export interface FileRouteTypes {
     | '/favoriten'
     | '/liste'
     | '/maerkte'
+    | '/pruefung'
     | '/regionen'
     | '/scanner'
     | '/suche'
+    | '/favoriten_/freunde'
+    | '/favoriten_/teilen'
     | '/produkt/$productId'
+    | '/favoriten_/geteilt/$token'
+    | '/liste_/einladung/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -167,10 +227,15 @@ export interface RootRouteChildren {
   FavoritenRoute: typeof FavoritenRoute
   ListeRoute: typeof ListeRoute
   MaerkteRoute: typeof MaerkteRoute
+  PruefungRoute: typeof PruefungRoute
   RegionenRoute: typeof RegionenRoute
   ScannerRoute: typeof ScannerRoute
   SucheRoute: typeof SucheRoute
+  FavoritenFreundeRoute: typeof FavoritenFreundeRoute
+  FavoritenTeilenRoute: typeof FavoritenTeilenRoute
   ProduktProductIdRoute: typeof ProduktProductIdRoute
+  FavoritenGeteiltTokenRoute: typeof FavoritenGeteiltTokenRoute
+  ListeEinladungTokenRoute: typeof ListeEinladungTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -224,6 +289,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MaerkteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pruefung': {
+      id: '/pruefung'
+      path: '/pruefung'
+      fullPath: '/pruefung'
+      preLoaderRoute: typeof PruefungRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/regionen': {
       id: '/regionen'
       path: '/regionen'
@@ -245,11 +317,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SucheRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/favoriten_/freunde': {
+      id: '/favoriten_/freunde'
+      path: '/favoriten/freunde'
+      fullPath: '/favoriten/freunde'
+      preLoaderRoute: typeof FavoritenFreundeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/favoriten_/teilen': {
+      id: '/favoriten_/teilen'
+      path: '/favoriten/teilen'
+      fullPath: '/favoriten/teilen'
+      preLoaderRoute: typeof FavoritenTeilenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/produkt/$productId': {
       id: '/produkt/$productId'
       path: '/produkt/$productId'
       fullPath: '/produkt/$productId'
       preLoaderRoute: typeof ProduktProductIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/favoriten_/geteilt/$token': {
+      id: '/favoriten_/geteilt/$token'
+      path: '/favoriten/geteilt/$token'
+      fullPath: '/favoriten/geteilt/$token'
+      preLoaderRoute: typeof FavoritenGeteiltTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/liste_/einladung/$token': {
+      id: '/liste_/einladung/$token'
+      path: '/liste/einladung/$token'
+      fullPath: '/liste/einladung/$token'
+      preLoaderRoute: typeof ListeEinladungTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -263,10 +363,15 @@ const rootRouteChildren: RootRouteChildren = {
   FavoritenRoute: FavoritenRoute,
   ListeRoute: ListeRoute,
   MaerkteRoute: MaerkteRoute,
+  PruefungRoute: PruefungRoute,
   RegionenRoute: RegionenRoute,
   ScannerRoute: ScannerRoute,
   SucheRoute: SucheRoute,
+  FavoritenFreundeRoute: FavoritenFreundeRoute,
+  FavoritenTeilenRoute: FavoritenTeilenRoute,
   ProduktProductIdRoute: ProduktProductIdRoute,
+  FavoritenGeteiltTokenRoute: FavoritenGeteiltTokenRoute,
+  ListeEinladungTokenRoute: ListeEinladungTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

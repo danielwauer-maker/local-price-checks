@@ -187,7 +187,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  if (!response.ok) throw new Error(`Lokero API ${response.status}: ${path}`);
+  if (!response.ok) throw new Error(`Spareno API ${response.status}: ${path}`);
   backendReachable = true;
   return (await response.json()) as T;
 }
@@ -334,6 +334,12 @@ function mergeRuntimeOffers(incoming: Offer[]) {
   runtimeOffers = [...merged.values()];
 }
 
+function replaceRuntimeOffersForMarkets(marketIds: string[], incoming: Offer[]) {
+  const scopedMarkets = new Set(marketIds);
+  runtimeOffers = runtimeOffers.filter((offer) => !scopedMarkets.has(offer.marketId));
+  mergeRuntimeOffers(incoming);
+}
+
 export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]> {
   return realOrFallback(
     async () => {
@@ -351,8 +357,9 @@ export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]
       runtimeProducts = Array.from(new Map([...runtimeProducts, ...mapped.map((x) => x.product)].map((p) => [p.id, p])).values());
       runtimeMarkets = Array.from(new Map([...runtimeMarkets, ...mapped.map((x) => x.market)].map((m) => [m.id, m])).values());
       const incomingOffers = mapped.map(({ product: _p, market: _m, ...offer }) => offer);
-      const scoped = Boolean(filter.query?.trim() || filter.categoryId || filter.marketIds?.length || filter.tag);
-      if (scoped) mergeRuntimeOffers(incomingOffers);
+      const filteredWithinMarkets = Boolean(filter.query?.trim() || filter.categoryId || filter.tag);
+      if (filteredWithinMarkets) mergeRuntimeOffers(incomingOffers);
+      else if (filter.marketIds?.length) replaceRuntimeOffersForMarkets(filter.marketIds, incomingOffers);
       else runtimeOffers = incomingOffers;
       return filter.tag ? mapped.filter((o) => o.product.tags.includes(filter.tag!)) : mapped;
     },
@@ -524,7 +531,7 @@ export async function fetchReviewerStatus(): Promise<ReviewerStatus> {
   return realOrFallback(() => api<ReviewerStatus>("/api/lokero/review/status"), () => ({ reviewer: false }));
 }
 
-export async function unlockReviewer(username: string, password: string, label = "Lokero Prüfgerät") {
+export async function unlockReviewer(username: string, password: string, label = "Spareno Prüfgerät") {
   const token = btoa(`${username}:${password}`);
   return api<ReviewerStatus & { ok: boolean }>("/api/lokero/review/unlock", {
     method: "POST",

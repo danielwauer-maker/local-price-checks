@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .account_realtime import publish_account_event
 from .db import get_db
 from .feature_flags import feature_enabled
 from .models import FavoriteProduct, MasterProduct
@@ -25,13 +24,9 @@ def add_favorite_product(product_id: int, db: Session = Depends(get_db)):
         .filter_by(user_id=user.id, master_product_id=product_id)
         .first()
     )
-    changed = False
     if not row:
         db.add(FavoriteProduct(user_id=user.id, master_product_id=product_id))
         db.commit()
-        changed = True
-    if changed:
-        publish_account_event(user.id, "favorites")
     return {"ok": True, "favorite": True, "productId": str(product_id)}
 
 
@@ -45,11 +40,7 @@ def remove_favorite_product(product_id: int, db: Session = Depends(get_db)):
         .filter_by(user_id=user.id, master_product_id=product_id)
         .first()
     )
-    changed = False
     if row:
         db.delete(row)
         db.commit()
-        changed = True
-    if changed:
-        publish_account_event(user.id, "favorites")
     return {"ok": True, "favorite": False, "productId": str(product_id)}

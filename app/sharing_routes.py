@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import io
-import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Iterable
@@ -10,13 +8,13 @@ from typing import Iterable
 import qrcode
 import qrcode.image.svg
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from .client_models import AccountIdentity
 from .clock import app_today
-from .db import SessionLocal, get_db
+from .db import get_db
 from .models import FavoriteProduct, MasterProduct, Offer, ProductAdminData, ShoppingItem, Store, UserProfile
 from .product_media import preferred_product_media
 from .services import current_user, selected_store_ids
@@ -686,50 +684,6 @@ def clear_list_items(list_id: int, db: Session = Depends(get_db)):
     _bump(shopping_list)
     db.commit()
     return _snapshot(db, shopping_list, membership)
-
-
-@router.get("/lists/{list_id}/events")
-async def list_events(list_id: int, request: Request, db: Session = Depends(get_db)):
-    user, _ = _require_linked_user(db)
-    _require_member(db, list_id, user.id)
-    user_id = int(user.id)
-
-    async def stream():
-        last_revision: int | None = None
-        heartbeat = 0
-        while True:
-            if await request.is_disconnected():
-                break
-            session = SessionLocal()
-            try:
-                if _member(session, list_id, user_id) is None:
-                    yield "event: access_revoked\ndata: {}\n\n"
-                    break
-                shopping_list = session.get(SharedShoppingList, list_id)
-                if shopping_list is None:
-                    yield "event: removed\ndata: {}\n\n"
-                    break
-                revision = int(shopping_list.revision or 0)
-                if last_revision is None or revision != last_revision:
-                    last_revision = revision
-                    yield f"event: revision\ndata: {json.dumps({'revision': revision})}\n\n"
-                heartbeat += 1
-                if heartbeat >= 15:
-                    heartbeat = 0
-                    yield ": keep-alive\n\n"
-            finally:
-                session.close()
-            await asyncio.sleep(1)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
 
 
 # ---------------------------------------------------------------------------

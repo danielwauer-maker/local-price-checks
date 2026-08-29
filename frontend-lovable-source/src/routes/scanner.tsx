@@ -15,13 +15,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/scanner")({
   head: () => ({
     meta: [
-      { title: "Barcode scannen & Preise vergleichen – Lokero" },
+      { title: "Barcode scannen & Preise vergleichen – Spareno" },
       {
         name: "description",
         content:
           "Scanne den Barcode eines Produkts und sieh sofort, welcher Markt in deiner Nähe den besten Preis hat.",
       },
-      { property: "og:title", content: "Barcode-Scanner – Lokero" },
+      { property: "og:title", content: "Barcode-Scanner – Spareno" },
       {
         property: "og:description",
         content: "Produkt scannen und Preise aller Märkte in deiner Nähe vergleichen.",

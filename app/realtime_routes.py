@@ -32,7 +32,9 @@ async def realtime_list_events(list_id: int, request: Request, db: Session = Dep
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=20.0)
-                    payload = {"revision": event.revision} if event.revision is not None else {}
+                    payload = {"listId": list_id, "kind": event.kind}
+                    if event.revision is not None:
+                        payload["revision"] = event.revision
                     yield f"event: {event.kind}\ndata: {json.dumps(payload)}\n\n"
                 except asyncio.TimeoutError:
                     # Revalidate access occasionally without polling list revisions.

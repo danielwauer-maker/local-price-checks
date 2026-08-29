@@ -35,6 +35,8 @@ def admin_users(
     deleted: int | None = None,
     push_user: int | None = None,
     push_sent: int | None = None,
+    push_failed: int | None = None,
+    custom_push: int | None = None,
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
@@ -49,7 +51,10 @@ def admin_users(
     identity_by_id = {row.id: row for row in identities}
     link_by_client = {row.client_id: row for row in links}
     push_rows = db.query(PushSubscription).filter(PushSubscription.enabled.is_(True)).all()
-    push_by_user = Counter(row.user_id for row in push_rows)
+    push_by_user: dict[int, list[PushSubscription]] = {}
+    for push in push_rows:
+        push_by_user.setdefault(push.user_id, []).append(push)
+    client_by_key = {client.client_key: client for client in clients}
 
     logical: dict[tuple[str, int], dict] = {}
     for client in clients:
@@ -69,7 +74,14 @@ def admin_users(
                 "feedback": None,
                 "rating": None,
                 "last_seen": client.last_seen_at,
-                "push_count": int(push_by_user.get(canonical_user.id, 0)),
+                "push_devices": [
+                    {
+                        "subscription": push,
+                        "client": client_by_key.get(push.client_key or ""),
+                    }
+                    for push in push_by_user.get(canonical_user.id, [])
+                ],
+                "push_count": len(push_by_user.get(canonical_user.id, [])),
             }
             logical[key] = row
         row["clients"].append({"client": client, "device": client.device})
@@ -122,6 +134,8 @@ def admin_users(
         "deleted": deleted,
         "push_user": push_user,
         "push_sent": push_sent,
+        "push_failed": push_failed,
+        "custom_push": custom_push,
     })
 
 
