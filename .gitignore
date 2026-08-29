@@ -20,6 +20,7 @@ browser_profiles/
 *.crt
 *.key
 *.pem
+carto-API-Key.txt
 *.pdf
 *.zip
 *.dump

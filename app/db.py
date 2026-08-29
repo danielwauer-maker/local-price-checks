@@ -1,3 +1,5 @@
+from contextvars import ContextVar, Token
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, URL
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -5,10 +7,31 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import database_url
 
 
+_request_query_metrics: ContextVar[dict[str, int] | None] = ContextVar(
+    "spareno_request_query_metrics", default=None
+)
+
+
+def begin_request_query_metrics() -> tuple[dict[str, int], Token]:
+    metrics = {"queries": 0}
+    return metrics, _request_query_metrics.set(metrics)
+
+
+def end_request_query_metrics(token: Token) -> None:
+    _request_query_metrics.reset(token)
+
+
+def _count_request_query(*_args) -> None:
+    metrics = _request_query_metrics.get()
+    if metrics is not None:
+        metrics["queries"] += 1
+
+
 def create_database_engine(url: str | URL | None = None) -> Engine:
     parsed = database_url(str(url) if url is not None else None)
     connect_args = {"check_same_thread": False, "timeout": 30} if parsed.get_backend_name() == "sqlite" else {}
     configured_engine = create_engine(parsed, connect_args=connect_args, future=True, pool_pre_ping=True)
+    event.listen(configured_engine, "before_cursor_execute", _count_request_query)
 
     if parsed.get_backend_name() == "sqlite":
         event.listen(configured_engine, "connect", _configure_sqlite)

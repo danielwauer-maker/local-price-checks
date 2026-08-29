@@ -19,9 +19,12 @@ import { FirstStartOnboarding } from "@/components/FirstStartOnboarding";
 import { AppStoreProvider } from "@/lib/app-store";
 import { Toaster } from "@/components/ui/sonner";
 import { SplashScreen } from "@/components/brand/SplashScreen";
+import { performanceMark, performanceMeasure } from "@/lib/performance";
 
-const SPLASH_DURATION_MS = 800;
-const SPLASH_EXIT_MS = 250;
+const SPLASH_DURATION_MS = 160;
+const SPLASH_EXIT_MS = 100;
+
+performanceMark("module-loaded");
 
 function NotFoundComponent() {
   return (
@@ -104,8 +107,14 @@ function RootComponent() {
   const [splashPhase, setSplashPhase] = useState<"visible" | "exiting" | "hidden">("visible");
 
   useEffect(() => {
+    performanceMark("app-mounted");
+    performanceMeasure("module-to-mount", "module-loaded", "app-mounted");
     const exitTimer = window.setTimeout(() => setSplashPhase("exiting"), SPLASH_DURATION_MS);
-    const removeTimer = window.setTimeout(() => setSplashPhase("hidden"), SPLASH_DURATION_MS + SPLASH_EXIT_MS);
+    const removeTimer = window.setTimeout(() => {
+      setSplashPhase("hidden");
+      performanceMark("app-shell-ready");
+      performanceMeasure("app-ready", "module-loaded", "app-shell-ready");
+    }, SPLASH_DURATION_MS + SPLASH_EXIT_MS);
     return () => { window.clearTimeout(exitTimer); window.clearTimeout(removeTimer); };
   }, []);
 

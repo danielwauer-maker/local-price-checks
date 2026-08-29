@@ -14,6 +14,7 @@
     "test:e2e:critical": "node ./scripts/run-e2e.mjs --grep @critical --project=desktop-chromium",
     "test:e2e:matrix": "node ./scripts/run-e2e.mjs --grep @critical",
     "test:e2e:full": "node ./scripts/run-e2e.mjs",
+    "test:e2e:integration": "node ./scripts/run-e2e.mjs e2e/realtime-integration.spec.ts --project=desktop-chromium",
     "test:e2e:install": "node ./node_modules/@playwright/test/cli.js install chromium firefox webkit"
   },
   "dependencies": {

@@ -12,6 +12,7 @@ import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States
 import { manualListKey, useStore } from "@/lib/app-store";
 import { bestPriceFor, fetchFeatures, fetchOffers, fetchOptimizedTrip, getMarket, getProduct, type OfferView } from "@/services/lokero-api";
 import { formatEuro, formatKm } from "@/lib/format";
+import { SparenoCheckbox } from "@/components/ui/spareno-checkbox";
 
 export const Route = createFileRoute("/liste")({
   head: () => ({ meta: [{ title: "Einkaufsliste – Spareno" }] }),
@@ -46,23 +47,50 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 function SwipeableRow({ children, onCheck, onDelete, checked }: { children: ReactNode; onCheck: () => void; onDelete: () => void; checked: boolean }) {
   const startX = useRef<number | null>(null);
+  const startY = useRef<number | null>(null);
+  const offsetRef = useRef(0);
+  const horizontalGesture = useRef(false);
   const [offset, setOffset] = useState(0);
-  const reset = () => { startX.current = null; setOffset(0); };
+  const updateOffset = (next: number) => { offsetRef.current = next; setOffset(next); };
+  const reset = () => {
+    startX.current = null;
+    startY.current = null;
+    horizontalGesture.current = false;
+    updateOffset(0);
+  };
+  const finish = () => {
+    const finalOffset = offsetRef.current;
+    reset();
+    if (finalOffset >= SWIPE_THRESHOLD) onCheck();
+    else if (finalOffset <= -SWIPE_THRESHOLD) onDelete();
+  };
   return (
     <div className="relative overflow-hidden bg-surface">
       <div className="absolute inset-y-0 left-0 flex w-24 items-center justify-start bg-primary-soft pl-4 text-primary" aria-hidden="true"><Check className="h-5 w-5" /></div>
       <div className="absolute inset-y-0 right-0 flex w-24 items-center justify-end bg-destructive/10 pr-4 text-destructive" aria-hidden="true"><Trash2 className="h-5 w-5" /></div>
       <div
         className="relative bg-surface transition-transform duration-150"
-        style={{ transform: `translateX(${offset}px)` }}
-        onTouchStart={(event) => { startX.current = event.touches[0]?.clientX ?? null; }}
-        onTouchMove={(event) => {
-          if (startX.current == null) return;
-          const currentX = event.touches[0]?.clientX;
-          if (currentX == null) return;
-          setOffset(Math.max(-96, Math.min(96, currentX - startX.current)));
+        style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y" }}
+        data-swipe-offset={Math.round(offset)}
+        onTouchStart={(event) => {
+          startX.current = event.touches[0]?.clientX ?? null;
+          startY.current = event.touches[0]?.clientY ?? null;
+          offsetRef.current = 0;
         }}
-        onTouchEnd={() => { if (offset >= SWIPE_THRESHOLD) onCheck(); if (offset <= -SWIPE_THRESHOLD) onDelete(); reset(); }}
+        onTouchMove={(event) => {
+          if (startX.current == null || startY.current == null) return;
+          const currentX = event.touches[0]?.clientX;
+          const currentY = event.touches[0]?.clientY;
+          if (currentX == null || currentY == null) return;
+          const deltaX = currentX - startX.current;
+          const deltaY = currentY - startY.current;
+          if (!horizontalGesture.current) {
+            if (Math.abs(deltaY) >= Math.abs(deltaX) || Math.abs(deltaX) < 10) return;
+            horizontalGesture.current = true;
+          }
+          updateOffset(Math.max(-96, Math.min(96, deltaX)));
+        }}
+        onTouchEnd={finish}
         onTouchCancel={reset}
         aria-label={checked ? "Erledigter Listeneintrag" : "Offener Listeneintrag"}
       >{children}</div>
@@ -249,7 +277,7 @@ function ListScreen() {
               {!collapsed && <div className="divide-y divide-border">
                 {displayEntries.map(({ productId, qty, price }) => {
                   const product = getProduct(productId); if (!product) return null; const checked = checkedListItems.includes(productId);
-                  return <SwipeableRow key={productId} checked={checked} onCheck={() => toggleListChecked(productId)} onDelete={() => { setQty(productId, 0); toast.success(`${product.name} entfernt`); }}><article className={`flex items-center gap-2.5 p-3 transition-opacity ${checked ? "opacity-55" : ""}`}><button type="button" onClick={() => toggleListChecked(productId)} aria-label={checked ? `${product.name} wieder öffnen` : `${product.name} abhaken`} className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-transparent"}`}><Check className="h-3.5 w-3.5" /></button><ProductImage product={product} size="sm" /><button type="button" onClick={() => toggleListChecked(productId)} className="min-w-0 flex-1 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p><p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p></button><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span><button type="button" disabled={checked} onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>;
+                  return <SwipeableRow key={productId} checked={checked} onCheck={() => toggleListChecked(productId)} onDelete={() => { setQty(productId, 0); toast.success(`${product.name} entfernt`); }}><article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}><SparenoCheckbox checked={checked} onChange={() => toggleListChecked(productId)} label={checked ? `${product.name} wieder öffnen` : `${product.name} als erledigt markieren`} /><ProductImage product={product} size="sm" /><Link to="/produkt/$productId" params={{ productId }} className="min-w-0 flex-1 rounded-lg px-1 py-2 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p><p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p></Link><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span><button type="button" disabled={checked} onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>;
                 })}
                 {checkedInGroup > 0 && <p className="px-3 py-2 text-[10px] text-muted-foreground">{checkedInGroup} von {group.entries.length} erledigt · erledigte Artikel stehen unten</p>}
               </div>}
@@ -258,7 +286,7 @@ function ListScreen() {
 
           {manualListItems.length > 0 && (() => {
             const key = "manual"; const collapsed = collapsedGroups.has(key); const sortedItems = [...manualListItems].sort((a, b) => Number(checkedListItems.includes(manualListKey(a.id))) - Number(checkedListItems.includes(manualListKey(b.id))));
-            return <section className="overflow-hidden rounded-2xl border border-border bg-surface"><button type="button" onClick={() => toggleGroup(key)} className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}><div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} Artikel · ohne Preisvergleich</p></div><div className="flex items-center gap-2"><span className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</span>{collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}</div></button>{!collapsed && <div className="divide-y divide-border">{sortedItems.map((item) => { const itemKey = manualListKey(item.id); const checked = checkedListItems.includes(itemKey); return <SwipeableRow key={item.id} checked={checked} onCheck={() => toggleListChecked(itemKey)} onDelete={() => { removeManualListItem(item.id); toast.success(`${item.name} entfernt`); }}><article className={`flex items-center gap-2.5 p-3 transition-opacity ${checked ? "opacity-55" : ""}`}><button type="button" onClick={() => toggleListChecked(itemKey)} aria-label={checked ? `${item.name} wieder öffnen` : `${item.name} abhaken`} className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-transparent"}`}><Check className="h-3.5 w-3.5" /></button><button type="button" onClick={() => toggleListChecked(itemKey)} className="min-w-0 flex-1 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p></button><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>; })}</div>}</section>;
+            return <section className="overflow-hidden rounded-2xl border border-border bg-surface"><button type="button" onClick={() => toggleGroup(key)} className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}><div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} Artikel · ohne Preisvergleich</p></div><div className="flex items-center gap-2"><span className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</span>{collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}</div></button>{!collapsed && <div className="divide-y divide-border">{sortedItems.map((item) => { const itemKey = manualListKey(item.id); const checked = checkedListItems.includes(itemKey); return <SwipeableRow key={item.id} checked={checked} onCheck={() => toggleListChecked(itemKey)} onDelete={() => { removeManualListItem(item.id); toast.success(`${item.name} entfernt`); }}><article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}><SparenoCheckbox checked={checked} onChange={() => toggleListChecked(itemKey)} label={checked ? `${item.name} wieder öffnen` : `${item.name} als erledigt markieren`} /><div className="min-w-0 flex-1 px-1 py-2"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p></div><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>; })}</div>}</section>;
           })()}
         </div>
       )}

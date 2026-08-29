@@ -85,7 +85,12 @@ def link_verified_identity(
 
 
 def account_profile_for_client(db: Session, client: UserClient) -> UserProfile | None:
-    """Return the canonical account profile for a previously linked client."""
+    """Return the canonical account profile without turning reads into writes.
+
+    In particular, SSE sessions may stay open for hours. Updating timestamps
+    here would keep an uncommitted SQLite write transaction alive for the
+    lifetime of the stream and block unrelated mutations.
+    """
 
     link = (
         db.query(AccountClientLink)
@@ -94,7 +99,4 @@ def account_profile_for_client(db: Session, client: UserClient) -> UserProfile |
     )
     if link is None:
         return None
-    link.last_seen_at = datetime.utcnow()
-    link.identity.last_seen_at = link.last_seen_at
-    db.flush()
     return link.identity.user

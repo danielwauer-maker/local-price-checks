@@ -15,13 +15,13 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/regionen")({
   head: () => ({
     meta: [
-      { title: "Regionen & Verfügbarkeit – Lokero" },
+      { title: "Regionen & Verfügbarkeit – Spareno" },
       {
         name: "description",
         content:
-          "Prüfe, ob Lokero in deiner Region verfügbar ist: Marktabdeckung, Status und Vormerkung für neue Regionen.",
+          "Prüfe, ob Spareno in deiner Region verfügbar ist: Marktabdeckung, Status und Vormerkung für neue Regionen.",
       },
-      { property: "og:title", content: "Regionen & Verfügbarkeit – Lokero" },
+      { property: "og:title", content: "Regionen & Verfügbarkeit – Spareno" },
       {
         property: "og:description",
         content: "Marktabdeckung je Region, Status und Vormerkung neuer Regionen.",
@@ -113,7 +113,7 @@ function RegionsPage() {
       mail ? { postalCode: postalCode.trim(), email: mail } : { postalCode: postalCode.trim() },
     );
     toast.success("Region vorgemerkt", {
-      description: "Wir melden uns, sobald Lokero hier verfügbar ist.",
+      description: "Wir melden uns, sobald Spareno hier verfügbar ist.",
     });
     setPostalCode("");
     setEmail("");
@@ -171,13 +171,13 @@ function RegionsPage() {
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[11px] text-muted-foreground">Lokero wird laufend erweitert.</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">Spareno wird laufend erweitert.</p>
         </section>
 
         <section id="vormerken" className="card-surface p-3.5">
           <h2 className="text-[14px] font-semibold text-navy">Region vormerken</h2>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            Benachrichtige mich, wenn Lokero hier verfügbar ist.
+            Benachrichtige mich, wenn Spareno hier verfügbar ist.
           </p>
           <form onSubmit={submitNotify} className="mt-3 space-y-2">
             <input

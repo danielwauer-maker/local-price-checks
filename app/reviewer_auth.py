@@ -70,7 +70,7 @@ def unlock_reviewer_device(
     if not grant:
         grant = ReviewerDeviceGrant(client_key=key)
         db.add(grant)
-    grant.label = (label or "Lokero Prüfgerät").strip()[:120]
+    grant.label = (label or "Spareno Prüfgerät").strip()[:120]
     grant.granted_by = actor
     grant.expires_at = datetime.utcnow() + timedelta(days=max(1, min(days, 90)))
     grant.last_used_at = datetime.utcnow()

@@ -7,7 +7,7 @@ import { useStore } from "@/lib/app-store";
 import { useAuth } from "@/lib/use-auth";
 import { acceptShoppingListInvite, inspectShoppingListInvite } from "@/services/sharing-api";
 
-export const Route = createFileRoute("/liste/einladung/$token")({
+export const Route = createFileRoute("/liste_/einladung/$token")({
   head: () => ({ meta: [{ title: "Einladung zur Einkaufsliste – Spareno" }] }),
   component: ShoppingListInviteScreen,
 });

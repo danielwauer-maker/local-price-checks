@@ -13,13 +13,13 @@ import { fetchMarkets } from "@/services/lokero-api";
 export const Route = createFileRoute("/maerkte")({
   head: () => ({
     meta: [
-      { title: "Märkte in deiner Nähe – Lokero" },
+      { title: "Märkte in deiner Nähe – Spareno" },
       {
         name: "description",
         content:
           "Alle Supermärkte in deinem Umkreis auf der Karte, sortiert nach Entfernung, Sparpotenzial und Öffnungszeiten.",
       },
-      { property: "og:title", content: "Märkte in deiner Nähe – Lokero" },
+      { property: "og:title", content: "Märkte in deiner Nähe – Spareno" },
       {
         property: "og:description",
         content: "Karte mit Umkreissuche und Sparpotenzial je Markt.",

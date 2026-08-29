@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/AppShell";
 import { useAuth } from "@/lib/use-auth";
 import { fetchPublicFavoriteShare, subscribeToFavoriteShare } from "@/services/sharing-api";
 
-export const Route = createFileRoute("/favoriten/geteilt/$token")({
+export const Route = createFileRoute("/favoriten_/geteilt/$token")({
   head: () => ({ meta: [{ title: "Geteilte Favoriten – Spareno" }] }),
   component: PublicFavoriteShareScreen,
 });

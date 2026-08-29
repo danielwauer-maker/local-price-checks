@@ -321,6 +321,29 @@ def test_versioned_baseline_upgrades_without_restamping(tmp_path: Path):
     assert _revision(backup) == BASELINE_REVISION
 
 
+def test_direct_previous_sqlite_revision_upgrades_and_seeds_account_revision(tmp_path: Path):
+    database = tmp_path / "previous.sqlite3"
+    backup = tmp_path / "previous.backup.sqlite3"
+    _upgrade(database, "20260828_02")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO user_profiles (id, display_name, radius_km) VALUES (77, 'Bestehender Account', 15)"
+        )
+        connection.commit()
+    connection.close()
+
+    result = prepare_existing_sqlite_for_alembic(database, apply=True, backup_path=backup)
+
+    assert result.initial_revision == "20260828_02"
+    assert result.final_revision == TARGET_REVISION
+    assert _revision(backup) == "20260828_02"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT user_id, revision FROM account_state_revisions WHERE user_id = 77"
+        ).fetchone() == (77, 1)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_current_database_is_idempotent_even_with_apply(tmp_path: Path):
     database = tmp_path / "current.sqlite3"
     backup = tmp_path / "must-not-exist.sqlite3"

@@ -24,7 +24,7 @@ from .seed import seed_stores
 from .services import current_user, offers_for_selected_stores, selected_store_ids
 
 BASE = Path(__file__).resolve().parent
-app = FastAPI(title="Local Price Checks", version="0.2.0")
+app = FastAPI(title="Spareno API", version="0.2.0")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
 

@@ -80,11 +80,22 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install backend integration dependencies
+        run: pip install -r ../requirements.txt
       - run: bun install --frozen-lockfile
       - name: Install Playwright browsers
         run: node ./node_modules/@playwright/test/cli.js install --with-deps chromium firefox webkit
       - name: Critical browser matrix
         run: node ./scripts/run-e2e.mjs --grep @critical
+      - name: Real browser-backend-SSE integration
+        env:
+          PLAYWRIGHT_REAL_BACKEND: '1'
+          PYTHON: python
+        run: bun run test:e2e:integration
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4

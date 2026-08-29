@@ -16,6 +16,7 @@ type ApiState = {
   accountFavoriteProducts: Set<string>;
   sharedRevision: number;
   sharedButterQuantity: number;
+  sharedButterChecked: boolean;
   favoriteShareCreated: boolean;
   sharedFavoriteVisible: boolean;
   friendSubscribed: boolean;
@@ -139,7 +140,7 @@ async function installApiFixture(page: Page, state: ApiState) {
     const sharedSnapshot = () => ({
       list: { ...sharedList, revision: state.sharedRevision },
       items: state.sharedButterQuantity > 0
-        ? [{ id: "shared-butter", productId: "butter", quantity: state.sharedButterQuantity, checked: false, addedBy: "Daniel", product: products.butter }]
+        ? [{ id: "shared-butter", productId: "butter", quantity: state.sharedButterQuantity, checked: state.sharedButterChecked, addedBy: "Daniel", product: products.butter }]
         : [],
     });
     if (path === "/api/sharing/lists" && method === "GET") {
@@ -162,8 +163,9 @@ async function installApiFixture(page: Page, state: ApiState) {
       return json(route, sharedSnapshot());
     }
     if (path === `/api/sharing/lists/${sharedList.id}/items/shared-butter` && method === "PATCH") {
-      const body = request.postDataJSON() as { quantity?: number };
+      const body = request.postDataJSON() as { quantity?: number; checked?: boolean };
       if (body.quantity !== undefined) state.sharedButterQuantity = Math.max(0, Number(body.quantity));
+      if (body.checked !== undefined) state.sharedButterChecked = body.checked;
       state.sharedRevision += 1;
       return json(route, sharedSnapshot());
     }
@@ -277,6 +279,7 @@ export const test = base.extend<{
       accountFavoriteProducts: new Set(["gouda-milbona"]),
       sharedRevision: 1,
       sharedButterQuantity: 1,
+      sharedButterChecked: false,
       favoriteShareCreated: false,
       sharedFavoriteVisible: true,
       friendSubscribed: false,

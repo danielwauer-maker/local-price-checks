@@ -9,6 +9,7 @@ import {
   notifyFavoritesChanged,
   runWithoutFavoritePersistence,
 } from "@/services/lokero-state-api";
+import { performanceMark, performanceMeasure } from "@/lib/performance";
 
 function sameSet(a: string[], b: string[]) {
   if (a.length !== b.length) return false;
@@ -22,6 +23,10 @@ export function AccountStateSync() {
   const syncing = useRef(false);
   const pendingSync = useRef(false);
   const mutationDepth = useRef(0);
+  const mutationGeneration = useRef(0);
+  const latestRevision = useRef(0);
+  const syncTimer = useRef<number | null>(null);
+  const scheduleSyncRef = useRef<(delay?: number) => void>(() => {});
   const favoriteProductsRef = useRef(store.favoriteProducts);
   const favoriteMarketsRef = useRef(store.favoriteMarkets);
   const locationRef = useRef(store.location);
@@ -132,9 +137,15 @@ export function AccountStateSync() {
       return;
     }
     syncing.current = true;
+    const requestedGeneration = mutationGeneration.current;
+    performanceMark("account-state-start");
     try {
       let state = await fetchAccountState();
-      if (!state.linked || mutationDepth.current > 0) {
+      if (
+        !state.linked ||
+        mutationDepth.current > 0 ||
+        requestedGeneration !== mutationGeneration.current
+      ) {
         if (mutationDepth.current > 0) pendingSync.current = true;
         return;
       }
@@ -144,34 +155,53 @@ export function AccountStateSync() {
           travelCostPerKm: travelCostRef.current,
           notifications: notificationsRef.current,
         });
-        if (mutationDepth.current > 0) {
+        if (
+          mutationDepth.current > 0 ||
+          requestedGeneration !== mutationGeneration.current
+        ) {
           pendingSync.current = true;
           return;
         }
       }
+      const revision = Number(state.revision ?? 0);
+      if (revision > 0 && revision < latestRevision.current) return;
       applyState(state);
+      latestRevision.current = Math.max(latestRevision.current, revision);
+      performanceMark("account-state-end");
+      performanceMeasure("account-reconciliation", "account-state-start", "account-state-end");
     } catch {
       // Offline/temporary backend failures keep the cached UI usable.
     } finally {
       syncing.current = false;
       if (pendingSync.current && mutationDepth.current === 0) {
         pendingSync.current = false;
-        window.setTimeout(() => void sync(), 40);
+        scheduleSyncRef.current(40);
       }
     }
   }, [applyState, store.hydrated]);
 
+  const scheduleSync = useCallback((delay = 40) => {
+    pendingSync.current = true;
+    if (mutationDepth.current > 0 || syncTimer.current != null) return;
+    syncTimer.current = window.setTimeout(() => {
+      syncTimer.current = null;
+      pendingSync.current = false;
+      void sync();
+    }, delay);
+  }, [sync]);
+  scheduleSyncRef.current = scheduleSync;
+
   useEffect(() => {
     if (!store.hydrated) return;
-    const onMutationStart = () => { mutationDepth.current += 1; };
+    const onMutationStart = () => {
+      mutationDepth.current += 1;
+      mutationGeneration.current += 1;
+    };
     const onMutationEnd = () => {
       mutationDepth.current = Math.max(0, mutationDepth.current - 1);
-      if (mutationDepth.current === 0 && pendingSync.current) window.setTimeout(() => void sync(), 40);
+      if (mutationDepth.current === 0 && pendingSync.current) scheduleSync(40);
     };
-    const onSyncRequest = () => {
-      pendingSync.current = true;
-      if (mutationDepth.current === 0) window.setTimeout(() => void sync(), 40);
-    };
+    const onSyncRequest = () => scheduleSync(40);
     window.addEventListener(ACCOUNT_MUTATION_START_EVENT, onMutationStart);
     window.addEventListener(ACCOUNT_MUTATION_END_EVENT, onMutationEnd);
     window.addEventListener(ACCOUNT_SYNC_REQUEST_EVENT, onSyncRequest);
@@ -180,43 +210,62 @@ export function AccountStateSync() {
       window.removeEventListener(ACCOUNT_MUTATION_END_EVENT, onMutationEnd);
       window.removeEventListener(ACCOUNT_SYNC_REQUEST_EVENT, onSyncRequest);
     };
-  }, [store.hydrated, sync]);
+  }, [store.hydrated, scheduleSync]);
 
   useEffect(() => {
     if (!store.hydrated) return;
-    void sync();
+    scheduleSync(0);
 
     let events: EventSource | null = null;
+    let stopped = false;
+    const onReady = (event: Event) => {
+      try {
+        const revision = Number(JSON.parse((event as MessageEvent<string>).data || "{}")?.revision ?? 0);
+        latestRevision.current = Math.max(latestRevision.current, revision);
+      } catch { /* initial state request remains authoritative */ }
+    };
     if (window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY)) {
       events = new EventSource("/api/account/events", { withCredentials: true });
-      const onRemoteState = () => {
+      const onRemoteState = (event: Event) => {
+        if (stopped) return;
+        let revision = 0;
+        try {
+          revision = Number(JSON.parse((event as MessageEvent<string>).data || "{}")?.revision ?? 0);
+        } catch { /* malformed events still trigger a canonical reconciliation */ }
+        if (revision > 0 && revision <= latestRevision.current) return;
+        if (revision > 0) latestRevision.current = revision;
         notifyFavoritesChanged();
-        void sync();
+        scheduleSync(0);
       };
-      events.addEventListener("ready", onRemoteState);
+      events.addEventListener("ready", onReady);
       events.addEventListener("state", onRemoteState);
       events.addEventListener("favorites", onRemoteState);
-      events.onerror = () => {
-        window.setTimeout(() => void sync(), 250);
-      };
+      events.onerror = () => { if (!stopped) scheduleSync(500); };
     }
 
-    // Closed-beta safety net for suspended iOS/WebKit sessions. Normal active sync is SSE-driven.
+    // Slow integrity safety net only. Focus/resume and online events reconcile immediately.
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") void sync();
-    }, 15_000);
-    const onVisible = () => { if (document.visibilityState === "visible") void sync(); };
-    window.addEventListener("focus", sync);
-    window.addEventListener("online", sync);
+      if (document.visibilityState === "visible") scheduleSync(0);
+    }, 120_000);
+    const onVisible = () => { if (document.visibilityState === "visible") scheduleSync(0); };
+    const onResume = () => scheduleSync(0);
+    window.addEventListener("focus", onResume);
+    window.addEventListener("online", onResume);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      stopped = true;
+      if (events) {
+        events.onerror = null;
+        events.removeEventListener("ready", onReady);
+      }
       events?.close();
       window.clearInterval(interval);
-      window.removeEventListener("focus", sync);
-      window.removeEventListener("online", sync);
+      if (syncTimer.current != null) window.clearTimeout(syncTimer.current);
+      window.removeEventListener("focus", onResume);
+      window.removeEventListener("online", onResume);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [store.hydrated, sync]);
+  }, [store.hydrated, scheduleSync]);
 
   return null;
 }

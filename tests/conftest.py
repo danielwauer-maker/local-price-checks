@@ -17,6 +17,7 @@ os.environ["AUTO_CREATE_SCHEMA"] = "true"
 from app.client_models import (
     AccountClientLink,
     AccountIdentity,
+    AccountStateRevision,
     ClientAppRating,
     ClientPricingFeedback,
     UserClient,
@@ -39,12 +40,14 @@ def isolate_user_client_mappings():
     UserClient.__table__.create(bind=engine, checkfirst=True)
     AccountIdentity.__table__.create(bind=engine, checkfirst=True)
     AccountClientLink.__table__.create(bind=engine, checkfirst=True)
+    AccountStateRevision.__table__.create(bind=engine, checkfirst=True)
     ClientPricingFeedback.__table__.create(bind=engine, checkfirst=True)
     ClientAppRating.__table__.create(bind=engine, checkfirst=True)
 
     db = SessionLocal()
     try:
         db.query(AccountClientLink).delete()
+        db.query(AccountStateRevision).delete()
         db.query(AccountIdentity).delete()
         db.query(ClientAppRating).delete()
         db.query(ClientPricingFeedback).delete()
@@ -58,6 +61,7 @@ def isolate_user_client_mappings():
     db = SessionLocal()
     try:
         db.query(AccountClientLink).delete()
+        db.query(AccountStateRevision).delete()
         db.query(AccountIdentity).delete()
         db.query(ClientAppRating).delete()
         db.query(ClientPricingFeedback).delete()

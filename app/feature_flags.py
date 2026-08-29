@@ -57,5 +57,5 @@ def set_feature_flag(db: Session, name: str, enabled: bool) -> AdminSetting:
         row = AdminSetting(key=key)
         db.add(row)
     row.value = "1" if enabled else "0"
-    row.description = f"Lokero feature flag: {name}"
+    row.description = f"Spareno feature flag: {name}"
     return row

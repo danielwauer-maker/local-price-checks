@@ -23,7 +23,17 @@ test("production performance baseline stays within beta-safe ceilings", async ({
     contentType: "application/json",
   });
 
-  expect(metrics.initialLoadMs).toBeLessThan(10_000);
-  expect(metrics.offersPageMs).toBeLessThan(10_000);
-  expect(metrics.favoriteMutationMs).toBeLessThan(10_000);
+  const measures = await page.evaluate(() => performance.getEntriesByType("measure").map((entry) => ({
+    name: entry.name,
+    durationMs: Math.round(entry.duration * 100) / 100,
+  })));
+  await testInfo.attach("spareno-performance-marks.json", {
+    body: Buffer.from(JSON.stringify(measures, null, 2)),
+    contentType: "application/json",
+  });
+  console.log(`PERFORMANCE_METRICS ${JSON.stringify(metrics)}`);
+
+  expect(metrics.initialLoadMs).toBeLessThan(2_500);
+  expect(metrics.offersPageMs).toBeLessThan(2_000);
+  expect(metrics.favoriteMutationMs).toBeLessThan(3_000);
 });

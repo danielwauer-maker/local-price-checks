@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Lokero Signet: Standort-Pin, der in einen Haken (Bestätigung) übergeht
+ * Legacy export names; the rendered brand is Spareno.
  * und dabei ein "L" andeutet. Reines SVG, skaliert verlustfrei.
  */
 export function LokeroMark({ className }: { className?: string }) {
@@ -34,7 +34,7 @@ export function LokeroWordmark({
   return (
     <span className={cn("flex items-center gap-1.5", className)}>
       <LokeroMark className={cn("h-6 w-6 text-primary", markClassName)} />
-      <span className="text-[19px] font-bold tracking-tight">Lokero</span>
+      <span className="text-[19px] font-bold tracking-tight">Spareno</span>
     </span>
   );
 }

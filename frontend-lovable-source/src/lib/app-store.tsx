@@ -9,11 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  DEFAULT_LIST,
   DEFAULT_LOCATION,
-  FAVORITE_MARKET_IDS,
-  FAVORITE_PRODUCTS,
-  PRICE_ALERTS,
   type DietTag,
   type RegionStatus,
 } from "@/data/lokero";
@@ -25,6 +21,8 @@ import {
   persistMarketToggle,
 } from "@/services/lokero-api";
 import { persistProductFavorite } from "@/services/lokero-state-api";
+import { ACCOUNT_PROFILE_STORAGE_KEY } from "@/services/lokero-account-api";
+import { performanceMark, performanceMeasure } from "@/lib/performance";
 import {
   addSharedManualItem,
   clearSharedList,
@@ -80,12 +78,12 @@ export const manualListKey = (id: string) => `manual:${id}`;
 const initialState: StoreState = {
   location: DEFAULT_LOCATION,
   radius: 15,
-  list: Object.fromEntries(DEFAULT_LIST.map((i) => [i.productId, i.qty])),
+  list: {},
   manualListItems: [],
   checkedListItems: [],
-  favoriteProducts: FAVORITE_PRODUCTS.map((f) => f.productId),
-  favoriteMarkets: FAVORITE_MARKET_IDS,
-  alerts: Object.fromEntries(PRICE_ALERTS.map((a) => [a.productId, { targetPrice: a.targetPrice, active: a.active }])),
+  favoriteProducts: [],
+  favoriteMarkets: [],
+  alerts: {},
   preferredChains: ["REWE", "Lidl", "ALDI SÜD", "Netto", "EDEKA"],
   travelCostPerKm: 0.3,
   notifications: { priceAlerts: true, newOffers: true, regionAvailable: true, favoriteOffers: false },
@@ -183,28 +181,39 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const refreshActiveShoppingList = useCallback(async () => {
     try {
+      performanceMark("shopping-snapshot-start");
       const snapshot = await fetchActiveShoppingList();
       patch({ sharingEnabled: true, ...snapshotState(snapshot) });
+      performanceMark("shopping-snapshot-end");
+      performanceMeasure("shopping-snapshot", "shopping-snapshot-start", "shopping-snapshot-end");
     } catch {
       // Keep cached list state; reconnect/fallback will retry.
     }
   }, [patch]);
 
   const refreshShoppingSharing = useCallback(async () => {
-    try {
-      const overview = await fetchShoppingLists();
+    const [overviewResult, snapshotResult] = await Promise.allSettled([
+      fetchShoppingLists(),
+      fetchActiveShoppingList(),
+    ]);
+    if (overviewResult.status === "fulfilled") {
+      const overview = overviewResult.value;
       if (!overview.enabled) {
         patch({ sharingEnabled: false, shoppingLists: [], activeShoppingListId: null, activeShoppingListMembers: [], sharedItemIds: {}, sharedRevision: 0 });
         return;
       }
-      const snapshot = await fetchActiveShoppingList();
-      patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshot) });
-    } catch {
-      // Keep the last known state. Realtime/fallback will retry later.
+      if (snapshotResult.status === "fulfilled") {
+        patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshotResult.value) });
+      } else {
+        patch({ sharingEnabled: true, shoppingLists: overview.lists });
+      }
+    } else if (snapshotResult.status === "fulfilled") {
+      patch({ sharingEnabled: true, ...snapshotState(snapshotResult.value) });
     }
   }, [patch]);
 
   useEffect(() => {
+    performanceMark("store-hydration-start");
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -213,7 +222,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore */ }
     setHydrated(true);
+    performanceMark("store-hydration-end");
+    performanceMeasure("store-hydration", "store-hydration-start", "store-hydration-end");
 
+    performanceMark("bootstrap-start");
     void fetchBootstrap().then((bootstrap) => {
       if (!bootstrap) return;
       patch((current) => {
@@ -229,6 +241,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         };
       });
       setBackendHydrated(true);
+      performanceMark("bootstrap-end");
+      performanceMeasure("bootstrap", "bootstrap-start", "bootstrap-end");
     });
   }, [patch]);
 
@@ -243,12 +257,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const initialize = async () => {
       try {
-        const overview = await fetchShoppingLists();
+        const linked = Boolean(window.localStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY));
+        const overviewPromise = fetchShoppingLists();
+        const snapshotPromise = linked ? fetchActiveShoppingList() : null;
+        const overview = await overviewPromise;
         if (cancelled || !overview.enabled) {
           if (!cancelled) patch({ sharingEnabled: false, shoppingLists: [] });
           return;
         }
-        let snapshot = await fetchActiveShoppingList();
+        let snapshot = await (snapshotPromise ?? fetchActiveShoppingList());
         if (cancelled) return;
         const current = stateRef.current;
         const serverManual = snapshot.items.filter((item) => item.manualText);
@@ -289,7 +306,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       void refreshActiveShoppingList();
       fallback = window.setInterval(() => {
         if (document.visibilityState === "visible") void refreshActiveShoppingList();
-      }, 10_000);
+      }, 120_000);
     };
     const scheduleReconnect = () => {
       if (stopped || reconnect != null || !navigator.onLine) return;
@@ -300,25 +317,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       reconnectDelay = Math.min(reconnectDelay * 2, 10_000);
     };
     const onRevision = (event: MessageEvent<string>) => {
+      if (stopped) return;
       try {
         const revision = Number((JSON.parse(event.data) as { revision?: number }).revision ?? 0);
         if (revision && revision === sharedRevisionRef.current) return;
       } catch { /* refresh below */ }
       void refreshActiveShoppingList();
     };
+    const onAccessRevoked = () => { if (!stopped) void refreshShoppingSharing(); };
     const connect = () => {
       if (stopped || source || !navigator.onLine) return;
       const next = new EventSource(`/api/sharing/lists/${encodeURIComponent(listId)}/events`);
       source = next;
       next.addEventListener("revision", onRevision as EventListener);
-      next.addEventListener("access_revoked", () => void refreshShoppingSharing());
+      next.addEventListener("access_revoked", onAccessRevoked);
       next.onopen = () => {
+        if (stopped || source !== next) {
+          next.close();
+          return;
+        }
         reconnectDelay = 1_000;
         stopFallback();
-        void refreshActiveShoppingList();
       };
       next.onerror = () => {
-        if (source === next) source = null;
+        if (stopped || source !== next) {
+          next.close();
+          return;
+        }
+        source = null;
         next.close();
         startFallback();
         scheduleReconnect();
@@ -338,7 +364,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       stopped = true;
       stopFallback();
       if (reconnect != null) window.clearTimeout(reconnect);
-      source?.close();
+      if (source) {
+        source.onopen = null;
+        source.onerror = null;
+        source.removeEventListener("revision", onRevision as EventListener);
+        source.removeEventListener("access_revoked", onAccessRevoked);
+        source.close();
+      }
       window.removeEventListener("online", resume);
       window.removeEventListener("focus", resume);
       document.removeEventListener("visibilitychange", resume);
@@ -370,8 +402,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       },
       createSharedShoppingList: async (name) => {
         const created = await createShoppingList(name);
-        const snapshot = await fetchActiveShoppingList();
-        const overview = await fetchShoppingLists();
+        const [snapshot, overview] = await Promise.all([
+          fetchActiveShoppingList(),
+          fetchShoppingLists(),
+        ]);
         patch({ sharingEnabled: true, shoppingLists: overview.lists, ...snapshotState(snapshot) });
         return created;
       },

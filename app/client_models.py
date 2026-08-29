@@ -96,6 +96,21 @@ class AccountAppPreferences(Base):
     user: Mapped[UserProfile] = relationship()
 
 
+class AccountStateRevision(Base):
+    """Monotonic account revision used to reject stale multi-device responses."""
+
+    __tablename__ = "account_state_revisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_profiles.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+    user: Mapped[UserProfile] = relationship()
+
+
 class ClientDevice(Base):
     """Normalized, privacy-conscious device metadata for one anonymous client."""
 

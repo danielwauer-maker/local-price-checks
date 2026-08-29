@@ -80,12 +80,15 @@ def send_push_to_user(
     tag: str | None = None,
     data: dict | None = None,
     exclude_client_key: str | None = None,
+    subscription_id: int | None = None,
 ) -> int:
-    subscriptions = (
-        db.query(PushSubscription)
-        .filter(PushSubscription.user_id == user_id, PushSubscription.enabled.is_(True))
-        .all()
+    query = db.query(PushSubscription).filter(
+        PushSubscription.user_id == user_id,
+        PushSubscription.enabled.is_(True),
     )
+    if subscription_id is not None:
+        query = query.filter(PushSubscription.id == subscription_id)
+    subscriptions = query.all()
     sent = 0
     private_key = str(_ensure_vapid_private_key())
     claims = {"sub": getattr(settings, "web_push_subject", "mailto:admin@spareno.app")}

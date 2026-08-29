@@ -16,13 +16,13 @@ export const Route = createFileRoute("/suche")({
     s["q"] ? { q: String(s["q"]) } : {},
   head: () => ({
     meta: [
-      { title: "Produkte & Angebote suchen – Lokero" },
+      { title: "Produkte & Angebote suchen – Spareno" },
       {
         name: "description",
         content:
           "Suche Produkte, Kategorien und Angebote in deinen lokalen Märkten – inklusive verwandter Produkte und Vorschlägen.",
       },
-      { property: "og:title", content: "Suche – Lokero" },
+      { property: "og:title", content: "Suche – Spareno" },
       { property: "og:description", content: "Produkte, Kategorien und Angebote lokal finden." },
     ],
   }),

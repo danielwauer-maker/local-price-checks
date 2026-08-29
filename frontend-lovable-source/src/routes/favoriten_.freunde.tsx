@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/AppShell";
 import { fetchFriendFavorites, unsubscribeFromFavoriteShare, updateFriendFavoriteSettings } from "@/services/sharing-api";
 
-export const Route = createFileRoute("/favoriten/freunde")({
+export const Route = createFileRoute("/favoriten_/freunde")({
   head: () => ({ meta: [{ title: "Favoriten von Freunden – Spareno" }] }),
   component: FriendFavoritesScreen,
 });

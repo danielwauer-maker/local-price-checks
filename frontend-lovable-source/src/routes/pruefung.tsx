@@ -15,7 +15,7 @@ import {
 } from "@/services/lokero-api";
 
 export const Route = createFileRoute("/pruefung")({
-  head: () => ({ meta: [{ title: "Interne Artikelprüfung – Lokero" }] }),
+  head: () => ({ meta: [{ title: "Interne Artikelprüfung – Spareno" }] }),
   component: ReviewPage,
 });
 
@@ -53,7 +53,7 @@ function ReviewCard({ row }: { row: ReviewOffer }) {
     }
     setSavingNormalPrice(true);
     try {
-      await saveReviewerNormalPrice({ productId, storeId, price: parsed, notes: "In Lokero Artikelprüfung bestätigt" });
+      await saveReviewerNormalPrice({ productId, storeId, price: parsed, notes: "In Spareno Artikelprüfung bestätigt" });
       setNormalPrice("");
       toast.success("Normalpreis bestätigt");
     } catch {

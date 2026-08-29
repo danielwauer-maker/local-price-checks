@@ -80,3 +80,12 @@ test("auth entry points render without external credentials", async ({ page }) =
   await page.getByRole("button", { name: "Registrieren" }).click();
   await expect(page.getByRole("heading", { name: /Konto erstellen/i })).toBeVisible();
 });
+
+test("public surfaces expose only the Spareno brand", async ({ page }) => {
+  for (const path of ["/", "/suche", "/scanner", "/maerkte", "/regionen", "/pruefung"]) {
+    await openApp(page, path);
+    const visibleText = await page.locator("body").innerText();
+    expect(visibleText, `${path}: legacy visible brand`).not.toMatch(/\bLokero\b/i);
+    expect(await page.title(), `${path}: legacy title brand`).not.toMatch(/\bLokero\b/i);
+  }
+});
