@@ -117,6 +117,43 @@ def coordinate_review(
     )
 
 
+@router.post("/admin/coverage/candidates/{candidate_id}/address-confirm")
+def confirm_candidate_address(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    """Allow an admin to confirm the visible market address as its own identity gate."""
+    candidate = db.get(StoreDiscoveryCandidate, candidate_id)
+    if candidate is None:
+        raise HTTPException(404, "Marktkandidat nicht gefunden")
+    if not candidate.address or not candidate.postal_code or not candidate.city:
+        raise HTTPException(400, "Vollständige Adresse, PLZ und Ort sind für die Adressbestätigung erforderlich")
+
+    candidate.address_verified = True
+    candidate.status = "verified" if candidate_ready_for_promotion(candidate) else "discovered"
+    candidate.updated_at = datetime.utcnow()
+    manual_note = "Adresse manuell im Admin bestätigt"
+    candidate.verification_note = (
+        f"{candidate.verification_note}; {manual_note}"
+        if candidate.verification_note
+        else manual_note
+    )
+    audit(
+        db,
+        "candidate_address_confirmed",
+        "store_candidate",
+        candidate.id,
+        f"address={candidate.address};postal_code={candidate.postal_code};city={candidate.city}",
+        actor,
+    )
+    db.commit()
+    return RedirectResponse(
+        f"/admin/coverage/candidates/{candidate.id}/coordinate-review",
+        status_code=303,
+    )
+
+
 @router.post("/admin/coverage/candidates/{candidate_id}/coordinate-review")
 def save_coordinate_review(
     candidate_id: int,
