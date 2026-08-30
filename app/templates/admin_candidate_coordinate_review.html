@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Marktposition prüfen · Spareno Admin</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--red:#c84b3b;--blue:#1f6feb}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.top,.actions,.legend{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.small{font-size:12px;color:var(--muted)}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8}.warning{background:#fff4d8;border:1px solid #f0d28a}.map{height:620px;border:1px solid var(--line);border-radius:14px;background:#eef2ec;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}.metric{padding:12px;border:1px solid var(--line);border-radius:12px}.metric strong{display:block;margin-top:3px}.legend{justify-content:flex-start;margin:12px 0}.dot{width:12px;height:12px;border-radius:50%;display:inline-block}.form-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}label{font-weight:700}input{width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;margin-top:4px}.selected{background:#e8f7ee;border:1px solid #b8dfc7}.map-pin{width:22px;height:22px;border:3px solid #fff;border-radius:50% 50% 50% 0;box-shadow:0 2px 8px rgba(0,0,0,.35);transform:rotate(-45deg)}.map-pin.red{background:var(--red)}.map-pin.blue{background:var(--blue)}.map-pin.green{background:#16815a}.map-pin.green:after{content:'';position:absolute;width:6px;height:6px;background:#fff;border-radius:50%;left:5px;top:5px}@media(max-width:760px){.grid,.form-grid{grid-template-columns:1fr}.map{height:480px}.wrap{padding:12px}}
+  </style>
+</head>
+<body>
+{% set admin_section = 'coverage' %}{% include 'admin_sidebar.html' %}
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1 style="margin:0">Marktposition prüfen</h1>
+      <div class="small">{{ candidate.retailer }} · {{ candidate.name }}</div>
+    </div>
+    <a class="btn" href="/admin/coverage#postcode-{{ candidate.postal_code }}">← Zurück zur PLZ-Prüfung</a>
+  </div>
+
+  <section class="card">
+    <div class="grid">
+      <div class="metric"><span class="small">Marktadresse</span><strong>{{ candidate.address }}, {{ candidate.postal_code }} {{ candidate.city }}</strong></div>
+      <div class="metric"><span class="small">Quelle</span><strong>{{ candidate.source }} · {{ candidate.source_external_id or 'ohne externe ID' }}</strong></div>
+      <div class="metric"><span class="small">Gefundener Markt-Pin</span><strong>{{ '%.6f'|format(candidate.latitude) }}, {{ '%.6f'|format(candidate.longitude) }}</strong></div>
+      <div class="metric"><span class="small">Adress-Geocode</span><strong>{% if address_point %}{{ '%.6f'|format(address_point.lat) }}, {{ '%.6f'|format(address_point.lng) }} · Abstand {{ '%.0f'|format(address_point.distance_m) }} m{% else %}nicht verfügbar{% endif %}</strong></div>
+    </div>
+    {% if candidate.verification_note %}<div class="notice warning" style="margin-top:12px">{{ candidate.verification_note }}</div>{% endif %}
+    {% if store %}<div class="notice" style="margin-top:12px">Dieser Kandidat ist bereits mit Store {{ store.id }} verknüpft. Eine gespeicherte Korrektur wird auch auf die Store-Koordinaten übernommen.</div>{% endif %}
+
+    <div class="legend">
+      <span><i class="dot" style="background:#c84b3b"></i> gefundener Markt-Pin</span>
+      <span><i class="dot" style="background:#1f6feb"></i> Adress-Geocode</span>
+      <span><i class="dot" style="background:#16815a"></i> gewählte Position</span>
+    </div>
+
+    <div id="coordinate-map" class="map" aria-label="Karte zur manuellen Marktpositionsprüfung"></div>
+    <div class="small" style="margin-top:8px">Klicke auf die Karte oder ziehe den grünen Marker auf den tatsächlichen Markteingang bzw. die Mitte des Marktgebäudes. Rot und Blau bleiben als Vergleich sichtbar.</div>
+
+    <div class="actions" style="margin-top:12px;justify-content:flex-start">
+      <button class="btn" type="button" id="use-source">Gefundenen Pin übernehmen</button>
+      {% if address_point %}<button class="btn" type="button" id="use-address">Adresspunkt übernehmen</button>{% endif %}
+    </div>
+  </section>
+
+  <section class="card selected">
+    <form method="post" action="/admin/coverage/candidates/{{ candidate.id }}/coordinate-review">
+      <div class="form-grid">
+        <label>Breitengrad
+          <input id="latitude" name="latitude" type="number" min="-90" max="90" step="0.000001" value="{{ '%.6f'|format(candidate.latitude) }}" required>
+        </label>
+        <label>Längengrad
+          <input id="longitude" name="longitude" type="number" min="-180" max="180" step="0.000001" value="{{ '%.6f'|format(candidate.longitude) }}" required>
+        </label>
+        <button class="btn primary" type="submit">Position bestätigen & speichern</button>
+      </div>
+      <div class="small" style="margin-top:8px">Das Speichern bestätigt ausschließlich die Position manuell. Adresse und Händlerquelle bleiben eigene Identitäts-Gates.</div>
+    </form>
+  </section>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+  const source=[{{ candidate.latitude }},{{ candidate.longitude }}];
+  const address={% if address_point %}[{{ address_point.lat }},{{ address_point.lng }}]{% else %}null{% endif %};
+  const map=L.map('coordinate-map',{scrollWheelZoom:true});
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(map);
+  const pin=color=>L.divIcon({className:'',html:`<div class="map-pin ${color}"></div>`,iconSize:[22,22],iconAnchor:[11,22],popupAnchor:[0,-22]});
+
+  L.marker(source,{icon:pin('red')}).addTo(map).bindPopup('Gefundener Markt-Pin');
+  if(address)L.marker(address,{icon:pin('blue')}).addTo(map).bindPopup('Adress-Geocode');
+  const selected=L.marker(source,{draggable:true,icon:pin('green')}).addTo(map).bindPopup('Gewählte Position');
+
+  const latInput=document.getElementById('latitude');
+  const lngInput=document.getElementById('longitude');
+  function setSelected(latlng){
+    const lat=Number(latlng.lat),lng=Number(latlng.lng);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+    selected.setLatLng([lat,lng]);
+    latInput.value=lat.toFixed(6);
+    lngInput.value=lng.toFixed(6);
+  }
+  selected.on('dragend',()=>setSelected(selected.getLatLng()));
+  map.on('click',event=>setSelected(event.latlng));
+  document.getElementById('use-source').addEventListener('click',()=>setSelected({lat:source[0],lng:source[1]}));
+  const useAddress=document.getElementById('use-address');
+  if(useAddress&&address)useAddress.addEventListener('click',()=>setSelected({lat:address[0],lng:address[1]}));
+  latInput.addEventListener('change',()=>setSelected({lat:latInput.value,lng:lngInput.value}));
+  lngInput.addEventListener('change',()=>setSelected({lat:latInput.value,lng:lngInput.value}));
+
+  const bounds=[source];if(address)bounds.push(address);
+  if(bounds.length>1)map.fitBounds(bounds,{padding:[80,80],maxZoom:18});else map.setView(source,18);
+  setTimeout(()=>map.invalidateSize(),100);
+})();
+</script>
+</body>
+</html>
