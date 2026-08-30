@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
     :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--red:#c84b3b;--blue:#1f6feb}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.top,.actions,.legend{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.small{font-size:12px;color:var(--muted)}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8}.warning{background:#fff4d8;border:1px solid #f0d28a}.map{height:620px;border:1px solid var(--line);border-radius:14px;background:#eef2ec;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}.metric{padding:12px;border:1px solid var(--line);border-radius:12px}.metric strong{display:block;margin-top:3px}.legend{justify-content:flex-start;margin:12px 0}.dot{width:12px;height:12px;border-radius:50%;display:inline-block}.form-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}label{font-weight:700}input{width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;margin-top:4px}.selected{background:#e8f7ee;border:1px solid #b8dfc7}.map-pin{width:22px;height:22px;border:3px solid #fff;border-radius:50% 50% 50% 0;box-shadow:0 2px 8px rgba(0,0,0,.35);transform:rotate(-45deg)}.map-pin.red{background:var(--red)}.map-pin.blue{background:var(--blue)}.map-pin.green{background:#16815a}.map-pin.green:after{content:'';position:absolute;width:6px;height:6px;background:#fff;border-radius:50%;left:5px;top:5px}@media(max-width:760px){.grid,.form-grid{grid-template-columns:1fr}.map{height:480px}.wrap{padding:12px}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.top,.actions,.legend{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.btn:disabled{opacity:.45;cursor:not-allowed}.small{font-size:12px;color:var(--muted)}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8}.warning{background:#fff4d8;border:1px solid #f0d28a}.map{height:620px;border:1px solid var(--line);border-radius:14px;background:#eef2ec;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}.metric{padding:12px;border:1px solid var(--line);border-radius:12px}.metric strong{display:block;margin-top:3px}.legend{justify-content:flex-start;margin:12px 0}.dot{width:12px;height:12px;border-radius:50%;display:inline-block}.form-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}label{font-weight:700}input{width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;margin-top:4px}.selected{background:#e8f7ee;border:1px solid #b8dfc7}.map-pin{width:22px;height:22px;border:3px solid #fff;border-radius:50% 50% 50% 0;box-shadow:0 2px 8px rgba(0,0,0,.35);transform:rotate(-45deg)}.map-pin.red{background:var(--red)}.map-pin.blue{background:var(--blue)}.map-pin.green{background:#16815a}.map-pin.green:after{content:'';position:absolute;width:6px;height:6px;background:#fff;border-radius:50%;left:5px;top:5px}@media(max-width:760px){.grid,.form-grid{grid-template-columns:1fr}.map{height:480px}.wrap{padding:12px}}
   </style>
 </head>
 <body>
@@ -29,6 +29,17 @@
       <div class="metric"><span class="small">Adress-Geocode</span><strong>{% if address_point %}{{ '%.6f'|format(address_point.lat) }}, {{ '%.6f'|format(address_point.lng) }} · Abstand {{ '%.0f'|format(address_point.distance_m) }} m{% else %}nicht verfügbar{% endif %}</strong></div>
     </div>
     {% if candidate.verification_note %}<div class="notice warning" style="margin-top:12px">{{ candidate.verification_note }}</div>{% endif %}
+    {% if not candidate.address_verified %}
+      <div class="notice warning" style="margin-top:12px">
+        <strong>Adresse noch nicht bestätigt.</strong><br>
+        Prüfe die oben angezeigte Marktadresse gegen die Händlerquelle. Wenn sie korrekt ist, bestätige zuerst die Adresse. Danach kannst du die Position speichern.
+        <form method="post" action="/admin/coverage/candidates/{{ candidate.id }}/address-confirm" style="margin-top:10px">
+          <button class="btn primary" type="submit">Adresse bestätigen</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="notice" style="margin-top:12px"><strong>Adresse bestätigt ✓</strong> Die manuelle Positionsfreigabe ist jetzt möglich.</div>
+    {% endif %}
     {% if store %}<div class="notice" style="margin-top:12px">Dieser Kandidat ist bereits mit Store {{ store.id }} verknüpft. Eine gespeicherte Korrektur wird auch auf die Store-Koordinaten übernommen.</div>{% endif %}
 
     <div class="legend">
@@ -55,7 +66,7 @@
         <label>Längengrad
           <input id="longitude" name="longitude" type="number" min="-180" max="180" step="0.000001" value="{{ '%.6f'|format(candidate.longitude) }}" required>
         </label>
-        <button class="btn primary" type="submit">Position bestätigen & speichern</button>
+        <button class="btn primary" type="submit" {% if not candidate.address_verified %}disabled title="Bitte zuerst die Adresse bestätigen"{% endif %}>Position bestätigen & speichern</button>
       </div>
       <div class="small" style="margin-top:8px">Das Speichern bestätigt ausschließlich die Position manuell. Adresse und Händlerquelle bleiben eigene Identitäts-Gates.</div>
     </form>
