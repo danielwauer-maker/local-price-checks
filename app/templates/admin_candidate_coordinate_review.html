@@ -6,8 +6,8 @@
   <title>Marktposition prüfen · Spareno Admin</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <style>
-    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--red:#a43729;--blue:#1f6feb}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.top,.actions,.legend{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.small{font-size:12px;color:var(--muted)}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8}.warning{background:#fff4d8;border:1px solid #f0d28a}.map{height:620px;border:1px solid var(--line);border-radius:14px;background:#eef2ec;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}.metric{padding:12px;border:1px solid var(--line);border-radius:12px}.metric strong{display:block;margin-top:3px}.legend{justify-content:flex-start;margin:12px 0}.dot{width:12px;height:12px;border-radius:50%;display:inline-block}.form-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}label{font-weight:700}input{width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;margin-top:4px}.selected{background:#e8f7ee;border:1px solid #b8dfc7}.leaflet-marker-icon.selected-marker{filter:hue-rotate(85deg) saturate(1.25)}@media(max-width:760px){.grid,.form-grid{grid-template-columns:1fr}.map{height:480px}.wrap{padding:12px}}
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--red:#c84b3b;--blue:#1f6feb}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.top,.actions,.legend{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;text-decoration:none;color:var(--text);font-weight:700;cursor:pointer}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.small{font-size:12px;color:var(--muted)}.notice{padding:12px 14px;border-radius:12px;background:#edf5e8}.warning{background:#fff4d8;border:1px solid #f0d28a}.map{height:620px;border:1px solid var(--line);border-radius:14px;background:#eef2ec;margin-top:14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}.metric{padding:12px;border:1px solid var(--line);border-radius:12px}.metric strong{display:block;margin-top:3px}.legend{justify-content:flex-start;margin:12px 0}.dot{width:12px;height:12px;border-radius:50%;display:inline-block}.form-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}label{font-weight:700}input{width:100%;padding:10px;border:1px solid var(--line);border-radius:9px;margin-top:4px}.selected{background:#e8f7ee;border:1px solid #b8dfc7}.map-pin{width:22px;height:22px;border:3px solid #fff;border-radius:50% 50% 50% 0;box-shadow:0 2px 8px rgba(0,0,0,.35);transform:rotate(-45deg)}.map-pin.red{background:var(--red)}.map-pin.blue{background:var(--blue)}.map-pin.green{background:#16815a}.map-pin.green:after{content:'';position:absolute;width:6px;height:6px;background:#fff;border-radius:50%;left:5px;top:5px}@media(max-width:760px){.grid,.form-grid{grid-template-columns:1fr}.map{height:480px}.wrap{padding:12px}}
   </style>
 </head>
 <body>
@@ -69,24 +69,17 @@
   const address={% if address_point %}[{{ address_point.lat }},{{ address_point.lng }}]{% else %}null{% endif %};
   const map=L.map('coordinate-map',{scrollWheelZoom:true});
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(map);
+  const pin=color=>L.divIcon({className:'',html:`<div class="map-pin ${color}"></div>`,iconSize:[22,22],iconAnchor:[11,22],popupAnchor:[0,-22]});
 
-  const redIcon=new L.Icon.Default();
-  const blueIcon=new L.Icon.Default();
-  const greenIcon=new L.Icon.Default();
-  const sourceMarker=L.marker(source,{icon:redIcon}).addTo(map).bindPopup('Gefundener Markt-Pin');
-  sourceMarker._icon && (sourceMarker._icon.style.filter='hue-rotate(135deg) saturate(2)');
-  let addressMarker=null;
-  if(address){
-    addressMarker=L.marker(address,{icon:blueIcon}).addTo(map).bindPopup('Adress-Geocode');
-    addressMarker._icon && (addressMarker._icon.style.filter='hue-rotate(190deg) saturate(1.6)');
-  }
-  const selected=L.marker(source,{draggable:true,icon:greenIcon}).addTo(map).bindPopup('Gewählte Position');
-  selected.on('add',()=>{if(selected._icon)selected._icon.style.filter='hue-rotate(75deg) saturate(1.8)'});
+  L.marker(source,{icon:pin('red')}).addTo(map).bindPopup('Gefundener Markt-Pin');
+  if(address)L.marker(address,{icon:pin('blue')}).addTo(map).bindPopup('Adress-Geocode');
+  const selected=L.marker(source,{draggable:true,icon:pin('green')}).addTo(map).bindPopup('Gewählte Position');
 
   const latInput=document.getElementById('latitude');
   const lngInput=document.getElementById('longitude');
   function setSelected(latlng){
     const lat=Number(latlng.lat),lng=Number(latlng.lng);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
     selected.setLatLng([lat,lng]);
     latInput.value=lat.toFixed(6);
     lngInput.value=lng.toFixed(6);
