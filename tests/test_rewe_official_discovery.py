@@ -14,7 +14,22 @@ def test_rewe_official_source_returns_both_altenkirchen_markets():
     assert all(store.source_url.startswith("https://www.rewe.de/marktseite/altenkirchen/") for store in rewe.stores)
 
 
-def test_rewe_official_source_does_not_leak_altenkirchen_into_other_postcodes():
+def test_rewe_official_source_returns_selters_market():
+    results = retailer_source_results("65618", default_retailer_adapters())
+    rewe = next(result for result in results if result.retailer == "REWE")
+
+    assert len(rewe.stores) == 1
+    store = rewe.stores[0]
+    assert store.external_id == "240052"
+    assert store.address == "Am Schwimmbad 1"
+    assert store.postal_code == "65618"
+    assert store.source_url == (
+        "https://www.rewe.de/marktseite/selters-niederselters/240052/"
+        "rewe-markt-am-schwimmbad-1/"
+    )
+
+
+def test_rewe_official_source_does_not_leak_altenkirchen_or_selters_into_dierdorf():
     results = retailer_source_results("56269", default_retailer_adapters())
     rewe = next(result for result in results if result.retailer == "REWE")
 
@@ -58,6 +73,27 @@ def test_altenkirchen_dammweg_market_page_becomes_offer_collection_page():
 
     assert source is not None
     assert source.url == "https://www.rewe.de/angebote/altenkirchen/2500021/petz-rewe-dammweg-10/"
+
+
+def test_selters_market_page_becomes_offer_collection_page():
+    source = source_for_store_record(
+        _store(
+            store_id=13,
+            name="REWE Am Schwimmbad 1",
+            external_id="240052",
+            source_url=(
+                "https://www.rewe.de/marktseite/selters-niederselters/240052/"
+                "rewe-markt-am-schwimmbad-1/"
+            ),
+        )
+    )
+
+    assert source is not None
+    assert source.store_specific is True
+    assert source.url == (
+        "https://www.rewe.de/angebote/selters-niederselters/240052/"
+        "rewe-markt-am-schwimmbad-1/"
+    )
 
 
 def test_hundertmark_keeps_existing_canonical_offer_collection_page():
