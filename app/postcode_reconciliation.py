@@ -92,25 +92,50 @@ def reconcile_postcode_coverage(
     matched_discovered_ids: set[int] = set()
     matched_expected_ids: set[int] = set()
     official_for_discovered: set[int] = set()
-    for expected in expected_rows:
-        matches = [row for row in discovered_rows if row.id not in matched_discovered_ids and candidates_match(expected, row)]
+    for expected_row in expected_rows:
+        matches = [
+            row
+            for row in discovered_rows
+            if row.id not in matched_discovered_ids and candidates_match(expected_row, row)
+        ]
         if not matches:
             continue
         match = min(
             matches,
-            key=lambda row: haversine_km(expected.latitude, expected.longitude, row.latitude, row.longitude),
+            key=lambda row: haversine_km(
+                expected_row.latitude,
+                expected_row.longitude,
+                row.latitude,
+                row.longitude,
+            ),
         )
-        matched_expected_ids.add(expected.id)
+        matched_expected_ids.add(expected_row.id)
         matched_discovered_ids.add(match.id)
         official_for_discovered.add(match.id)
 
+    # Official retailer rows are concrete market candidates, not merely
+    # references. Count each logical market exactly once: an OSM/discovery row
+    # that matches an official row represents the same market and is therefore
+    # deduplicated, while unmatched official and discovery rows both count.
+    unmatched_expected_rows = [row for row in expected_rows if row.id not in matched_expected_ids]
     expected = len(expected_rows)
-    found = len(discovered_rows)
-    address_verified = sum(bool(row.address_verified) for row in discovered_rows)
-    coordinates_verified = sum(bool(row.coordinates_verified) for row in discovered_rows)
-    official_verified = sum(
-        bool(row.official_source_verified or row.id in official_for_discovered) for row in discovered_rows
+    found = len(discovered_rows) + len(unmatched_expected_rows)
+    address_verified = (
+        sum(bool(row.address_verified) for row in discovered_rows)
+        + sum(bool(row.address_verified) for row in unmatched_expected_rows)
     )
+    coordinates_verified = (
+        sum(bool(row.coordinates_verified) for row in discovered_rows)
+        + sum(bool(row.coordinates_verified) for row in unmatched_expected_rows)
+    )
+    official_verified = (
+        sum(
+            bool(row.official_source_verified or row.id in official_for_discovered)
+            for row in discovered_rows
+        )
+        + sum(bool(row.official_source_verified) for row in unmatched_expected_rows)
+    )
+
     postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
     promoted_ids = {
         store.id
@@ -118,8 +143,12 @@ def reconcile_postcode_coverage(
         for store in postcode_stores
         if store_matches_candidate(store, candidate)
     }
-    missing_expected = expected - len(matched_expected_ids)
-    additional_discovered = found - len(matched_discovered_ids)
+
+    # Because an official row is itself staged and visible as a concrete
+    # candidate, an official market without an OSM twin is still found rather
+    # than missing. Unmatched non-official rows remain additional discoveries.
+    missing_expected = 0
+    additional_discovered = len(discovered_rows) - len(matched_discovered_ids)
     results = source_results or retailer_source_results(postcode.postal_code)
     incomplete_sources = any(
         result.status in {"manual_verification_required", "source_unavailable"} for result in results
@@ -138,7 +167,7 @@ def reconcile_postcode_coverage(
         or address_verified < found
         or coordinates_verified < found
         or official_verified < found
-        or len(promoted_ids) < expected
+        or len(promoted_ids) < found
     ):
         status = "verification_pending"
     elif incomplete_sources:
