@@ -74,7 +74,25 @@ window.addEventListener('DOMContentLoaded', function () {
 </script>
 {% endif %}
 {% if admin_section=='coverage' %}
+<style>
+  .rollout-cockpit{margin:12px 0 4px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f9fbf8}.rollout-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rollout-row+.rollout-row{margin-top:9px}.rollout-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}.rollout-chip{border:1px solid var(--line);border-radius:999px;padding:7px 10px;background:#fff;color:var(--text);font-weight:700;cursor:pointer}.rollout-chip.active{background:var(--green);border-color:var(--green);color:#fff}.rollout-prefix-input{width:92px!important;padding:7px 9px!important;border-radius:999px!important}.rollout-summary{margin-left:auto;font-size:12px;color:var(--muted)}.postcode-collapsed>:not(.postcode-head){display:none!important}.postcode-head[data-rollout-toggle]{cursor:pointer}.postcode-head[data-rollout-toggle] h2:before{content:'▸';display:inline-block;width:18px;color:var(--muted)}.postcode-head[data-rollout-toggle][data-open='1'] h2:before{content:'▾'}.rollout-map-marker{border-radius:6px;padding:3px 5px;color:#fff;font:800 9px/1 system-ui,sans-serif;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25);white-space:nowrap}.rollout-map-marker.public{background:#16815a}.rollout-map-marker.progress{background:#e0a21b;color:#17231c}.rollout-map-marker.failed{background:#c84b3b}.rollout-map-marker.discovered{background:#68736c}.rollout-map-note{font-size:11px;color:var(--muted);margin-top:7px}.rollout-loading{opacity:.65;pointer-events:none}
+</style>
 <script>
+(function captureCoverageMap() {
+  if (!window.L || !L.map || L.map.__sparenoCoverageWrapped) return;
+  var originalMap = L.map;
+  var wrapped = function () {
+    var map = originalMap.apply(this, arguments);
+    var target = arguments[0];
+    var id = typeof target === 'string' ? target : target && target.id;
+    if (id === 'coverage-map') window.sparenoCoverageMap = map;
+    return map;
+  };
+  Object.assign(wrapped, originalMap);
+  wrapped.__sparenoCoverageWrapped = true;
+  L.map = wrapped;
+})();
+
 window.addEventListener('DOMContentLoaded', function () {
   var normalize = function (value) {
     return (value || '')
@@ -84,29 +102,286 @@ window.addEventListener('DOMContentLoaded', function () {
       .replace(/ß/g, 'ss')
       .replace(/[^a-z0-9]+/g, '');
   };
+  var canonicalRetailer = function (value) {
+    var key = normalize(value);
+    if (key.indexOf('rewe') === 0) return 'REWE';
+    if (key.indexOf('lidl') === 0) return 'Lidl';
+    if (key.indexOf('aldisud') === 0 || key.indexOf('aldisued') === 0) return 'ALDI SÜD';
+    if (key.indexOf('netto') === 0) return 'Netto';
+    if (key.indexOf('edeka') === 0) return 'EDEKA';
+    if (key.indexOf('penny') === 0) return 'PENNY';
+    return (value || '').trim();
+  };
+  var postcodeSections = Array.from(document.querySelectorAll('section[id^="postcode-"]'));
+  var activePostcodes = new Set(postcodeSections.map(function (section) { return section.id.replace('postcode-', ''); }));
+  var retailerEnabled = new Set(['REWE', 'Lidl', 'ALDI SÜD', 'Netto', 'EDEKA', 'PENNY']);
+  var prefix = '';
+  var markerEntries = [];
+  var germanyLayer = null;
 
-  document.querySelectorAll('section[id^="postcode-"] table').forEach(function (table) {
-    var rows = Array.from(table.querySelectorAll('tr')).filter(function (row) {
-      return row.cells && row.cells.length >= 6;
+  function candidateRows(section) {
+    var table = section.querySelector('.scroll table');
+    if (!table) return [];
+    return Array.from(table.querySelectorAll('tr')).filter(function (row) {
+      return row.cells && row.cells.length >= 6 && row.cells[0].querySelector('b');
     });
-    var officialKeys = new Set();
+  }
 
+  function dedupeOfficialRows(section) {
+    var rows = candidateRows(section);
+    var officialKeys = new Set();
     rows.forEach(function (row) {
       var source = (row.cells[3].textContent || '').trim().toLowerCase();
       if (!source.startsWith('official:')) return;
-      var retailer = normalize(row.cells[0].querySelector('b')?.textContent || row.cells[0].textContent);
+      var retailer = canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
       var address = normalize(row.cells[1].textContent);
       officialKeys.add(retailer + '|' + address);
     });
-
     rows.forEach(function (row) {
       var source = (row.cells[3].textContent || '').trim().toLowerCase();
       if (!source.startsWith('osm')) return;
-      var retailer = normalize(row.cells[0].querySelector('b')?.textContent || row.cells[0].textContent);
+      var retailer = canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
       var address = normalize(row.cells[1].textContent);
       if (officialKeys.has(retailer + '|' + address)) row.remove();
     });
+  }
+
+  function trimEmptySourceCards(section) {
+    var retailers = new Set(candidateRows(section).map(function (row) {
+      return canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
+    }));
+    var list = section.querySelector('.source-list');
+    if (!list) return;
+    Array.from(list.querySelectorAll('.source-item')).forEach(function (item) {
+      var retailer = canonicalRetailer(item.querySelector('b')?.textContent || '');
+      item.style.display = retailers.has(retailer) ? '' : 'none';
+    });
+    list.style.display = retailers.size ? '' : 'none';
+  }
+
+  postcodeSections.forEach(function (section) {
+    dedupeOfficialRows(section);
+    trimEmptySourceCards(section);
+    var head = section.querySelector('.postcode-head');
+    if (!head) return;
+    head.dataset.rolloutToggle = '1';
+    head.dataset.open = '0';
+    section.classList.add('postcode-collapsed');
+    head.addEventListener('click', function (event) {
+      if (event.target.closest('button,a,input,select,form')) return;
+      var open = section.classList.toggle('postcode-collapsed') === false;
+      head.dataset.open = open ? '1' : '0';
+    });
   });
+
+  var mapSection = document.querySelector('.coverage-map')?.closest('section.card');
+  if (!mapSection) return;
+  var mapHead = mapSection.querySelector('.postcode-head');
+  var cockpit = document.createElement('div');
+  cockpit.className = 'rollout-cockpit';
+  cockpit.innerHTML = '' +
+    '<div class="rollout-row" data-role="prefix-row"><span class="rollout-label">PLZ-Gebiet</span>' +
+    '<button class="rollout-chip active" data-prefix="">Alle</button>' +
+    [0,1,2,3,4,5,6,7,8,9].map(function (n) { return '<button class="rollout-chip" data-prefix="'+n+'">'+n+'</button>'; }).join('') +
+    '<input class="rollout-prefix-input" inputmode="numeric" maxlength="5" placeholder="z. B. 576" aria-label="PLZ-Präfix">' +
+    '<span class="rollout-summary" data-role="summary"></span></div>' +
+    '<div class="rollout-row"><span class="rollout-label">Märkte auf Karte</span>' +
+    ['REWE','Lidl','ALDI SÜD','Netto','EDEKA','PENNY'].map(function (r) { return '<button class="rollout-chip active" data-retailer="'+r+'">'+r+'</button>'; }).join('') +
+    '</div>' +
+    '<div class="rollout-row"><button class="btn primary" data-role="batch-discover">Quellen für sichtbare PLZ abgleichen</button>' +
+    '<button class="btn" data-role="expand-visible">Sichtbare PLZ aufklappen</button>' +
+    '<button class="btn" data-role="collapse-all">Alle zuklappen</button></div>' +
+    '<div class="rollout-map-note">Graue PLZ-Flächen sind noch nicht im Rollout. Klick auf eine Fläche, um die PLZ direkt hinzuzufügen. Marktmarker: grün = öffentlich, gelb = in Prüfung, rot = Fehler, grau = entdeckt.</div>';
+  if (mapHead && mapHead.nextSibling) mapSection.insertBefore(cockpit, mapHead.nextSibling);
+  else mapSection.insertBefore(cockpit, mapSection.firstChild);
+
+  function postcodeOfSection(section) { return section.id.replace('postcode-', ''); }
+  function matchesPrefix(pc) { return !prefix || pc.indexOf(prefix) === 0; }
+
+  function applyPrefixFilter() {
+    var visible = 0;
+    var markets = 0;
+    postcodeSections.forEach(function (section) {
+      var show = matchesPrefix(postcodeOfSection(section));
+      section.style.display = show ? '' : 'none';
+      if (show) { visible += 1; markets += candidateRows(section).length; }
+    });
+    document.querySelectorAll('section.card table tr').forEach(function (row) {
+      var link = row.querySelector('a[href^="#postcode-"]');
+      if (!link) return;
+      var pc = (link.getAttribute('href') || '').replace('#postcode-', '');
+      row.style.display = matchesPrefix(pc) ? '' : 'none';
+    });
+    var summary = cockpit.querySelector('[data-role="summary"]');
+    if (summary) summary.textContent = visible + ' PLZ · ' + markets + ' sichtbare Marktkandidaten';
+    markerEntries.forEach(function (entry) { updateMarkerVisibility(entry); });
+    if (germanyLayer) germanyLayer.setStyle(stylePostcodeFeature);
+  }
+
+  cockpit.querySelectorAll('[data-prefix]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      prefix = button.dataset.prefix || '';
+      cockpit.querySelectorAll('[data-prefix]').forEach(function (b) { b.classList.toggle('active', b === button); });
+      var input = cockpit.querySelector('.rollout-prefix-input'); if (input) input.value = '';
+      applyPrefixFilter();
+    });
+  });
+  var prefixInput = cockpit.querySelector('.rollout-prefix-input');
+  prefixInput?.addEventListener('input', function () {
+    prefix = (prefixInput.value || '').replace(/\D/g, '').slice(0,5);
+    prefixInput.value = prefix;
+    cockpit.querySelectorAll('[data-prefix]').forEach(function (b) { b.classList.toggle('active', !prefix && b.dataset.prefix === ''); });
+    applyPrefixFilter();
+  });
+
+  cockpit.querySelectorAll('[data-retailer]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var retailer = button.dataset.retailer;
+      if (retailerEnabled.has(retailer)) retailerEnabled.delete(retailer); else retailerEnabled.add(retailer);
+      button.classList.toggle('active', retailerEnabled.has(retailer));
+      markerEntries.forEach(function (entry) { updateMarkerVisibility(entry); });
+    });
+  });
+
+  cockpit.querySelector('[data-role="collapse-all"]')?.addEventListener('click', function () {
+    postcodeSections.forEach(function (section) {
+      section.classList.add('postcode-collapsed');
+      var head = section.querySelector('.postcode-head'); if (head) head.dataset.open = '0';
+    });
+  });
+  cockpit.querySelector('[data-role="expand-visible"]')?.addEventListener('click', function () {
+    postcodeSections.forEach(function (section) {
+      if (section.style.display === 'none') return;
+      section.classList.remove('postcode-collapsed');
+      var head = section.querySelector('.postcode-head'); if (head) head.dataset.open = '1';
+    });
+  });
+
+  cockpit.querySelector('[data-role="batch-discover"]')?.addEventListener('click', async function (event) {
+    var button = event.currentTarget;
+    var postcodes = postcodeSections.filter(function (section) { return section.style.display !== 'none'; }).map(postcodeOfSection);
+    if (!postcodes.length) return;
+    if (!window.confirm('Quellenabgleich für ' + postcodes.length + ' sichtbare PLZ starten?')) return;
+    button.classList.add('rollout-loading');
+    var original = button.textContent;
+    for (var i = 0; i < postcodes.length; i += 1) {
+      button.textContent = 'Quellenabgleich ' + (i + 1) + '/' + postcodes.length + ' …';
+      try {
+        await fetch('/admin/coverage/postcodes/' + encodeURIComponent(postcodes[i]) + '/discover', { method:'POST', credentials:'same-origin' });
+      } catch (error) {
+        console.warn('Quellenabgleich fehlgeschlagen', postcodes[i], error);
+      }
+    }
+    button.textContent = original;
+    window.location.reload();
+  });
+
+  function activationStatusByStore() {
+    var result = {};
+    document.querySelectorAll('.activation-card').forEach(function (card) {
+      var text = card.textContent || '';
+      var match = text.match(/Store\s+(\d+)/i);
+      if (!match) return;
+      var pill = card.querySelector('.pill');
+      result[match[1]] = normalize(pill?.textContent || '');
+    });
+    return result;
+  }
+  var storeStatuses = activationStatusByStore();
+  var map = window.sparenoCoverageMap;
+  var markerLayer = map && window.L ? L.layerGroup().addTo(map) : null;
+  function statusClass(status) {
+    if (status === 'public') return 'public';
+    if (status.indexOf('failed') >= 0 || status === 'suspended') return 'failed';
+    if (status === 'promoted' || status.indexOf('quality') >= 0 || status.indexOf('scrape') >= 0) return 'progress';
+    return 'discovered';
+  }
+  function updateMarkerVisibility(entry) {
+    if (!markerLayer) return;
+    var visible = retailerEnabled.has(entry.retailer) && matchesPrefix(entry.postcode);
+    if (visible && !markerLayer.hasLayer(entry.marker)) markerLayer.addLayer(entry.marker);
+    if (!visible && markerLayer.hasLayer(entry.marker)) markerLayer.removeLayer(entry.marker);
+  }
+  if (markerLayer) {
+    postcodeSections.forEach(function (section) {
+      var postcode = postcodeOfSection(section);
+      candidateRows(section).forEach(function (row) {
+        var coordText = row.cells[2].textContent || '';
+        var match = coordText.match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
+        if (!match) return;
+        var retailer = canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
+        var name = (row.cells[0].textContent || '').trim();
+        var promotion = row.cells[5].textContent || '';
+        var storeMatch = promotion.match(/Store\s+(\d+)/i);
+        var rowState = normalize(row.cells[0].querySelector('.small')?.textContent || 'discovered');
+        var status = storeMatch ? (storeStatuses[storeMatch[1]] || rowState) : rowState;
+        var stateClass = statusClass(status);
+        var icon = L.divIcon({ className:'', html:'<div class="rollout-map-marker '+stateClass+'">'+retailer+'</div>', iconSize:[52,20], iconAnchor:[26,10] });
+        var marker = L.marker([Number(match[1]), Number(match[2])], { icon:icon });
+        marker.bindPopup('<b>'+retailer+'</b><br>'+name.replace(/</g,'&lt;')+'<br>PLZ '+postcode+'<br>Status: '+status);
+        marker.on('click', function () {
+          section.classList.remove('postcode-collapsed');
+          var head = section.querySelector('.postcode-head'); if (head) head.dataset.open = '1';
+        });
+        markerEntries.push({ marker:marker, retailer:retailer, postcode:postcode });
+        updateMarkerVisibility(markerEntries[markerEntries.length - 1]);
+      });
+    });
+  }
+
+  function featurePostcode(feature) {
+    var p = feature && feature.properties || {};
+    var raw = p.plz || p.PLZ || p.postcode || p.postal_code || p.zip || p.name || '';
+    var match = String(raw).match(/\b\d{5}\b/);
+    return match ? match[0] : '';
+  }
+  function stylePostcodeFeature(feature) {
+    var pc = featurePostcode(feature);
+    var active = activePostcodes.has(pc);
+    var selected = matchesPrefix(pc);
+    return {
+      color: active ? '#087b4f' : '#809087',
+      weight: active ? 1.4 : 0.55,
+      opacity: selected ? 0.8 : 0.12,
+      fillColor: active ? '#bfe7cd' : '#e8ece9',
+      fillOpacity: selected ? (active ? 0.12 : 0.025) : 0.005
+    };
+  }
+  if (map && window.L) {
+    if (!map.getPane('postcodeBackground')) {
+      map.createPane('postcodeBackground');
+      map.getPane('postcodeBackground').style.zIndex = 220;
+    }
+    fetch('https://raw.githubusercontent.com/tdudek/de-plz-geojson/master/plz-5stellig.geojson')
+      .then(function (response) { if (!response.ok) throw new Error('PLZ-Layer '+response.status); return response.json(); })
+      .then(function (geojson) {
+        germanyLayer = L.geoJSON(geojson, {
+          pane:'postcodeBackground',
+          style:stylePostcodeFeature,
+          onEachFeature:function (feature, layer) {
+            var pc = featurePostcode(feature);
+            if (!pc) return;
+            layer.on('click', function () {
+              if (activePostcodes.has(pc)) {
+                var section = document.getElementById('postcode-' + pc);
+                if (section) {
+                  section.style.display = '';
+                  section.classList.remove('postcode-collapsed');
+                  var head = section.querySelector('.postcode-head'); if (head) head.dataset.open = '1';
+                  section.scrollIntoView({ behavior:'smooth', block:'start' });
+                }
+                return;
+              }
+              layer.bindPopup('<b>PLZ '+pc+'</b><br>Noch nicht im Spareno-Rollout.<form method="post" action="/admin/coverage/postcodes/import" style="margin-top:8px"><input type="hidden" name="postal_code" value="'+pc+'"><input type="hidden" name="enabled" value="1"><button class="btn primary" type="submit">PLZ zum Rollout hinzufügen</button></form>').openPopup();
+            });
+          }
+        }).addTo(map);
+        germanyLayer.bringToBack();
+      })
+      .catch(function (error) { console.warn('Deutschland-PLZ-Layer konnte nicht geladen werden', error); });
+  }
+
+  applyPrefixFilter();
 });
 </script>
 {% endif %}
