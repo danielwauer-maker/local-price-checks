@@ -18,6 +18,7 @@ const CHAIN_COLORS: Record<string, { bg: string; fg: string; label: string }> = 
   "ALDI SÜD": { bg: "#00005F", fg: "#FF7300", label: "ALDI" },
   Netto: { bg: "#FFE500", fg: "#D30032", label: "Netto" },
   EDEKA: { bg: "#003C7D", fg: "#FFDD00", label: "EDEKA" },
+  PENNY: { bg: "#D5001C", fg: "#ffffff", label: "PENNY" },
 };
 
 function markerIcon(chain: string, active: boolean) {
@@ -65,8 +66,8 @@ export default function MarketMap({ center, radiusKm, markets, activeId, onSelec
       style={{ height: "100%", width: "100%" }}
     >
       <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       />
       <Recenter center={center} radiusKm={radiusKm} />
       <Circle
