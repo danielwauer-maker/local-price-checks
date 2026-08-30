@@ -17,6 +17,10 @@ class RetailSource:
 
 
 EDEKA_MARKET_PATH_RE = re.compile(r"^(https://www\.edeka\.de/maerkte/\d{6}/)(?:angebote/|prospekte/)?$", re.I)
+REWE_MARKET_PAGE_RE = re.compile(
+    r"^https://www\.rewe\.de/marktseite/([^/?#]+)/(\d+)/([^/?#]+)/?(?:[?#].*)?$",
+    re.I,
+)
 
 
 def _normalize_edeka_market_url(url: str) -> str:
@@ -29,6 +33,23 @@ def _normalize_edeka_market_url(url: str) -> str:
     """
     match = EDEKA_MARKET_PATH_RE.match((url or "").strip())
     return match.group(1) if match else (url or "").strip()
+
+
+def _normalize_rewe_collection_url(url: str) -> str:
+    """Use REWE's market-specific offer route for collection.
+
+    Store onboarding deliberately keeps the official ``/marktseite/`` URL as
+    identity evidence. The offer collector, however, is benchmarked against
+    REWE's ``/angebote/<city>/<market-id>/<slug>/`` route (for example the
+    Hundertmark market in Dierdorf). Convert only canonical REWE market-page
+    URLs; already-canonical offer URLs and unrelated URLs pass through.
+    """
+    raw = (url or "").strip()
+    match = REWE_MARKET_PAGE_RE.match(raw)
+    if not match:
+        return raw
+    city_slug, market_id, market_slug = match.groups()
+    return f"https://www.rewe.de/angebote/{city_slug}/{market_id}/{market_slug}/"
 
 
 SOURCES = [
@@ -92,6 +113,28 @@ def source_for_store(store_name: str) -> RetailSource | None:
     return SOURCE_BY_STORE.get(store_name)
 
 
+def _normalized_known_source(source: RetailSource) -> RetailSource:
+    url = source.url
+    if source.retailer == "EDEKA":
+        url = _normalize_edeka_market_url(url)
+    elif source.retailer == "REWE":
+        url = _normalize_rewe_collection_url(url)
+    if url == source.url:
+        return source
+    return RetailSource(
+        key=source.key,
+        retailer=source.retailer,
+        store_name=source.store_name,
+        url=url,
+        mode=source.mode,
+        locality=source.locality,
+        notes=source.notes,
+        supports_products=source.supports_products,
+        store_specific=source.store_specific,
+        alternate_urls=source.alternate_urls,
+    )
+
+
 def source_for_store_record(store) -> RetailSource | None:
     """Return a source for a concrete Store, including newly discovered markets.
 
@@ -101,25 +144,14 @@ def source_for_store_record(store) -> RetailSource | None:
     """
     known = SOURCE_BY_STORE.get(store.name)
     if known:
-        if known.retailer == "EDEKA":
-            return RetailSource(
-                key=known.key,
-                retailer=known.retailer,
-                store_name=known.store_name,
-                url=_normalize_edeka_market_url(known.url),
-                mode=known.mode,
-                locality=known.locality,
-                notes=known.notes,
-                supports_products=known.supports_products,
-                store_specific=known.store_specific,
-                alternate_urls=known.alternate_urls,
-            )
-        return known
+        return _normalized_known_source(known)
     url = (store.source_url or "").strip() or RETAILER_FALLBACK_URLS.get(store.retailer)
     if not url:
         return None
     if store.retailer == "EDEKA":
         url = _normalize_edeka_market_url(url)
+    elif store.retailer == "REWE":
+        url = _normalize_rewe_collection_url(url)
     store_specific = bool((store.source_url or "").strip())
     return RetailSource(
         key=f"auto_{store.retailer.lower().replace(' ', '_').replace('-', '_')}_{store.id}",
