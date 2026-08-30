@@ -1,6 +1,6 @@
 import { Heart } from "lucide-react";
 import type { Market } from "@/data/lokero";
-import { formatEuro, formatKm } from "@/lib/format";
+import { formatKm } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MarketLogo } from "./MarketLogo";
 
@@ -31,23 +31,15 @@ export function MarketCard({
       >
         <MarketLogo chain={market.chain} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-navy">{market.name}</span>
-          <span className="tabular block truncate text-[11px] text-muted-foreground">
-            {formatKm(market.distanceKm)} ·{" "}
-            <span className={cn(market.isOpen ? "text-primary" : "text-muted-foreground")}>
-              {market.isOpen ? `Geöffnet bis ${market.openUntil}` : "Geschlossen"}
-            </span>
+          <span className="block truncate text-[13px] font-semibold text-navy">
+            {market.chain}{market.city ? ` · ${market.city}` : ""}
           </span>
-          <span className="block truncate text-[11px] text-muted-foreground">{market.strength}</span>
+          <span className="mt-0.5 block truncate text-[11px] font-medium text-navy/80">{market.name}</span>
+          <span className="tabular mt-0.5 block truncate text-[11px] text-muted-foreground">
+            {formatKm(market.distanceKm)}{market.street ? ` · ${market.street}` : ""}
+          </span>
         </span>
       </button>
-      <div className="shrink-0 text-right">
-        <p className="text-[10px] text-muted-foreground">bis zu</p>
-        <p className="tabular text-[13px] font-bold text-primary">
-          {formatEuro(market.savingPotential)}
-        </p>
-        <p className="text-[10px] text-muted-foreground">sparen</p>
-      </div>
       {onToggleFavorite && (
         <button
           type="button"
