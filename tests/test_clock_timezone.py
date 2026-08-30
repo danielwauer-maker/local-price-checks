@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 import app.clock as clock
 
@@ -11,7 +12,7 @@ class _FakeDateTime:
 
 
 def test_app_today_uses_berlin_business_date(monkeypatch):
-    monkeypatch.setattr(clock.settings, "local_date_override", "")
+    monkeypatch.setattr(clock, "settings", SimpleNamespace(local_date_override="", app_env="test"))
     monkeypatch.setattr(clock, "datetime", _FakeDateTime)
 
     assert clock.app_today().isoformat() == "2026-08-31"
