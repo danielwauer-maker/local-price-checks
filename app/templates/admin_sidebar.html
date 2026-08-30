@@ -73,3 +73,40 @@ window.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 {% endif %}
+{% if admin_section=='coverage' %}
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  var normalize = function (value) {
+    return (value || '')
+      .toLocaleLowerCase('de-DE')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/ß/g, 'ss')
+      .replace(/[^a-z0-9]+/g, '');
+  };
+
+  document.querySelectorAll('section[id^="postcode-"] table').forEach(function (table) {
+    var rows = Array.from(table.querySelectorAll('tr')).filter(function (row) {
+      return row.cells && row.cells.length >= 6;
+    });
+    var officialKeys = new Set();
+
+    rows.forEach(function (row) {
+      var source = (row.cells[3].textContent || '').trim().toLowerCase();
+      if (!source.startsWith('official:')) return;
+      var retailer = normalize(row.cells[0].querySelector('b')?.textContent || row.cells[0].textContent);
+      var address = normalize(row.cells[1].textContent);
+      officialKeys.add(retailer + '|' + address);
+    });
+
+    rows.forEach(function (row) {
+      var source = (row.cells[3].textContent || '').trim().toLowerCase();
+      if (!source.startsWith('osm')) return;
+      var retailer = normalize(row.cells[0].querySelector('b')?.textContent || row.cells[0].textContent);
+      var address = normalize(row.cells[1].textContent);
+      if (officialKeys.has(retailer + '|' + address)) row.remove();
+    });
+  });
+});
+</script>
+{% endif %}
