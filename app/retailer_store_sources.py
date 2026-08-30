@@ -110,6 +110,18 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         source_identifier="rewe-market-2500021",
     ),
     RetailerStoreRecord(
+        retailer="REWE",
+        name="REWE Am Schwimmbad 1",
+        address="Am Schwimmbad 1",
+        postal_code="65618",
+        city="Selters (Taunus)",
+        latitude=50.333975,
+        longitude=8.233875,
+        external_id="240052",
+        source_url="https://www.rewe.de/marktseite/selters-niederselters/240052/rewe-markt-am-schwimmbad-1/",
+        source_identifier="rewe-market-240052",
+    ),
+    RetailerStoreRecord(
         retailer="Lidl",
         name="Lidl Puderbach",
         address="Urbacherstraße L264",
