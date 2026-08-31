@@ -17,7 +17,17 @@ STATUS_PRESENTATION = {
     "verification_pending": ("Verifikation ausstehend", "yellow"),
     "complete": ("Vollständig verifiziert", "green"),
     "source_unavailable": ("Händlerquelle unvollständig", "red"),
-    "no_expected_stores": ("Keine erwarteten Märkte", "gray"),
+    "no_known_stores": ("Keine Märkte bekannt", "green"),
+}
+
+# A postcode's target is the number of physical grocery stores we currently
+# know should exist there, not merely the number of official-source rows that
+# happen to have been staged already.  These audited counts bridge gaps while
+# retailer directories are still being automated.  Candidate/store data may
+# raise the target above an override, but never lower it.
+AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
+    # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
+    "57610": 5,
 }
 
 
@@ -80,6 +90,27 @@ def store_matches_candidate(store: Store, candidate: StoreDiscoveryCandidate) ->
     )
 
 
+def _candidate_identity_key(candidate: StoreDiscoveryCandidate) -> tuple[str, str, str]:
+    """Stable physical-store key used only for rollout counting.
+
+    Official and OSM rows for the same address collapse into one market while
+    different branches of the same retailer remain separate.
+    """
+    return (
+        normalize_identity_text(candidate.retailer),
+        normalize_identity_text(candidate.address),
+        normalize_identity_text(candidate.city),
+    )
+
+
+def _store_identity_key(store: Store) -> tuple[str, str, str]:
+    return (
+        normalize_identity_text(store.retailer),
+        normalize_identity_text(store.address),
+        normalize_identity_text(store.city),
+    )
+
+
 def reconcile_postcode_coverage(
     db: Session,
     postcode: CoveragePostalCode,
@@ -87,39 +118,53 @@ def reconcile_postcode_coverage(
     source_results: tuple[RetailerSourceResult, ...] | None = None,
 ) -> PostcodeCoverageSummary:
     candidates = db.query(StoreDiscoveryCandidate).filter_by(postal_code=postcode.postal_code).all()
-    expected_rows = [row for row in candidates if row.source.startswith("official:")]
-    discovered_rows = [row for row in candidates if not row.source.startswith("official:")]
-    matched_discovered_ids: set[int] = set()
-    matched_expected_ids: set[int] = set()
-    official_for_discovered: set[int] = set()
-    for expected in expected_rows:
-        matches = [row for row in discovered_rows if row.id not in matched_discovered_ids and candidates_match(expected, row)]
-        if not matches:
-            continue
-        match = min(
-            matches,
-            key=lambda row: haversine_km(expected.latitude, expected.longitude, row.latitude, row.longitude),
-        )
-        matched_expected_ids.add(expected.id)
-        matched_discovered_ids.add(match.id)
-        official_for_discovered.add(match.id)
-
-    expected = len(expected_rows)
-    found = len(discovered_rows)
-    address_verified = sum(bool(row.address_verified) for row in discovered_rows)
-    coordinates_verified = sum(bool(row.coordinates_verified) for row in discovered_rows)
-    official_verified = sum(
-        bool(row.official_source_verified or row.id in official_for_discovered) for row in discovered_rows
-    )
     postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
+
+    # Count physical markets instead of treating official and discovery sources
+    # as two competing populations.  This fixes cases such as Altenkirchen,
+    # where two official REWEs previously produced "Soll 2" while ALDI/Netto
+    # were labelled merely as additional discoveries.
+    candidate_keys = {_candidate_identity_key(row) for row in candidates}
+    store_keys = {_store_identity_key(store) for store in postcode_stores}
+    known_physical_keys = candidate_keys | store_keys
+    found = len(known_physical_keys)
+    expected = max(found, AUDITED_EXPECTED_MARKET_COUNTS.get(postcode.postal_code, 0))
+
+    # Gate counters are also physical-market counters. Prefer a promoted Store's
+    # state where available, otherwise take the strongest candidate state for
+    # the same branch.
+    grouped_candidates: dict[tuple[str, str, str], list[StoreDiscoveryCandidate]] = {}
+    for row in candidates:
+        grouped_candidates.setdefault(_candidate_identity_key(row), []).append(row)
+
+    address_verified = coordinates_verified = official_verified = 0
+    for key in known_physical_keys:
+        matching_store = next((store for store in postcode_stores if _store_identity_key(store) == key), None)
+        rows = grouped_candidates.get(key, [])
+        if matching_store is not None:
+            address_ok = bool(getattr(matching_store, "address_verified", False)) or any(row.address_verified for row in rows)
+            coordinates_ok = bool(getattr(matching_store, "coordinates_verified", False)) or any(row.coordinates_verified for row in rows)
+            official_ok = bool(getattr(matching_store, "official_source_verified", False)) or any(row.official_source_verified for row in rows)
+        else:
+            address_ok = any(row.address_verified for row in rows)
+            coordinates_ok = any(row.coordinates_verified for row in rows)
+            official_ok = any(row.official_source_verified for row in rows)
+        address_verified += int(address_ok)
+        coordinates_verified += int(coordinates_ok)
+        official_verified += int(official_ok)
+
     promoted_ids = {
         store.id
         for candidate in candidates
         for store in postcode_stores
         if store_matches_candidate(store, candidate)
     }
-    missing_expected = expected - len(matched_expected_ids)
-    additional_discovered = found - len(matched_discovered_ids)
+    # Stores that are already in the postcode but no longer have a staging row
+    # still count as promoted physical markets.
+    promoted = max(len(promoted_ids), len(store_keys))
+
+    missing_expected = max(0, expected - found)
+    additional_discovered = max(0, found - expected)
     results = source_results or retailer_source_results(postcode.postal_code)
     incomplete_sources = any(
         result.status in {"manual_verification_required", "source_unavailable"} for result in results
@@ -127,18 +172,18 @@ def reconcile_postcode_coverage(
 
     if not postcode.enabled:
         status = "disabled"
+    elif expected == 0 and found == 0:
+        # An enabled postcode with no known physical markets is a valid finished
+        # state. Retailer adapters may still be manual/incomplete, but that must
+        # not paint an actually empty area red forever.
+        status = "no_known_stores"
     elif missing_expected:
         status = "incomplete"
-    elif expected == 0 and incomplete_sources:
-        status = "source_unavailable"
-    elif expected == 0 and found == 0:
-        status = "no_expected_stores"
     elif (
-        additional_discovered
-        or address_verified < found
+        address_verified < found
         or coordinates_verified < found
         or official_verified < found
-        or len(promoted_ids) < expected
+        or promoted < expected
     ):
         status = "verification_pending"
     elif incomplete_sources:
@@ -155,7 +200,7 @@ def reconcile_postcode_coverage(
         address_verified=address_verified,
         coordinates_verified=coordinates_verified,
         official_verified=official_verified,
-        promoted=len(promoted_ids),
+        promoted=promoted,
         missing_expected=missing_expected,
         additional_discovered=additional_discovered,
         status=status,
