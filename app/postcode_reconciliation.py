@@ -18,6 +18,16 @@ STATUS_PRESENTATION = {
     "complete": ("Vollständig verifiziert", "green"),
     "source_unavailable": ("Händlerquelle unvollständig", "red"),
     "no_expected_stores": ("Keine erwarteten Märkte", "gray"),
+    "no_known_stores": ("Keine Märkte bekannt", "green"),
+}
+
+# Manually audited rollout targets. These override only the expected market
+# count; discovery/found/promotion semantics stay strict and unchanged.
+AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
+    # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
+    "57610": 5,
+    # Manually checked: no supported grocery market in this postcode area.
+    "56316": 0,
 }
 
 
@@ -92,19 +102,30 @@ def reconcile_postcode_coverage(
     matched_discovered_ids: set[int] = set()
     matched_expected_ids: set[int] = set()
     official_for_discovered: set[int] = set()
-    for expected in expected_rows:
-        matches = [row for row in discovered_rows if row.id not in matched_discovered_ids and candidates_match(expected, row)]
+    for expected_row in expected_rows:
+        matches = [
+            row
+            for row in discovered_rows
+            if row.id not in matched_discovered_ids and candidates_match(expected_row, row)
+        ]
         if not matches:
             continue
         match = min(
             matches,
-            key=lambda row: haversine_km(expected.latitude, expected.longitude, row.latitude, row.longitude),
+            key=lambda row: haversine_km(
+                expected_row.latitude,
+                expected_row.longitude,
+                row.latitude,
+                row.longitude,
+            ),
         )
-        matched_expected_ids.add(expected.id)
+        matched_expected_ids.add(expected_row.id)
         matched_discovered_ids.add(match.id)
         official_for_discovered.add(match.id)
 
-    expected = len(expected_rows)
+    baseline_expected = len(expected_rows)
+    audited_target = AUDITED_EXPECTED_MARKET_COUNTS.get(postcode.postal_code)
+    expected = max(baseline_expected, audited_target) if audited_target is not None else baseline_expected
     found = len(discovered_rows)
     address_verified = sum(bool(row.address_verified) for row in discovered_rows)
     coordinates_verified = sum(bool(row.coordinates_verified) for row in discovered_rows)
@@ -118,8 +139,27 @@ def reconcile_postcode_coverage(
         for store in postcode_stores
         if store_matches_candidate(store, candidate)
     }
-    missing_expected = expected - len(matched_expected_ids)
-    additional_discovered = found - len(matched_discovered_ids)
+
+    # An audited target may include known markets not represented by an official
+    # source row yet. Missing is therefore measured against all distinct known
+    # physical candidates, while `found` keeps its historical discovery meaning.
+    known_candidate_keys = {
+        (
+            normalize_identity_text(row.retailer),
+            normalize_identity_text(row.address),
+            normalize_identity_text(row.city),
+        )
+        for row in candidates
+    }
+    known_physical_count = len(known_candidate_keys)
+    matched_expected_count = len(matched_expected_ids)
+    if audited_target is not None:
+        missing_expected = max(0, expected - known_physical_count)
+        additional_discovered = max(0, known_physical_count - expected)
+    else:
+        missing_expected = expected - matched_expected_count
+        additional_discovered = found - len(matched_discovered_ids)
+
     results = source_results or retailer_source_results(postcode.postal_code)
     incomplete_sources = any(
         result.status in {"manual_verification_required", "source_unavailable"} for result in results
@@ -127,6 +167,8 @@ def reconcile_postcode_coverage(
 
     if not postcode.enabled:
         status = "disabled"
+    elif audited_target == 0 and not candidates and not postcode_stores:
+        status = "no_known_stores"
     elif missing_expected:
         status = "incomplete"
     elif expected == 0 and incomplete_sources:
@@ -145,6 +187,7 @@ def reconcile_postcode_coverage(
         status = "source_unavailable"
     else:
         status = "complete"
+
     label, color = STATUS_PRESENTATION[status]
     return PostcodeCoverageSummary(
         postal_code=postcode.postal_code,
