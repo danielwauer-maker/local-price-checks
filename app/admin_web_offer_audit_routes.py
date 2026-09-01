@@ -33,15 +33,16 @@ def _positive_int(value: str | int | None) -> int | None:
 def _audit_source_url(store: Store) -> str | None:
     """Resolve the admin audit URL without changing the persisted Store source.
 
-    EDEKA exposes market offers at a stable URL containing the external market
-    id.  The Store source URL may still point at a discovery/identity page (or
-    be empty), so use the verified external id for the audit surface.  Other
-    retailers continue to use their persisted reviewed source URL.
+    EDEKA exposes a server-rendered central offers surface that accepts the
+    selected market id as an explicit query parameter.  This is preferable for
+    audits because the market-specific ``/maerkte/<id>/angebote/`` route is
+    blocked by EDEKA's CDN for some datacenter/browser traffic.  Other retailers
+    continue to use their persisted reviewed source URL.
     """
     if store.retailer == "EDEKA" and store.external_id:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
         if market_id:
-            return f"https://www.edeka.de/maerkte/{market_id}/angebote/"
+            return f"https://www.edeka.de/angebote/?selectedMarktID={market_id}"
     return store.source_url
 
 
