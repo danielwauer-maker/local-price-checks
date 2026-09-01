@@ -1,11 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import json
 import os
 import time
 import socket
+
+import httpx
 
 from .dns_resolver import resolve_host
 
@@ -51,6 +53,52 @@ def _system_browser_candidates()->list[str]:
         except Exception:
             pass
     return candidates
+
+
+def _edeka_http_first(url:str,timeout_ms:int)->BrowserFetchResult|None:
+    """Read EDEKA's official server-rendered market offer surface without JS.
+
+    The central ``/angebote/?selectedMarktID=...`` page is an official public
+    EDEKA surface and already contains offer HTML.  Some datacenter Playwright
+    traffic receives a CDN Access Denied page, so prefer a normal HTTP GET for
+    this exact endpoint and keep Playwright as the existing fallback.
+    """
+    parsed=urlparse(url)
+    host=(parsed.hostname or "").lower()
+    query=parse_qs(parsed.query)
+    if host not in {"edeka.de","www.edeka.de"} or parsed.path.rstrip("/")!="/angebote" or not query.get("selectedMarktID"):
+        return None
+    try:
+        response=httpx.get(
+            url,
+            follow_redirects=True,
+            timeout=max(timeout_ms/1000,1),
+            headers={
+                "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+                "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language":"de-DE,de;q=0.9,en;q=0.7",
+                "Cache-Control":"no-cache",
+            },
+        )
+        if response.status_code in {401,403,429}:
+            return None
+        response.raise_for_status()
+        low=response.text[:10000].lower()
+        if "access denied" in low or "you don't have permission to access" in low or "captcha" in low:
+            return None
+        # Reject tiny/interstitial responses so Playwright can still try.
+        if len(response.content)<5000:
+            return None
+        return BrowserFetchResult(
+            response.content,
+            response.headers.get("content-type","text/html; charset=utf-8"),
+            str(response.url),
+            "http-edeka-server-rendered",
+            "system",
+        )
+    except (httpx.TimeoutException,httpx.HTTPError):
+        return None
+
 
 def _load_complete_surface(page,max_iterations:int=20)->None:
     """Drain bounded load-more/infinite-scroll surfaces until the DOM is stable."""
@@ -248,6 +296,10 @@ def _capture_page(
 def browser_fetch(
     url:str,timeout_ms:int=45000,capture_diagnostics:bool=False,drain_offer_surface:bool=False,
 )->BrowserFetchResult:
+    direct=_edeka_http_first(url,timeout_ms)
+    if direct is not None:
+        return direct
+
     from playwright.sync_api import sync_playwright
     host=urlparse(url).hostname or ""
     dns_result=resolve_host(host)
