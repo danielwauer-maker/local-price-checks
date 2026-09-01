@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
-from .edeka_web_offer_api_audit_v2 import run_web_offer_audit
+from .edeka_web_offer_category_audit import run_web_offer_audit
 from .models import Store
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
 from .web_offer_audit_models import WebOfferAuditRun
