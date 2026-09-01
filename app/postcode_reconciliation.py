@@ -97,7 +97,8 @@ def _branch_tokens(candidate: StoreDiscoveryCandidate) -> set[str]:
     }
 
 
-def _street_key(address: str | None) -> tuple[str, ...]:
+def _street_key(address: str | None) -> str:
+    """Normalize the street part while intentionally ignoring house/road numbers."""
     words = _words(address)
     cleaned: list[str] = []
     for word in words:
@@ -108,7 +109,9 @@ def _street_key(address: str | None) -> tuple[str, ...]:
         if word in {"str", "strasse", "straße"}:
             word = "strasse"
         cleaned.append(word)
-    return tuple(cleaned)
+    # Joining makes "Urbacherstraße" and "Urbacher Straße" identical while
+    # still requiring the actual street name to match.
+    return "".join(cleaned)
 
 
 def _candidate_match_score(left: StoreDiscoveryCandidate, right: StoreDiscoveryCandidate) -> float:
