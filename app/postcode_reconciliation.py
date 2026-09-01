@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import re
+import unicodedata
+
 from sqlalchemy.orm import Session
 
-from .config import settings
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .geo import haversine_km
 from .models import Store
@@ -22,12 +24,24 @@ STATUS_PRESENTATION = {
 }
 
 # Manually audited rollout targets. These override only the expected market
-# count; discovery/found/promotion semantics stay strict and unchanged.
+# count. The visible/found count is still derived from unique physical markets.
 AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
     # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
     "57610": 5,
     # Manually checked: no supported grocery market in this postcode area.
     "56316": 0,
+}
+
+_GENERIC_MARKET_WORDS = {
+    "markt",
+    "market",
+    "supermarkt",
+    "filiale",
+    "marktcenter",
+    "center",
+    "gmbh",
+    "co",
+    "kg",
 }
 
 
@@ -55,18 +69,129 @@ class PostcodeCoverageSummary:
         return payload
 
 
+@dataclass
+class CandidateGroup:
+    representative: StoreDiscoveryCandidate
+    members: list[StoreDiscoveryCandidate]
+
+    @property
+    def has_official_source(self) -> bool:
+        return any(member.source.startswith("official:") for member in self.members)
+
+
+def _words(value: str | None) -> list[str]:
+    folded = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", (value or "").casefold().replace("ß", "ss"))
+        if not unicodedata.combining(character)
+    )
+    return re.findall(r"[a-z0-9]+", folded)
+
+
+def _branch_tokens(candidate: StoreDiscoveryCandidate) -> set[str]:
+    ignored = set(_words(candidate.retailer)) | set(_words(candidate.city)) | _GENERIC_MARKET_WORDS
+    return {
+        word
+        for word in _words(candidate.name)
+        if word not in ignored and len(word) >= 4 and not word.isdigit()
+    }
+
+
+def _street_key(address: str | None) -> tuple[str, ...]:
+    words = _words(address)
+    cleaned: list[str] = []
+    for word in words:
+        if re.fullmatch(r"\d+[a-z]?", word):
+            continue
+        if re.fullmatch(r"[blks]\d+", word):
+            continue
+        if word in {"str", "strasse", "straße"}:
+            word = "strasse"
+        cleaned.append(word)
+    return tuple(cleaned)
+
+
+def _candidate_match_score(left: StoreDiscoveryCandidate, right: StoreDiscoveryCandidate) -> float:
+    """Return a confidence score that two source rows describe one branch.
+
+    We only collapse rows for the same retailer and postcode. Official rows are
+    never collapsed with another official row; this preserves genuine multi-
+    branch cases such as the two REWE markets in Altenkirchen.
+    """
+    if left.postal_code != right.postal_code:
+        return 0.0
+    if normalize_identity_text(left.retailer) != normalize_identity_text(right.retailer):
+        return 0.0
+    if left.source.startswith("official:") and right.source.startswith("official:"):
+        return 0.0
+
+    score = 0.0
+    if left.matched_store_id is not None and left.matched_store_id == right.matched_store_id:
+        score = max(score, 1200.0)
+    if addresses_match(left.address, right.address):
+        score = max(score, 1000.0)
+
+    left_branch = _branch_tokens(left)
+    right_branch = _branch_tokens(right)
+    overlap = left_branch & right_branch
+    if overlap:
+        score = max(score, 600.0 + 20.0 * len(overlap))
+
+    left_street = _street_key(left.address)
+    right_street = _street_key(right.address)
+    if left_street and left_street == right_street:
+        score = max(score, 500.0)
+
+    try:
+        distance_m = haversine_km(
+            left.latitude,
+            left.longitude,
+            right.latitude,
+            right.longitude,
+        ) * 1000.0
+    except (TypeError, ValueError):
+        distance_m = float("inf")
+    if distance_m <= 250.0:
+        score = max(score, 450.0 - min(distance_m, 200.0) / 10.0)
+
+    return score
+
+
+def group_physical_candidates(candidates: list[StoreDiscoveryCandidate]) -> list[CandidateGroup]:
+    """Collapse source duplicates while keeping distinct physical branches.
+
+    Official retailer rows are preferred as representatives. OSM/secondary rows
+    are attached to the strongest matching branch using address, branch name,
+    street and close-coordinate evidence. This intentionally keeps raw source
+    rows in the database; it only defines the admin/workflow view.
+    """
+    official = [row for row in candidates if row.source.startswith("official:")]
+    secondary = [row for row in candidates if not row.source.startswith("official:")]
+    groups = [CandidateGroup(row, [row]) for row in official]
+
+    for row in secondary:
+        best_group: CandidateGroup | None = None
+        best_score = 0.0
+        for group in groups:
+            score = max(_candidate_match_score(row, member) for member in group.members)
+            if score > best_score:
+                best_group = group
+                best_score = score
+        if best_group is not None and best_score >= 400.0:
+            best_group.members.append(row)
+        else:
+            groups.append(CandidateGroup(row, [row]))
+
+    return groups
+
+
+def deduplicate_candidates(candidates: list[StoreDiscoveryCandidate]) -> list[StoreDiscoveryCandidate]:
+    """Return one admin-visible candidate per physical market."""
+    return [group.representative for group in group_physical_candidates(candidates)]
+
+
 def candidates_match(expected: StoreDiscoveryCandidate, discovered: StoreDiscoveryCandidate) -> bool:
-    if expected.postal_code != discovered.postal_code or expected.retailer != discovered.retailer:
-        return False
-    city_matches = normalize_identity_text(expected.city) == normalize_identity_text(discovered.city)
-    address_matches = addresses_match(expected.address, discovered.address)
-    distance_m = haversine_km(
-        expected.latitude,
-        expected.longitude,
-        discovered.latitude,
-        discovered.longitude,
-    ) * 1000
-    return bool(city_matches and address_matches and distance_m <= settings.store_coordinate_tolerance_m)
+    return _candidate_match_score(expected, discovered) >= 400.0
 
 
 def store_matches_candidate(store: Store, candidate: StoreDiscoveryCandidate) -> bool:
@@ -90,6 +215,10 @@ def store_matches_candidate(store: Store, candidate: StoreDiscoveryCandidate) ->
     )
 
 
+def _group_matches_store(group: CandidateGroup, store: Store) -> bool:
+    return any(store_matches_candidate(store, member) for member in group.members)
+
+
 def reconcile_postcode_coverage(
     db: Session,
     postcode: CoveragePostalCode,
@@ -97,68 +226,27 @@ def reconcile_postcode_coverage(
     source_results: tuple[RetailerSourceResult, ...] | None = None,
 ) -> PostcodeCoverageSummary:
     candidates = db.query(StoreDiscoveryCandidate).filter_by(postal_code=postcode.postal_code).all()
-    expected_rows = [row for row in candidates if row.source.startswith("official:")]
-    discovered_rows = [row for row in candidates if not row.source.startswith("official:")]
-    matched_discovered_ids: set[int] = set()
-    matched_expected_ids: set[int] = set()
-    official_for_discovered: set[int] = set()
-    for expected_row in expected_rows:
-        matches = [
-            row
-            for row in discovered_rows
-            if row.id not in matched_discovered_ids and candidates_match(expected_row, row)
-        ]
-        if not matches:
-            continue
-        match = min(
-            matches,
-            key=lambda row: haversine_km(
-                expected_row.latitude,
-                expected_row.longitude,
-                row.latitude,
-                row.longitude,
-            ),
-        )
-        matched_expected_ids.add(expected_row.id)
-        matched_discovered_ids.add(match.id)
-        official_for_discovered.add(match.id)
+    groups = group_physical_candidates(candidates)
+    postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
 
-    baseline_expected = len(expected_rows)
+    baseline_expected = sum(group.has_official_source for group in groups)
     audited_target = AUDITED_EXPECTED_MARKET_COUNTS.get(postcode.postal_code)
     expected = max(baseline_expected, audited_target) if audited_target is not None else baseline_expected
-    found = len(discovered_rows)
-    address_verified = sum(bool(row.address_verified) for row in discovered_rows)
-    coordinates_verified = sum(bool(row.coordinates_verified) for row in discovered_rows)
-    official_verified = sum(
-        bool(row.official_source_verified or row.id in official_for_discovered) for row in discovered_rows
-    )
-    postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
-    promoted_ids = {
-        store.id
-        for candidate in candidates
-        for store in postcode_stores
-        if store_matches_candidate(store, candidate)
-    }
+    found = len(groups)
 
-    # An audited target may include known markets not represented by an official
-    # source row yet. Missing is therefore measured against all distinct known
-    # physical candidates, while `found` keeps its historical discovery meaning.
-    known_candidate_keys = {
-        (
-            normalize_identity_text(row.retailer),
-            normalize_identity_text(row.address),
-            normalize_identity_text(row.city),
-        )
-        for row in candidates
-    }
-    known_physical_count = len(known_candidate_keys)
-    matched_expected_count = len(matched_expected_ids)
-    if audited_target is not None:
-        missing_expected = max(0, expected - known_physical_count)
-        additional_discovered = max(0, known_physical_count - expected)
-    else:
-        missing_expected = expected - matched_expected_count
-        additional_discovered = found - len(matched_discovered_ids)
+    address_verified = sum(any(row.address_verified for row in group.members) for group in groups)
+    coordinates_verified = sum(any(row.coordinates_verified for row in group.members) for group in groups)
+    official_verified = sum(
+        any(row.official_source_verified or row.source.startswith("official:") for row in group.members)
+        for group in groups
+    )
+    promoted = sum(
+        any(_group_matches_store(group, store) for store in postcode_stores)
+        for group in groups
+    )
+
+    missing_expected = max(0, expected - found)
+    additional_discovered = max(0, found - expected)
 
     results = source_results or retailer_source_results(postcode.postal_code)
     incomplete_sources = any(
@@ -167,11 +255,11 @@ def reconcile_postcode_coverage(
 
     if not postcode.enabled:
         status = "disabled"
-    elif audited_target == 0 and not candidates and not postcode_stores:
+    elif audited_target == 0 and not groups and not postcode_stores:
         status = "no_known_stores"
     elif missing_expected:
         status = "incomplete"
-    elif expected == 0 and incomplete_sources:
+    elif expected == 0 and found == 0 and incomplete_sources:
         status = "source_unavailable"
     elif expected == 0 and found == 0:
         status = "no_expected_stores"
@@ -180,7 +268,7 @@ def reconcile_postcode_coverage(
         or address_verified < found
         or coordinates_verified < found
         or official_verified < found
-        or len(promoted_ids) < expected
+        or promoted < found
     ):
         status = "verification_pending"
     elif incomplete_sources:
@@ -198,7 +286,7 @@ def reconcile_postcode_coverage(
         address_verified=address_verified,
         coordinates_verified=coordinates_verified,
         official_verified=official_verified,
-        promoted=len(promoted_ids),
+        promoted=promoted,
         missing_expected=missing_expected,
         additional_discovered=additional_discovered,
         status=status,
