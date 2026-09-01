@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
-from .edeka_web_offer_category_audit import run_web_offer_audit
+from .edeka_web_offer_audit_orchestrator import run_web_offer_audit
 from .models import Store
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
 from .web_offer_audit_models import WebOfferAuditRun
@@ -33,10 +33,10 @@ def _positive_int(value: str | int | None) -> int | None:
 def _audit_source_url(store: Store) -> str | None:
     """Resolve the admin audit URL without changing the persisted Store source.
 
-    EDEKA has a dedicated structured Web API in the audit execution layer.  The
-    central market-selected offers URL remains useful as human-readable source
-    context, while the API collector uses the same verified external market ID.
-    Other retailers continue to use their persisted reviewed source URL.
+    EDEKA has dedicated structured and local-official audit sources in the
+    execution layer.  The central market-selected offers URL remains useful as
+    human-readable source context. Other retailers continue to use their
+    persisted reviewed source URL.
     """
     if store.retailer == "EDEKA" and store.external_id:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
