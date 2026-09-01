@@ -10,7 +10,7 @@ import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States
 import MapPanel from "@/components/MapPanel";
 import { useStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
-import { fetchMarkets, persistLocation } from "@/services/lokero-api";
+import { fetchMarkets, persistLocation, type Market } from "@/services/lokero-api";
 import { fetchAccountState, persistAccountProfile } from "@/services/lokero-account-api";
 
 export const Route = createFileRoute("/maerkte")({
@@ -35,6 +35,45 @@ const FILTERS = [
   { id: "alle", label: "Alle" },
   { id: "entfernung", label: "Entfernung", dropdown: true },
 ];
+
+type PhysicalMarket = Market & { physicalMarketIds: string[] };
+
+function normalizeMarketIdentity(value: string) {
+  return value
+    .trim()
+    .toLocaleLowerCase("de")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function physicalMarketKey(market: Market) {
+  return [market.chain, market.city, market.street]
+    .map((value) => normalizeMarketIdentity(String(value ?? "")))
+    .join("|");
+}
+
+export function dedupePhysicalMarkets(markets: Market[], favoriteMarkets: string[]): PhysicalMarket[] {
+  const favorites = new Set(favoriteMarkets);
+  const grouped = new Map<string, PhysicalMarket>();
+
+  for (const market of markets) {
+    const key = physicalMarketKey(market);
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { ...market, physicalMarketIds: [market.id] });
+      continue;
+    }
+
+    existing.physicalMarketIds.push(market.id);
+    const existingFavorite = favorites.has(existing.id);
+    const candidateFavorite = favorites.has(market.id);
+    if (!existingFavorite && candidateFavorite) {
+      grouped.set(key, { ...market, physicalMarketIds: existing.physicalMarketIds });
+    }
+  }
+
+  return [...grouped.values()];
+}
 
 function haversineKm(
   from: { lat: number; lng: number },
@@ -92,16 +131,32 @@ function MarketsScreen() {
   });
 
   const markets = useMemo(() => {
-    const list = (query.data ?? [])
-      .map((market) => ({
-        ...market,
-        distanceKm: haversineKm(location, { lat: market.lat, lng: market.lng }),
-      }))
-      .filter((market) => market.distanceKm <= radius + 0.01);
+    const list = dedupePhysicalMarkets(
+      (query.data ?? [])
+        .map((market) => ({
+          ...market,
+          distanceKm: haversineKm(location, { lat: market.lat, lng: market.lng }),
+        }))
+        .filter((market) => market.distanceKm <= radius + 0.01),
+      favoriteMarkets,
+    );
 
     if (filter === "entfernung") list.sort((a, b) => a.distanceKm - b.distanceKm);
     return list;
-  }, [query.data, filter, location, radius]);
+  }, [query.data, favoriteMarkets, filter, location, radius]);
+
+  useEffect(() => {
+    // Old imports could expose two Store rows for the same physical branch. If
+    // both legacy ids were favorited, keep the visible representative and drop
+    // the hidden duplicate ids so offer requests no longer include both rows.
+    for (const market of markets) {
+      const selectedIds = market.physicalMarketIds.filter((id) => favoriteMarkets.includes(id));
+      if (selectedIds.length <= 1) continue;
+      for (const id of selectedIds) {
+        if (id !== market.id) toggleFavoriteMarket(id);
+      }
+    }
+  }, [markets, favoriteMarkets, toggleFavoriteMarket]);
 
   async function saveManualLocation() {
     if (!/^\d{5}$/.test(postalCode.trim()) || !city.trim()) {
@@ -247,11 +302,18 @@ function MarketsScreen() {
         )}
         {markets.map((market, index) => (
           <MarketCard
-            key={market.id}
+            key={physicalMarketKey(market)}
             market={market}
             rank={index + 1}
-            isFavorite={favoriteMarkets.includes(market.id)}
-            onToggleFavorite={() => toggleFavoriteMarket(market.id)}
+            isFavorite={market.physicalMarketIds.some((id) => favoriteMarkets.includes(id))}
+            onToggleFavorite={() => {
+              const selectedIds = market.physicalMarketIds.filter((id) => favoriteMarkets.includes(id));
+              if (selectedIds.length > 0) {
+                selectedIds.forEach((id) => toggleFavoriteMarket(id));
+              } else {
+                toggleFavoriteMarket(market.id);
+              }
+            }}
             onSelect={() => setActiveId(market.id)}
           />
         ))}
