@@ -106,16 +106,14 @@ def test_penny_context_requires_selected_store_evidence():
         '<div class="market selected active">PENNY Markt 10115 Berlin</div>',
         [],
     ) is True
+    # Merely finding the expected ID somewhere in an all-markets payload is not
+    # evidence that this market is selected.  The audit must fail closed here.
     assert runtime._strong_penny_context_match(
         store,
         '<div class="market selected active">PENNY Markt 80331 München</div>',
         [{"data": {"allMarkets": [{"id": "4030882"}, {"id": "830784"}]}}],
     ) is False
-    assert runtime._strong_penny_context_match(
-        store,
-        "<html></html>",
-        [{"data": {"selectedMarket": {"id": "4030882", "active": True}}}],
-    ) is True
+    assert runtime._strong_penny_context_match(store, "<html></html>", []) is False
 
 
 def test_browser_deep_drain_is_opt_in_by_default():
