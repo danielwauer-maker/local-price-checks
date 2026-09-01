@@ -30,6 +30,21 @@ def _positive_int(value: str | int | None) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _audit_source_url(store: Store) -> str | None:
+    """Resolve the admin audit URL without changing the persisted Store source.
+
+    EDEKA exposes market offers at a stable URL containing the external market
+    id.  The Store source URL may still point at a discovery/identity page (or
+    be empty), so use the verified external id for the audit surface.  Other
+    retailers continue to use their persisted reviewed source URL.
+    """
+    if store.retailer == "EDEKA" and store.external_id:
+        market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
+        if market_id:
+            return f"https://www.edeka.de/maerkte/{market_id}/angebote/"
+    return store.source_url
+
+
 @router.get("/admin/web-offer-audit")
 def web_offer_audit_page(
     request: Request,
@@ -88,9 +103,13 @@ def start_web_offer_audit(
     store = db.get(Store, store_id)
     if not store or not store.active or store.retailer not in SUPPORTED_RETAILERS:
         raise HTTPException(status_code=404, detail="Unterstützter aktiver Markt nicht gefunden")
-    # Only the persisted, admin-reviewed store URL is used. The form cannot turn
+    # Only an admin-reviewed Store and a deterministic retailer URL derived
+    # from its verified external id can reach the fetcher. The form cannot turn
     # this endpoint into an arbitrary URL fetcher or external redirect.
-    run = run_web_offer_audit(db, store, period_key=period_key)
+    try:
+        run = run_web_offer_audit(db, store, period_key=period_key, source_url=_audit_source_url(store))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit(
         db, "web_offer_audit_run", "web_offer_audit", run.id,
         f"store={store.id}; retailer={store.retailer}; period={period_key}; status={run.status}; count={run.valid_count}", actor,
