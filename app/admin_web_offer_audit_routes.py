@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
+from .edeka_web_offer_api_audit import run_web_offer_audit
 from .models import Store
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
-from .web_offer_audit_runtime import run_web_offer_audit
 from .web_offer_audit_models import WebOfferAuditRun
 
 
@@ -33,11 +33,10 @@ def _positive_int(value: str | int | None) -> int | None:
 def _audit_source_url(store: Store) -> str | None:
     """Resolve the admin audit URL without changing the persisted Store source.
 
-    EDEKA exposes a server-rendered central offers surface that accepts the
-    selected market id as an explicit query parameter.  This is preferable for
-    audits because the market-specific ``/maerkte/<id>/angebote/`` route is
-    blocked by EDEKA's CDN for some datacenter/browser traffic.  Other retailers
-    continue to use their persisted reviewed source URL.
+    EDEKA has a dedicated structured Web API in the audit execution layer.  The
+    central market-selected offers URL remains useful as human-readable source
+    context, while the API collector uses the same verified external market ID.
+    Other retailers continue to use their persisted reviewed source URL.
     """
     if store.retailer == "EDEKA" and store.external_id:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
