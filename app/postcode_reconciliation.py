@@ -160,6 +160,25 @@ def _candidate_match_score(left: StoreDiscoveryCandidate, right: StoreDiscoveryC
     return score
 
 
+def _representative_quality(candidate: StoreDiscoveryCandidate) -> tuple[int, int, int, int]:
+    """Rank duplicate source rows so the admin keeps the most useful one.
+
+    Official retailer records always win. For secondary rows, prefer a safe
+    HTTP(S) source link, then verified identity data and finally a linked store.
+    This keeps provenance available without letting a malformed URL become the
+    visible representative merely because it was inserted first.
+    """
+    source_url = (candidate.source_url or "").strip().lower()
+    safe_http_source = int(source_url.startswith("https://") or source_url.startswith("http://"))
+    verified_fields = int(bool(candidate.address_verified)) + int(bool(candidate.coordinates_verified)) + int(bool(candidate.official_source_verified))
+    return (
+        int(candidate.source.startswith("official:")),
+        safe_http_source,
+        verified_fields,
+        int(candidate.matched_store_id is not None),
+    )
+
+
 def group_physical_candidates(candidates: list[StoreDiscoveryCandidate]) -> list[CandidateGroup]:
     """Collapse source duplicates while keeping distinct physical branches.
 
@@ -182,6 +201,8 @@ def group_physical_candidates(candidates: list[StoreDiscoveryCandidate]) -> list
                 best_score = score
         if best_group is not None and best_score >= 400.0:
             best_group.members.append(row)
+            if _representative_quality(row) > _representative_quality(best_group.representative):
+                best_group.representative = row
         else:
             groups.append(CandidateGroup(row, [row]))
 
