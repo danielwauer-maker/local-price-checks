@@ -51,8 +51,10 @@ def test_model_registry_contains_additive_models():
         "favorite_share_item_visibility",
         "favorite_share_subscriptions",
         "push_subscriptions",
+        "web_offer_audit_runs",
+        "web_offer_audit_items",
     } <= names
-    assert len(names) == 57
+    assert len(names) == 59
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):

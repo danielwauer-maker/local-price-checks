@@ -25,8 +25,8 @@ from .db_transfer import (
 from .model_registry import metadata as application_metadata
 
 BASELINE_REVISION = "20260825_01"
-PREVIOUS_REVISION = "20260828_02"
-TARGET_REVISION = "20260829_01"
+PREVIOUS_REVISION = "20260829_01"
+TARGET_REVISION = "20260901_01"
 HISTORICAL_REVISIONS = {
     BASELINE_REVISION,
     "20260825_02",
@@ -34,6 +34,7 @@ HISTORICAL_REVISIONS = {
     "20260826_01",
     "20260827_01",
     "20260828_01",
+    "20260828_02",
     PREVIOUS_REVISION,
 }
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent

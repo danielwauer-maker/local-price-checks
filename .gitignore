@@ -16,6 +16,7 @@ data/*
 cache/
 logs/
 browser_profiles/
+app/data/browser_profile/
 .local-dev/
 *.crt
 *.key
