@@ -12,7 +12,8 @@ from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
 from .models import Store
-from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled, run_web_offer_audit
+from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
+from .web_offer_audit_runtime import run_web_offer_audit
 from .web_offer_audit_models import WebOfferAuditRun
 
 
