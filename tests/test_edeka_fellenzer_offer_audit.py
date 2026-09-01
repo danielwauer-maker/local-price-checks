@@ -58,13 +58,13 @@ def test_fellenzer_html_parser_reads_server_rendered_offer_cards():
     assert "invalid_image" not in raspberry.validation_errors
 
 
-def test_orchestrator_falls_back_to_legacy_api_when_category_metadata_missing(monkeypatch):
+def test_orchestrator_falls_back_to_legacy_api_when_combined_source_fails(monkeypatch):
     sentinel = object()
 
-    def fail_categories(store):
-        raise WebAuditError("endpoint_changed", "keine Facets")
-
-    monkeypatch.setattr("app.edeka_web_offer_audit_orchestrator._fetch_all_categories", fail_categories)
+    monkeypatch.setattr(
+        "app.edeka_web_offer_audit_orchestrator.fetch_combined_edeka",
+        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "zentrale Quelle geändert")),
+    )
     monkeypatch.setattr(
         "app.edeka_web_offer_audit_orchestrator.run_legacy_edeka_audit",
         lambda db, store, period_key="current", source_url=None: sentinel,
@@ -74,16 +74,12 @@ def test_orchestrator_falls_back_to_legacy_api_when_category_metadata_missing(mo
     assert run_web_offer_audit(object(), other_store, period_key="current") is sentinel
 
 
-def test_fellenzer_failure_does_not_mask_legacy_api_fallback(monkeypatch):
+def test_fellenzer_combined_failure_does_not_mask_legacy_api_fallback(monkeypatch):
     sentinel = object()
 
     monkeypatch.setattr(
-        "app.edeka_web_offer_audit_orchestrator.fetch_fellenzer_offers",
-        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "lokale Seite geändert")),
-    )
-    monkeypatch.setattr(
-        "app.edeka_web_offer_audit_orchestrator._fetch_all_categories",
-        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "keine Facets")),
+        "app.edeka_web_offer_audit_orchestrator.fetch_combined_edeka",
+        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "lokale oder zentrale Quelle geändert")),
     )
     monkeypatch.setattr(
         "app.edeka_web_offer_audit_orchestrator.run_legacy_edeka_audit",

@@ -1,45 +1,48 @@
 from __future__ import annotations
 
-from .models import Store
-from .web_offer_audit import WebAuditError
-from .edeka_fellenzer_offer_audit import FELLENZER_MARKET_ID, fetch_fellenzer_offers
+import json
+
+from .edeka_multi_source_audit import fetch_combined_edeka
 from .edeka_web_offer_api_audit import (
     _persist_edeka_result,
     run_web_offer_audit as run_legacy_edeka_audit,
 )
-from .edeka_web_offer_category_audit import _fetch_all_categories
+from .models import Store
+from .web_offer_audit import WebAuditError
 
 
-def _market_id(store: Store) -> str:
-    return "".join(character for character in str(store.external_id or "") if character.isdigit())
+def _attach_source_breakdown(db, run, result) -> None:
+    breakdown = (result.artifacts or {}).get("source_breakdown")
+    if not isinstance(breakdown, dict):
+        return
+    try:
+        comparison = json.loads(run.comparison_json or "{}")
+    except json.JSONDecodeError:
+        comparison = {}
+    comparison.update({f"source_{key}": value for key, value in breakdown.items()})
+    run.comparison_json = json.dumps(comparison, ensure_ascii=False)
+    db.commit()
+    db.refresh(run)
 
 
 def run_web_offer_audit(db, store: Store, period_key: str = "current", source_url: str | None = None):
-    """Run EDEKA audits from the strongest source without regressing to zero.
+    """Run EDEKA audit as central-primary plus optional local supplement.
 
-    Puderbach/Fellenzer uses the retailer's official local store site first.
-    The category-aware central API remains the preferred generic EDEKA path.
-    If EDEKA omits category/facet metadata or category completion cannot be
-    proven, fall back to the established API collector instead of persisting a
-    zero-offer failure.  No path writes public Offer rows.
+    The central EDEKA market source is always collected first.  For verified
+    markets with an official local merchant source (currently Fellenzer
+    071378), local offers are added afterwards and conservative cross-source
+    deduplication keeps overlaps visible only once.  No path writes public
+    Offer rows.
     """
     if store.retailer != "EDEKA":
         return run_legacy_edeka_audit(db, store, period_key=period_key, source_url=source_url)
 
-    if _market_id(store) == FELLENZER_MARKET_ID:
-        try:
-            result = fetch_fellenzer_offers(store)
-            return _persist_edeka_result(db, store, period_key, result)
-        except WebAuditError:
-            # The local official source is preferred but must never take the
-            # whole audit down.  Continue with the generic EDEKA sources.
-            pass
-
     try:
-        result = _fetch_all_categories(store)
-        return _persist_edeka_result(db, store, period_key, result)
+        result = fetch_combined_edeka(store)
+        run = _persist_edeka_result(db, store, period_key, result)
+        _attach_source_breakdown(db, run, result)
+        return run
     except WebAuditError:
-        # Category completeness is an enhancement.  Missing facets or an
-        # endpoint change must not turn a previously usable API snapshot into
-        # a zero-offer run.
+        # The established EDEKA central API remains the final diagnostic
+        # fallback; local-source failures must never take the audit down.
         return run_legacy_edeka_audit(db, store, period_key=period_key, source_url=source_url)
