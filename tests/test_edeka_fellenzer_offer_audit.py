@@ -28,7 +28,7 @@ def test_fellenzer_html_parser_reads_server_rendered_offer_cards():
     <html><body>
       <p>Die Angebote der Woche sind gültig vom 31.08. bis zum 05.09.2026.</p>
       <article class="offer-card">
-        <img src="https://media.smp-it-media.de/product/himbeeren.jpg" alt="Himbeeren">
+        <img src="https://media.smp-it-media.de/products/image/U3BhcmVfSGltYmVlcmVu" alt="Himbeeren">
         <span class="price">1.79 €</span>
         <h3>Himbeeren</h3>
         <p>Klasse I, 125 g Schale (1 kg = € 14.32)</p>
@@ -54,7 +54,8 @@ def test_fellenzer_html_parser_reads_server_rendered_offer_cards():
     assert raspberry.price == 1.79
     assert raspberry.quantity_value == 125
     assert raspberry.quantity_unit == "g"
-    assert raspberry.image_url.endswith("himbeeren.jpg")
+    assert raspberry.image_url == "https://media.smp-it-media.de/products/image/U3BhcmVfSGltYmVlcmVu"
+    assert "invalid_image" not in raspberry.validation_errors
 
 
 def test_orchestrator_falls_back_to_legacy_api_when_category_metadata_missing(monkeypatch):
