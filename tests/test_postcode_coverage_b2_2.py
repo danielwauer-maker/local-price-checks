@@ -159,16 +159,19 @@ def test_missing_official_source_blocks_promotion_even_after_address_and_positio
     assert candidate_ready_for_promotion(candidate) is False
 
 
-def test_reconciliation_detects_missing_expected_store():
+def test_reconciliation_counts_official_candidate_as_found_but_not_verified_or_promoted():
     db = _db()
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
     db.add_all([postcode, _candidate("expected", source="official:lidl", official_source_verified=True)])
     db.commit()
     summary = reconcile_postcode_coverage(db, postcode, source_results=_source())
     assert summary.expected == 1
-    assert summary.found == 0
-    assert summary.missing_expected == 1
-    assert summary.status == "incomplete"
+    assert summary.found == 1
+    assert summary.missing_expected == 0
+    assert summary.address_verified == 0
+    assert summary.coordinates_verified == 0
+    assert summary.promoted == 0
+    assert summary.status == "verification_pending"
     db.close()
 
 

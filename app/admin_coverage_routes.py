@@ -32,7 +32,7 @@ from .postcode_coverage_service import (
     verify_staged_candidate,
 )
 from .postcode_geometry import OSM_ATTRIBUTION, OSM_LICENSE_URL, import_postcode_geometry, postcode_feature
-from .postcode_reconciliation import reconcile_postcode_coverage
+from .postcode_reconciliation import deduplicate_candidates, reconcile_postcode_coverage
 from .retailer_store_sources import stage_official_store_candidates
 from .web_collector import collect_store_from_web
 
@@ -55,7 +55,7 @@ def safe_external_url(value: str | None) -> str | None:
         return None
     try:
         parsed = urlsplit(cleaned)
-        parsed.port  # Validate an optional numeric port.
+        parsed.port
     except ValueError:
         return None
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
@@ -64,12 +64,6 @@ def safe_external_url(value: str | None) -> str | None:
 
 
 def _load_germany_postcode_geojson() -> dict:
-    """Load and cache Germany's 5-digit postcode polygons server-side.
-
-    The admin browser must not depend on a direct cross-origin GitHub fetch. A
-    same-origin endpoint keeps the rollout map stable behind CSP, privacy tools
-    and browser/network policies while retaining the upstream ODbL dataset.
-    """
     global _germany_postcode_geojson_cache
     if _germany_postcode_geojson_cache is not None:
         return _germany_postcode_geojson_cache
@@ -117,9 +111,13 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         StoreDiscoveryCandidate.retailer,
         StoreDiscoveryCandidate.name,
     ).all()
-    candidates_by_postcode: dict[str, list[StoreDiscoveryCandidate]] = {}
+    raw_candidates_by_postcode: dict[str, list[StoreDiscoveryCandidate]] = {}
     for candidate in candidates:
-        candidates_by_postcode.setdefault(candidate.postal_code, []).append(candidate)
+        raw_candidates_by_postcode.setdefault(candidate.postal_code, []).append(candidate)
+    candidates_by_postcode = {
+        postal_code: deduplicate_candidates(rows)
+        for postal_code, rows in raw_candidates_by_postcode.items()
+    }
     postcode_values = [postcode.postal_code for postcode in postcodes]
     postcode_stores = (
         db.query(Store)
@@ -207,8 +205,6 @@ def refresh_postcode_geometry(
         result = f"postcode-geometry:{postal_code}:updated"
     except Exception as exc:
         db.rollback()
-        # The previously cached geometry remains available because the provider
-        # is called before any existing fields are changed.
         result = f"postcode-geometry:{postal_code}:failed={type(exc).__name__}:cache-kept"
     return RedirectResponse(f"/admin/coverage?result={result}", status_code=303)
 

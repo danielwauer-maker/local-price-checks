@@ -60,9 +60,7 @@ window.addEventListener('DOMContentLoaded', function () {
     deleteForm.method = 'post';
     deleteForm.action = '/admin/media/' + match[1] + '/delete';
     deleteForm.className = 'admin-media-delete';
-    deleteForm.onsubmit = function () {
-      return window.confirm('Dieses Bild/Logo wirklich dauerhaft löschen?');
-    };
+    deleteForm.onsubmit = function () { return window.confirm('Dieses Bild/Logo wirklich dauerhaft löschen?'); };
     var button = document.createElement('button');
     button.type = 'submit';
     button.className = 'btn danger';
@@ -78,29 +76,9 @@ window.addEventListener('DOMContentLoaded', function () {
   .rollout-cockpit{margin:12px 0 4px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f9fbf8}.rollout-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rollout-row+.rollout-row{margin-top:9px}.rollout-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}.rollout-chip{border:1px solid var(--line);border-radius:999px;padding:7px 10px;background:#fff;color:var(--text);font-weight:700;cursor:pointer}.rollout-chip.active{background:var(--green);border-color:var(--green);color:#fff}.rollout-prefix-input{width:92px!important;padding:7px 9px!important;border-radius:999px!important}.rollout-summary{margin-left:auto;font-size:12px;color:var(--muted)}.postcode-collapsed>:not(.postcode-head){display:none!important}.postcode-head[data-rollout-toggle]{cursor:pointer}.postcode-head[data-rollout-toggle] h2:before{content:'▸';display:inline-block;width:18px;color:var(--muted)}.postcode-head[data-rollout-toggle][data-open='1'] h2:before{content:'▾'}.rollout-map-marker{border-radius:6px;padding:3px 5px;color:#fff;font:800 9px/1 system-ui,sans-serif;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25);white-space:nowrap}.rollout-map-marker.public{background:#16815a}.rollout-map-marker.progress{background:#e0a21b;color:#17231c}.rollout-map-marker.failed{background:#c84b3b}.rollout-map-marker.discovered{background:#68736c}.rollout-map-note{font-size:11px;color:var(--muted);margin-top:7px}.rollout-loading{opacity:.65;pointer-events:none}
 </style>
 <script>
-(function captureCoverageMap() {
-  if (!window.L || !L.map || L.map.__sparenoCoverageWrapped) return;
-  var originalMap = L.map;
-  var wrapped = function () {
-    var map = originalMap.apply(this, arguments);
-    var target = arguments[0];
-    var id = typeof target === 'string' ? target : target && target.id;
-    if (id === 'coverage-map') window.sparenoCoverageMap = map;
-    return map;
-  };
-  Object.assign(wrapped, originalMap);
-  wrapped.__sparenoCoverageWrapped = true;
-  L.map = wrapped;
-})();
-
 window.addEventListener('DOMContentLoaded', function () {
   var normalize = function (value) {
-    return (value || '')
-      .toLocaleLowerCase('de-DE')
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/ß/g, 'ss')
-      .replace(/[^a-z0-9]+/g, '');
+    return (value || '').toLocaleLowerCase('de-DE').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '');
   };
   var canonicalRetailer = function (value) {
     var key = normalize(value);
@@ -127,29 +105,8 @@ window.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  function dedupeOfficialRows(section) {
-    var rows = candidateRows(section);
-    var officialKeys = new Set();
-    rows.forEach(function (row) {
-      var source = (row.cells[3].textContent || '').trim().toLowerCase();
-      if (!source.startsWith('official:')) return;
-      var retailer = canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
-      var address = normalize(row.cells[1].textContent);
-      officialKeys.add(retailer + '|' + address);
-    });
-    rows.forEach(function (row) {
-      var source = (row.cells[3].textContent || '').trim().toLowerCase();
-      if (!source.startsWith('osm')) return;
-      var retailer = canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
-      var address = normalize(row.cells[1].textContent);
-      if (officialKeys.has(retailer + '|' + address)) row.remove();
-    });
-  }
-
   function trimEmptySourceCards(section) {
-    var retailers = new Set(candidateRows(section).map(function (row) {
-      return canonicalRetailer(row.cells[0].querySelector('b')?.textContent || '');
-    }));
+    var retailers = new Set(candidateRows(section).map(function (row) { return canonicalRetailer(row.cells[0].querySelector('b')?.textContent || ''); }));
     var list = section.querySelector('.source-list');
     if (!list) return;
     Array.from(list.querySelectorAll('.source-item')).forEach(function (item) {
@@ -160,7 +117,6 @@ window.addEventListener('DOMContentLoaded', function () {
   }
 
   postcodeSections.forEach(function (section) {
-    dedupeOfficialRows(section);
     trimEmptySourceCards(section);
     var head = section.querySelector('.postcode-head');
     if (!head) return;
@@ -192,8 +148,7 @@ window.addEventListener('DOMContentLoaded', function () {
     '<button class="btn" data-role="expand-visible">Sichtbare PLZ aufklappen</button>' +
     '<button class="btn" data-role="collapse-all">Alle zuklappen</button></div>' +
     '<div class="rollout-map-note">Graue PLZ-Flächen sind noch nicht im Rollout. Klick auf eine Fläche, um die PLZ direkt hinzuzufügen. Marktmarker: grün = öffentlich, gelb = in Prüfung, rot = Fehler, grau = entdeckt.</div>';
-  if (mapHead && mapHead.nextSibling) mapSection.insertBefore(cockpit, mapHead.nextSibling);
-  else mapSection.insertBefore(cockpit, mapSection.firstChild);
+  if (mapHead && mapHead.nextSibling) mapSection.insertBefore(cockpit, mapHead.nextSibling); else mapSection.insertBefore(cockpit, mapSection.firstChild);
 
   function postcodeOfSection(section) { return section.id.replace('postcode-', ''); }
   function matchesPrefix(pc) { return !prefix || pc.indexOf(prefix) === 0; }
@@ -213,7 +168,7 @@ window.addEventListener('DOMContentLoaded', function () {
       row.style.display = matchesPrefix(pc) ? '' : 'none';
     });
     var summary = cockpit.querySelector('[data-role="summary"]');
-    if (summary) summary.textContent = visible + ' PLZ · ' + markets + ' sichtbare Marktkandidaten';
+    if (summary) summary.textContent = visible + ' PLZ · ' + markets + ' sichtbare Märkte';
     markerEntries.forEach(function (entry) { updateMarkerVisibility(entry); });
     if (germanyLayer) germanyLayer.setStyle(stylePostcodeFeature);
   }
@@ -266,11 +221,8 @@ window.addEventListener('DOMContentLoaded', function () {
     var original = button.textContent;
     for (var i = 0; i < postcodes.length; i += 1) {
       button.textContent = 'Quellenabgleich ' + (i + 1) + '/' + postcodes.length + ' …';
-      try {
-        await fetch('/admin/coverage/postcodes/' + encodeURIComponent(postcodes[i]) + '/discover', { method:'POST', credentials:'same-origin' });
-      } catch (error) {
-        console.warn('Quellenabgleich fehlgeschlagen', postcodes[i], error);
-      }
+      try { await fetch('/admin/coverage/postcodes/' + encodeURIComponent(postcodes[i]) + '/discover', { method:'POST', credentials:'same-origin' }); }
+      catch (error) { console.warn('Quellenabgleich fehlgeschlagen', postcodes[i], error); }
     }
     button.textContent = original;
     window.location.reload();
@@ -279,11 +231,9 @@ window.addEventListener('DOMContentLoaded', function () {
   function activationStatusByStore() {
     var result = {};
     document.querySelectorAll('.activation-card').forEach(function (card) {
-      var text = card.textContent || '';
-      var match = text.match(/Store\s+(\d+)/i);
+      var match = (card.textContent || '').match(/Store\s+(\d+)/i);
       if (!match) return;
-      var pill = card.querySelector('.pill');
-      result[match[1]] = normalize(pill?.textContent || '');
+      result[match[1]] = normalize(card.querySelector('.pill')?.textContent || '');
     });
     return result;
   }
@@ -323,8 +273,9 @@ window.addEventListener('DOMContentLoaded', function () {
           section.classList.remove('postcode-collapsed');
           var head = section.querySelector('.postcode-head'); if (head) head.dataset.open = '1';
         });
-        markerEntries.push({ marker:marker, retailer:retailer, postcode:postcode });
-        updateMarkerVisibility(markerEntries[markerEntries.length - 1]);
+        var entry = { marker:marker, retailer:retailer, postcode:postcode };
+        markerEntries.push(entry);
+        updateMarkerVisibility(entry);
       });
     });
   }
@@ -340,11 +291,11 @@ window.addEventListener('DOMContentLoaded', function () {
     var active = activePostcodes.has(pc);
     var selected = matchesPrefix(pc);
     return {
-      color: active ? '#087b4f' : '#809087',
-      weight: active ? 1.4 : 0.55,
-      opacity: selected ? 0.8 : 0.12,
-      fillColor: active ? '#bfe7cd' : '#e8ece9',
-      fillOpacity: selected ? (active ? 0.12 : 0.025) : 0.005
+      color: active ? '#087b4f' : '#4f5e56',
+      weight: active ? 1.5 : 1.15,
+      opacity: selected ? (active ? 0.82 : 0.92) : 0.28,
+      fillColor: active ? '#bfe7cd' : '#cbd4cf',
+      fillOpacity: selected ? (active ? 0.12 : 0.09) : 0.018
     };
   }
   if (map && window.L) {
@@ -361,6 +312,11 @@ window.addEventListener('DOMContentLoaded', function () {
           onEachFeature:function (feature, layer) {
             var pc = featurePostcode(feature);
             if (!pc) return;
+            layer.bindTooltip('PLZ ' + pc, { sticky:true, direction:'top', opacity:0.92 });
+            layer.on('mouseover', function () {
+              if (!activePostcodes.has(pc)) layer.setStyle({ color:'#314039', weight:2, opacity:1, fillOpacity:0.18 });
+            });
+            layer.on('mouseout', function () { if (germanyLayer) germanyLayer.resetStyle(layer); });
             layer.on('click', function () {
               if (activePostcodes.has(pc)) {
                 var section = document.getElementById('postcode-' + pc);
