@@ -95,7 +95,41 @@ def _load_complete_surface(page,max_iterations:int=20)->None:
     except Exception:
         pass
 
-def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_ms:int,dns_result,profile_dir:Path|None=None,capture_diagnostics:bool=False):
+
+def _legacy_surface_pass(page)->None:
+    """Preserve the pre-audit browser behavior for existing collectors."""
+    for label in (
+        "Alle Angebote ansehen","Alle anzeigen","Zu den Angeboten","Angebote anzeigen",
+        "Mehr Angebote","Weitere Angebote",
+    ):
+        try:
+            loc=page.get_by_text(label,exact=True)
+            for idx in range(min(loc.count(),4)):
+                el=loc.nth(idx)
+                if el.is_visible():
+                    try:
+                        el.click(timeout=1200)
+                        page.wait_for_timeout(700)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    try:
+        page.evaluate("""async () => {
+          for (let y=0; y<document.body.scrollHeight; y+=900) {
+            window.scrollTo(0,y); await new Promise(r=>setTimeout(r,100));
+          }
+          window.scrollTo(0,0);
+        }""")
+        page.wait_for_timeout(900)
+    except Exception:
+        pass
+
+
+def _capture_page(
+    playwright,url:str,executable_path:str|None,mode:str,timeout_ms:int,dns_result,
+    profile_dir:Path|None=None,capture_diagnostics:bool=False,drain_offer_surface:bool=False,
+):
     host=urlparse(url).hostname or ""
     rules=[]
     if dns_result.ips:
@@ -180,7 +214,10 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
             except Exception:
                 pass
 
-        _load_complete_surface(page)
+        if drain_offer_surface:
+            _load_complete_surface(page)
+        else:
+            _legacy_surface_pass(page)
 
         page_html=page.content()
         final_url=page.url
@@ -207,7 +244,10 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
             if browser: browser.close()
         except Exception: pass
 
-def browser_fetch(url:str,timeout_ms:int=45000,capture_diagnostics:bool=False)->BrowserFetchResult:
+
+def browser_fetch(
+    url:str,timeout_ms:int=45000,capture_diagnostics:bool=False,drain_offer_surface:bool=False,
+)->BrowserFetchResult:
     from playwright.sync_api import sync_playwright
     host=urlparse(url).hostname or ""
     dns_result=resolve_host(host)
@@ -216,12 +256,20 @@ def browser_fetch(url:str,timeout_ms:int=45000,capture_diagnostics:bool=False)->
         for executable in _system_browser_candidates():
             try:
                 profile=Path(__file__).resolve().parent.parent/"data"/"browser_profile"
-                return _capture_page(pw,url,executable,"system-browser",timeout_ms,dns_result,profile_dir=profile,capture_diagnostics=capture_diagnostics)
+                return _capture_page(
+                    pw,url,executable,"system-browser",timeout_ms,dns_result,
+                    profile_dir=profile,capture_diagnostics=capture_diagnostics,
+                    drain_offer_surface=drain_offer_surface,
+                )
             except Exception as exc:
                 errors.append(f"system-browser:{Path(executable).name}: {exc}")
         for attempt in range(1,3):
             try:
-                return _capture_page(pw,url,None,f"playwright-{attempt}",timeout_ms,dns_result,profile_dir=None,capture_diagnostics=capture_diagnostics)
+                return _capture_page(
+                    pw,url,None,f"playwright-{attempt}",timeout_ms,dns_result,
+                    profile_dir=None,capture_diagnostics=capture_diagnostics,
+                    drain_offer_surface=drain_offer_surface,
+                )
             except Exception as exc:
                 errors.append(f"playwright-{attempt}: {exc}")
                 time.sleep(attempt)
