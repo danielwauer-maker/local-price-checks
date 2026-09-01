@@ -71,6 +71,40 @@ sind keine Test-Fixtures.
 | ALDI SÜD Mülheim `B384` | offizieller Wochenendpunkt meldete 97 Produkte; vier Markt-Teaser enthielten jeweils dieselben 41 Angebote |
 | NORMA Seite ab 31.08.2026 | 130 Produktkarten, 129 mit explizitem Preis, 130 mit Bild, eine reine Prozentaktion ohne Einzelpreis |
 
+### EDEKA-Completeness und „Mehr laden“
+
+Am 2. September 2026 wurde die sichtbare Marktseite für Fellenzer `071378`
+erneut im echten Browser untersucht. Die initiale DOM-Antwort enthält bereits
+alle 224 eindeutigen Angebots-IDs. Davon liegen 220 in acht
+`<load-more data-max-items="8">`-Gruppen und vier im Highlight-Bereich:
+
+| Kategorie | serverseitig gerendert | initial sichtbar |
+|---|---:|---:|
+| Obst & Gemüse | 23 | 8 |
+| Molkerei & Käse | 34 | 8 |
+| Grundnahrung | 47 | 8 |
+| Tiefkühl | 11 | 8 |
+| Fleisch & Wurst | 40 | 8 |
+| Getränke | 32 | 8 |
+| Knabbern & Naschen | 19 | 8 |
+| Drogerie | 14 | 8 |
+
+Weitere 156 Kategoriekarten tragen initial
+`data-show-by-load-more="false"`. „Mehr laden“ ist damit kein Netzwerk-Cursor
+und keine zusätzliche Server-Pagination, sondern ein Sichtbarkeits-Toggle auf
+bereits vorhandenem HTML. Der Audit parst deshalb alle DOM-Karten unabhängig
+von diesem Attribut. Für `071378` dient 224 als ausdrücklich marktspezifische
+Regression-Referenz. Weniger Karten oder eine Abweichung zwischen eindeutigen
+DOM-IDs und Parser-Ergebnis führen zu `partial`, niemals zu `success`.
+
+Der direkte Headless-/HTTP-Abruf kann je nach Ausführungsnetz vom EDEKA-CDN mit
+`Access Denied` beziehungsweise `ERR_NETWORK_ACCESS_DENIED` blockiert werden,
+während dieselbe URL im interaktiven Browser erreichbar ist. Der Collector
+versucht deshalb HTTP und Browser kontrolliert; ein kleiner Legacy-API-Fallback
+bleibt reine Diagnose-Evidenz und wird immer als `partial` gekennzeichnet. Vor
+einer produktiven Aktivierung muss der vollständige 224er-Lauf in der
+tatsächlichen Zielumgebung als Canary reproduziert werden.
+
 Interpretation: EDEKA ist klar regional und folgt zusätzlich den
 Regionalgesellschaften. Netto ist stark regional; City-Filialen können ein
 deutlich kleineres Sortiment haben. PENNY ist überwiegend national, besitzt

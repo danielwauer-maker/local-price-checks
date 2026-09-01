@@ -58,7 +58,7 @@ def test_fellenzer_html_parser_reads_server_rendered_offer_cards():
     assert "invalid_image" not in raspberry.validation_errors
 
 
-def test_orchestrator_falls_back_to_legacy_api_when_combined_source_fails(monkeypatch):
+def test_orchestrator_persists_failure_when_combined_source_fails(monkeypatch):
     sentinel = object()
 
     monkeypatch.setattr(
@@ -66,15 +66,15 @@ def test_orchestrator_falls_back_to_legacy_api_when_combined_source_fails(monkey
         lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "zentrale Quelle geändert")),
     )
     monkeypatch.setattr(
-        "app.edeka_web_offer_audit_orchestrator.run_legacy_edeka_audit",
-        lambda db, store, period_key="current", source_url=None: sentinel,
+        "app.edeka_web_offer_audit_orchestrator._persist_edeka_failure",
+        lambda db, store, period_key, error: sentinel,
     )
 
     other_store = _store("123456")
     assert run_web_offer_audit(object(), other_store, period_key="current") is sentinel
 
 
-def test_fellenzer_combined_failure_does_not_mask_legacy_api_fallback(monkeypatch):
+def test_fellenzer_combined_failure_cannot_be_masked_by_legacy_api(monkeypatch):
     sentinel = object()
 
     monkeypatch.setattr(
@@ -82,8 +82,8 @@ def test_fellenzer_combined_failure_does_not_mask_legacy_api_fallback(monkeypatc
         lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "lokale oder zentrale Quelle geändert")),
     )
     monkeypatch.setattr(
-        "app.edeka_web_offer_audit_orchestrator.run_legacy_edeka_audit",
-        lambda db, store, period_key="current", source_url=None: sentinel,
+        "app.edeka_web_offer_audit_orchestrator._persist_edeka_failure",
+        lambda db, store, period_key, error: sentinel,
     )
 
     assert run_web_offer_audit(object(), _store(), period_key="current") is sentinel

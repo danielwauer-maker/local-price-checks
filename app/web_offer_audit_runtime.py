@@ -383,6 +383,15 @@ class ReviewedEdekaWebOfferAdapter(ReviewedDirectCollectMixin, EdekaWebOfferAdap
             dates = [value for value in dates if value]
             range_from, range_to = _date_range(date_evidence)
             offer_link = card.find("a", href=re.compile(r"#?(?:angebot|offer)-", re.I))
+            category_list = card.find_parent("ul", id=re.compile(r"^filter-results-group-list-"))
+            source_category = None
+            category = None
+            if category_list:
+                source_category = _clean(category_list.get("id")).removeprefix("filter-results-group-list-")
+                category = source_category.replace("-und-", " & ").replace("-", " ").title()
+            elif offer_link:
+                source_category = "highlight"
+                category = "Highlights"
             external_offer_id = _clean(card.get("data-offer-id") or card.get("id")) or None
             if not external_offer_id and offer_link:
                 external_offer_id = _clean(offer_link.get("href")).lstrip("#") or None
@@ -404,6 +413,8 @@ class ReviewedEdekaWebOfferAdapter(ReviewedDirectCollectMixin, EdekaWebOfferAdap
                 packaging_text=quantity,
                 valid_from=range_from or (dates[0] if dates else page_from),
                 valid_to=range_to or (dates[1] if len(dates) > 1 else page_to),
+                category=category,
+                source_category=source_category,
                 image_url=image_url,
                 image_source="retailer_page" if image_url else None,
                 image_alt=image_alt,

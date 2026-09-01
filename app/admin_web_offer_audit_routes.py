@@ -41,7 +41,7 @@ def _audit_source_url(store: Store) -> str | None:
     if store.retailer == "EDEKA" and store.external_id:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
         if market_id:
-            return f"https://www.edeka.de/angebote/?selectedMarktID={market_id}"
+            return f"https://www.edeka.de/maerkte/{market_id}/angebote/"
     return store.source_url
 
 
