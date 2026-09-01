@@ -4,8 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,11 @@ BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
+GERMANY_POSTCODE_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/tdudek/de-plz-geojson/master/plz-5stellig.geojson"
+)
+_germany_postcode_geojson_cache: dict | None = None
+
 
 def safe_external_url(value: str | None) -> str | None:
     """Return an absolute HTTP(S) URL, rejecting unsafe or malformed schemes."""
@@ -55,6 +61,49 @@ def safe_external_url(value: str | None) -> str | None:
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
         return None
     return cleaned
+
+
+def _load_germany_postcode_geojson() -> dict:
+    """Load and cache Germany's 5-digit postcode polygons server-side.
+
+    The admin browser must not depend on a direct cross-origin GitHub fetch. A
+    same-origin endpoint keeps the rollout map stable behind CSP, privacy tools
+    and browser/network policies while retaining the upstream ODbL dataset.
+    """
+    global _germany_postcode_geojson_cache
+    if _germany_postcode_geojson_cache is not None:
+        return _germany_postcode_geojson_cache
+
+    response = httpx.get(
+        GERMANY_POSTCODE_GEOJSON_URL,
+        timeout=30.0,
+        follow_redirects=True,
+        headers={"User-Agent": "Spareno-Admin/1.0"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
+        raise ValueError("Ungültiger Deutschland-PLZ-Datensatz")
+    features = payload.get("features")
+    if not isinstance(features, list) or not features:
+        raise ValueError("Deutschland-PLZ-Datensatz enthält keine Flächen")
+    _germany_postcode_geojson_cache = payload
+    return payload
+
+
+@router.get("/admin/coverage/postcodes/germany-geojson")
+def germany_postcode_geojson(actor: str = Depends(_admin)):
+    try:
+        payload = _load_germany_postcode_geojson()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, f"Deutschland-PLZ-Layer nicht verfügbar: {type(exc).__name__}") from exc
+    return JSONResponse(
+        payload,
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "X-Spareno-Geo-Source": "tdudek/de-plz-geojson",
+        },
+    )
 
 
 @router.get("/admin/coverage")

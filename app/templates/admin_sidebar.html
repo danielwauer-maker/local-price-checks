@@ -352,7 +352,7 @@ window.addEventListener('DOMContentLoaded', function () {
       map.createPane('postcodeBackground');
       map.getPane('postcodeBackground').style.zIndex = 220;
     }
-    fetch('https://raw.githubusercontent.com/tdudek/de-plz-geojson/master/plz-5stellig.geojson')
+    fetch('/admin/coverage/postcodes/germany-geojson', { credentials:'same-origin' })
       .then(function (response) { if (!response.ok) throw new Error('PLZ-Layer '+response.status); return response.json(); })
       .then(function (geojson) {
         germanyLayer = L.geoJSON(geojson, {
