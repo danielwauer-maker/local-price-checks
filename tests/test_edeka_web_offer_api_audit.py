@@ -60,22 +60,70 @@ def test_parse_edeka_web_api_doc_uses_documented_fields():
     assert offer.category == "Obst & Gemüse"
 
 
-def test_edeka_api_fetch_uses_verified_market_id_and_docs_without_browser():
+def test_edeka_api_fetch_uses_rows_and_start_and_preserves_leading_zero():
     calls = []
 
     def fake_get(url, **kwargs):
         calls.append((url, kwargs))
-        return _response(200, {"docs": [{"angebotid": "1", "titel": "Milch 1 l", "preis": 0.99}]})
+        return _response(200, {"numFound": 1, "start": 0, "docs": [{"angebotid": "1", "titel": "Milch 1 l", "preis": 0.99}]})
 
     result = _fetch_edeka_api(_store("edeka-071378"), http_get=fake_get)
     assert len(calls) == 1
     assert calls[0][0] == EDEKA_OFFERS_ENDPOINT
-    assert calls[0][1]["params"] == {"marketId": "071378", "limit": 99999}
+    assert calls[0][1]["params"] == {"marketId": "071378", "rows": 100, "start": 0}
     assert result.collector_path == "edeka_web_offer_api"
     assert result.raw_count == 1
     assert result.offers[0].name == "Milch 1 l"
-    assert result.artifacts["fetch_mode"] == "edeka-web-api-http"
-    assert result.artifacts["http_status"] == 200
+    assert result.artifacts["numFound"] == 1
+    assert result.artifacts["pages_fetched"] == 1
+
+
+def test_edeka_api_fetches_all_pages_when_api_caps_page_size_to_20():
+    calls = []
+    rows = [{"angebotid": str(i), "titel": f"Artikel {i} 1 kg", "preis": 1.0 + i / 100} for i in range(45)]
+
+    def fake_get(url, **kwargs):
+        start = kwargs["params"]["start"]
+        calls.append(start)
+        page = rows[start:start + 20]
+        return _response(200, {"numFound": 45, "start": start, "docs": page})
+
+    result = _fetch_edeka_api(_store(), http_get=fake_get)
+    assert calls == [0, 20, 40]
+    assert result.raw_count == 45
+    assert len(result.offers) == 45
+    assert result.artifacts["pages_fetched"] == 3
+    assert result.artifacts["numFound"] == 45
+    assert [page["received_docs"] for page in result.artifacts["pages"]] == [20, 20, 5]
+
+
+def test_edeka_api_stops_when_endpoint_repeats_same_page():
+    calls = []
+    docs = [{"angebotid": str(i), "titel": f"Artikel {i} 1 kg", "preis": 1.0} for i in range(20)]
+
+    def fake_get(url, **kwargs):
+        calls.append(kwargs["params"]["start"])
+        return _response(200, {"numFound": 200, "docs": docs})
+
+    result = _fetch_edeka_api(_store(), http_get=fake_get)
+    assert calls == [0, 20]
+    assert result.raw_count == 20
+    assert result.artifacts["pages_fetched"] == 2
+    assert result.artifacts["pages"][1]["new_docs"] == 0
+
+
+def test_edeka_api_can_finish_without_numfound_using_empty_page():
+    calls = []
+    docs = [{"angebotid": str(i), "titel": f"Artikel {i} 1 kg", "preis": 1.0} for i in range(20)]
+
+    def fake_get(url, **kwargs):
+        start = kwargs["params"]["start"]
+        calls.append(start)
+        return _response(200, {"docs": docs if start == 0 else []})
+
+    result = _fetch_edeka_api(_store(), http_get=fake_get)
+    assert calls == [0, 20]
+    assert result.raw_count == 20
 
 
 def test_edeka_api_403_fails_closed_with_direct_api_diagnostics():
