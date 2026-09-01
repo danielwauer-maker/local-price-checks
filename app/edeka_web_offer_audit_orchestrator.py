@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from .edeka_multi_source_audit import fetch_combined_edeka
 from .edeka_web_offer_api_audit import (
     _persist_edeka_result,
@@ -7,6 +9,20 @@ from .edeka_web_offer_api_audit import (
 )
 from .models import Store
 from .web_offer_audit import WebAuditError
+
+
+def _attach_source_breakdown(db, run, result) -> None:
+    breakdown = (result.artifacts or {}).get("source_breakdown")
+    if not isinstance(breakdown, dict):
+        return
+    try:
+        comparison = json.loads(run.comparison_json or "{}")
+    except json.JSONDecodeError:
+        comparison = {}
+    comparison.update({f"source_{key}": value for key, value in breakdown.items()})
+    run.comparison_json = json.dumps(comparison, ensure_ascii=False)
+    db.commit()
+    db.refresh(run)
 
 
 def run_web_offer_audit(db, store: Store, period_key: str = "current", source_url: str | None = None):
@@ -23,7 +39,9 @@ def run_web_offer_audit(db, store: Store, period_key: str = "current", source_ur
 
     try:
         result = fetch_combined_edeka(store)
-        return _persist_edeka_result(db, store, period_key, result)
+        run = _persist_edeka_result(db, store, period_key, result)
+        _attach_source_breakdown(db, run, result)
+        return run
     except WebAuditError:
         # The established EDEKA central API remains the final diagnostic
         # fallback; local-source failures must never take the audit down.
