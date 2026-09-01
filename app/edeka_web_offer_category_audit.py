@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 import time
 from urllib.parse import urlencode
@@ -27,6 +26,10 @@ PAGINATION_STRATEGIES = (
     "offset_limit", "offset_rows", "start_limit", "start_rows",
     "page_limit_1", "page_size_1", "page_number_size", "from_size",
 )
+_RESERVED_CATEGORY_KEYS = {
+    "facet", "facets", "facet_count", "facet_counts", "facetcounts",
+    "warengruppe", "category", "categoryname", "kategorie",
+}
 
 
 def _clean_category(value: object) -> str | None:
@@ -39,29 +42,51 @@ def _clean_category(value: object) -> str | None:
 
 
 def _extract_categories(payload: dict, docs: list[dict]) -> list[str]:
-    """Discover category/facet values without assuming one exact EDEKA schema.
-
-    The public endpoint has changed shape historically.  Prefer explicit
-    category/Warengruppe/facet structures from the response, and fall back to
-    categories present on offer documents.  Values are only used as probes;
-    a category parameter is accepted later only if it returns offer IDs that
-    belong to that category and adds new data.
-    """
+    """Extract real category values, never facet/container field names."""
     found: list[str] = []
 
     def add(value: object) -> None:
         text = _clean_category(value)
-        if text and text not in found:
+        if not text or text.lower() in _RESERVED_CATEGORY_KEYS:
+            return
+        if text not in found:
             found.append(text)
 
-    def walk(node: object, parent_key: str = "", depth: int = 0) -> None:
+    # First handle common facet containers explicitly. This avoids treating
+    # keys such as ``warengruppe`` itself as a category value.
+    for container_key in ("facet_counts", "facets", "facetCounts"):
+        container = payload.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for field_name, values in container.items():
+            field_l = str(field_name).lower()
+            if not any(token in field_l for token in ("category", "kategorie", "warengruppe")):
+                continue
+            if isinstance(values, dict):
+                for category_name in values.keys():
+                    add(category_name)
+            elif isinstance(values, list):
+                for item in values:
+                    if isinstance(item, (str, int, float)):
+                        add(item)
+                    elif isinstance(item, dict):
+                        for candidate_key in ("name", "value", "label", "id", "key"):
+                            if candidate_key in item:
+                                add(item[candidate_key])
+                                break
+
+    # Then inspect other category-shaped response structures, but do not add
+    # container/field names themselves.
+    def walk(node: object, depth: int = 0) -> None:
         if depth > 5:
             return
         if isinstance(node, dict):
             for key, value in node.items():
                 key_l = str(key).lower()
-                categoryish = any(token in key_l for token in ("category", "kategorie", "warengruppe", "facet"))
-                if categoryish:
+                if key_l in {"facet_counts", "facets", "facetcounts"}:
+                    continue
+                category_field = any(token in key_l for token in ("category", "kategorie", "warengruppe"))
+                if category_field:
                     if isinstance(value, (str, int, float)):
                         add(value)
                     elif isinstance(value, list):
@@ -72,14 +97,14 @@ def _extract_categories(payload: dict, docs: list[dict]) -> list[str]:
                                 for candidate_key in ("name", "value", "label", "id", "key"):
                                     if candidate_key in item:
                                         add(item[candidate_key])
+                                        break
                     elif isinstance(value, dict):
-                        # Solr-style facet maps often use category names as keys.
-                        for candidate_key in value.keys():
-                            add(candidate_key)
-                walk(value, str(key), depth + 1)
+                        for category_name in value.keys():
+                            add(category_name)
+                walk(value, depth + 1)
         elif isinstance(node, list):
             for item in node[:500]:
-                walk(item, parent_key, depth + 1)
+                walk(item, depth + 1)
 
     walk(payload)
     for row in docs:
@@ -119,13 +144,11 @@ def _pagination_params(strategy: str, market_id: str, category_param: str, categ
 
 
 def _fetch_category(store: Store, market_id: str, category: str, http_get=httpx.get) -> tuple[list[dict], dict] | None:
-    """Find a verified category filter + pagination strategy and exhaust it."""
     probe_log: list[dict] = []
     for category_param in CATEGORY_PARAM_NAMES:
         first_params = {"marketId": market_id, category_param: category}
-        docs, payload, response = _request(store, first_params, http_get=http_get)
+        docs, payload, _ = _request(store, first_params, http_get=http_get)
         category_docs = [row for row in docs if (_doc_category(row) or category) == category]
-        # A category parameter that is ignored must not be trusted.
         if docs and not category_docs:
             probe_log.append({"category_param": category_param, "accepted": False, "reason": "category_mismatch"})
             continue
@@ -137,10 +160,9 @@ def _fetch_category(store: Store, market_id: str, category: str, http_get=httpx.
         all_docs = list(docs)
         chosen_strategy = None
         second_docs: list[dict] | None = None
-        second_response = None
         for strategy in PAGINATION_STRATEGIES:
             params = _pagination_params(strategy, market_id, category_param, category, 1, len(all_docs))
-            more_docs, _, more_response = _request(store, params, http_get=http_get)
+            more_docs, _, _ = _request(store, params, http_get=http_get)
             fresh = [row for row in more_docs if _doc_signature(row) not in seen]
             probe_log.append({
                 "category_param": category_param,
@@ -151,16 +173,14 @@ def _fetch_category(store: Store, market_id: str, category: str, http_get=httpx.
             if fresh:
                 chosen_strategy = strategy
                 second_docs = more_docs
-                second_response = more_response
                 break
 
-        # A short category may legitimately fit on one response.  Accept it
-        # only when the payload itself exposes a total that is <= received.
         total = payload.get("numFound") or payload.get("total") or payload.get("totalCount")
         try:
             total_int = int(total) if total is not None else None
         except (TypeError, ValueError):
             total_int = None
+
         if chosen_strategy is None:
             if total_int is not None and total_int <= len(all_docs):
                 return all_docs, {
