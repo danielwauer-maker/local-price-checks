@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from .edeka_fellenzer_offer_audit import FELLENZER_MARKET_ID, fetch_fellenzer_offers
+from .edeka_marketsearch_offer_audit import fetch_resolved_market_offers
 from .edeka_web_offer_api_audit import _fetch_edeka_api
 from .edeka_web_offer_category_audit import _fetch_all_categories
 from .extractor_adapter import normalize_master_key
@@ -130,14 +131,23 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
 
 
 def fetch_central_edeka(store: Store) -> WebAuditResult:
+    errors: list[str] = []
     try:
-        result = _fetch_all_categories(store)
-    except WebAuditError:
-        result = _fetch_edeka_api(store)
+        result = fetch_resolved_market_offers(store)
+    except WebAuditError as exc:
+        errors.append(f"marketsearch_resolver:{exc.error_type}")
+        try:
+            result = _fetch_all_categories(store)
+        except WebAuditError as category_exc:
+            errors.append(f"category_api:{category_exc.error_type}")
+            result = _fetch_edeka_api(store)
+
     result.artifacts = dict(result.artifacts or {})
-    result.artifacts["market_id"] = _market_id(store)
+    result.artifacts["market_page_id"] = _market_id(store)
     result.artifacts["source_role"] = "central_primary"
     result.artifacts["collector_endpoint_url"] = result.final_url
+    if errors:
+        result.artifacts["central_fallbacks"] = errors
     result.final_url = _central_market_page(store)
     return result
 
