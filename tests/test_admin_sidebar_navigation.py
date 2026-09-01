@@ -17,6 +17,7 @@ def test_admin_sidebar_contains_all_current_admin_features():
         "/admin/coverage",
         "/admin/collector",
         "/admin/articles/prospect-audit",
+        "/admin/web-offer-audit",
         "/admin/articles/prospect-audit/errors",
         "/admin/quality/provenance",
         "/admin?tab=settings",
@@ -33,6 +34,7 @@ def test_all_admin_workspaces_use_shared_sidebar():
         "admin_collector.html": "admin_section = 'collector'",
         "admin_coverage.html": "admin_section = 'coverage'",
         "admin_prospect_audit.html": "admin_section = 'prospect_audit'",
+        "admin_web_offer_audit.html": "admin_section = 'web_offer_audit'",
         "admin_prospect_errors.html": "admin_sidebar.html",
         "admin_provenance.html": "admin_section = 'provenance'",
     }

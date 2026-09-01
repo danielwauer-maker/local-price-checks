@@ -118,6 +118,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^(migrations/versions/20260829_01_account_state_revisions\.py|app/client_models\.py)$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: account realtime revisions."
+  elif grep -Fxq 'migrations/versions/20260901_01_web_offer_audit.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(migrations/versions/20260901_01_web_offer_audit\.py|app/web_offer_audit_models\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled schema release recognized: isolated web offer audit snapshots."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"

@@ -16,6 +16,7 @@ from . import prospect_models as prospect_models
 from . import push_models as push_models
 from . import sharing_models as sharing_models
 from . import ux_routes as ux_routes
+from . import web_offer_audit_models as web_offer_audit_models
 from .db import Base
 
 

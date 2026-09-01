@@ -16,6 +16,9 @@ class BrowserFetchResult:
     final_url:str
     mode:str
     dns_method:str="unknown"
+    console_errors:tuple[str,...]=()
+    failed_requests:tuple[str,...]=()
+    screenshot_png:bytes|None=None
 
 
 def _resolve_host(hostname:str)->list[str]:
@@ -49,7 +52,50 @@ def _system_browser_candidates()->list[str]:
             pass
     return candidates
 
-def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_ms:int,dns_result,profile_dir:Path|None=None):
+def _load_complete_surface(page,max_iterations:int=20)->None:
+    """Drain bounded load-more/infinite-scroll surfaces until the DOM is stable."""
+    labels=(
+        "Alle Angebote ansehen","Alle anzeigen","Zu den Angeboten","Angebote anzeigen",
+        "Mehr Angebote","Weitere Angebote","Mehr laden","Mehr anzeigen",
+    )
+    previous_signature=None
+    stable_iterations=0
+    for _ in range(max_iterations):
+        for label in labels:
+            try:
+                matches=page.get_by_text(label,exact=True)
+                for idx in range(min(matches.count(),4)):
+                    element=matches.nth(idx)
+                    if element.is_visible() and element.is_enabled():
+                        element.click(timeout=1200)
+                        page.wait_for_timeout(350)
+                        break
+            except Exception:
+                pass
+        try:
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            page.wait_for_timeout(500)
+            signature=page.evaluate("""() => ({
+              height: document.body.scrollHeight,
+              offers: document.querySelectorAll(
+                'article, [data-testid*="offer" i], [class*="offer-card" i], [id^="angebot-"]'
+              ).length
+            })""")
+        except Exception:
+            return
+        if signature==previous_signature:
+            stable_iterations+=1
+        else:
+            stable_iterations=0
+            previous_signature=signature
+        if stable_iterations>=2:
+            break
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+    except Exception:
+        pass
+
+def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_ms:int,dns_result,profile_dir:Path|None=None,capture_diagnostics:bool=False):
     host=urlparse(url).hostname or ""
     rules=[]
     if dns_result.ips:
@@ -64,8 +110,13 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
         args.append("--host-resolver-rules="+", ".join(rules))
 
     network_payloads=[]
+    console_errors=[]
+    failed_requests=[]
 
     def attach(page):
+        if capture_diagnostics:
+            page.on("console", lambda message: console_errors.append(message.text[:1000]) if message.type == "error" and len(console_errors) < 100 else None)
+            page.on("requestfailed", lambda request: failed_requests.append(f"{request.method} {request.url} :: {request.failure}") if len(failed_requests) < 100 else None)
         def _capture_response(response):
             try:
                 ctype=(response.headers.get("content-type") or "").lower()
@@ -129,30 +180,7 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
             except Exception:
                 pass
 
-        for label in ("Alle Angebote ansehen","Alle anzeigen","Zu den Angeboten","Angebote anzeigen","Mehr Angebote","Weitere Angebote"):
-            try:
-                loc=page.get_by_text(label,exact=True)
-                for idx in range(min(loc.count(),4)):
-                    el=loc.nth(idx)
-                    if el.is_visible():
-                        try:
-                            el.click(timeout=1200)
-                            page.wait_for_timeout(700)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-        try:
-            page.evaluate("""async () => {
-              for (let y=0; y<document.body.scrollHeight; y+=900) {
-                window.scrollTo(0,y); await new Promise(r=>setTimeout(r,100));
-              }
-              window.scrollTo(0,0);
-            }""")
-            page.wait_for_timeout(900)
-        except Exception:
-            pass
+        _load_complete_surface(page)
 
         page_html=page.content()
         final_url=page.url
@@ -162,7 +190,16 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
             page_html=page_html.replace("</body>",injected+"</body>",1)
         else:
             page_html+=injected
-        return BrowserFetchResult(page_html.encode("utf-8"),"text/html; charset=utf-8",final_url,mode,dns_result.method)
+        screenshot_png=None
+        if capture_diagnostics:
+            try:
+                screenshot_png=page.screenshot(full_page=True,type="png")
+            except Exception as exc:
+                console_errors.append(f"screenshot_failed: {exc}")
+        return BrowserFetchResult(
+            page_html.encode("utf-8"),"text/html; charset=utf-8",final_url,mode,dns_result.method,
+            tuple(console_errors),tuple(failed_requests),screenshot_png,
+        )
     finally:
         try: context.close()
         except Exception: pass
@@ -170,7 +207,7 @@ def _capture_page(playwright,url:str,executable_path:str|None,mode:str,timeout_m
             if browser: browser.close()
         except Exception: pass
 
-def browser_fetch(url:str,timeout_ms:int=45000)->BrowserFetchResult:
+def browser_fetch(url:str,timeout_ms:int=45000,capture_diagnostics:bool=False)->BrowserFetchResult:
     from playwright.sync_api import sync_playwright
     host=urlparse(url).hostname or ""
     dns_result=resolve_host(host)
@@ -179,12 +216,12 @@ def browser_fetch(url:str,timeout_ms:int=45000)->BrowserFetchResult:
         for executable in _system_browser_candidates():
             try:
                 profile=Path(__file__).resolve().parent.parent/"data"/"browser_profile"
-                return _capture_page(pw,url,executable,"system-browser",timeout_ms,dns_result,profile_dir=profile)
+                return _capture_page(pw,url,executable,"system-browser",timeout_ms,dns_result,profile_dir=profile,capture_diagnostics=capture_diagnostics)
             except Exception as exc:
                 errors.append(f"system-browser:{Path(executable).name}: {exc}")
         for attempt in range(1,3):
             try:
-                return _capture_page(pw,url,None,f"playwright-{attempt}",timeout_ms,dns_result,profile_dir=None)
+                return _capture_page(pw,url,None,f"playwright-{attempt}",timeout_ms,dns_result,profile_dir=None,capture_diagnostics=capture_diagnostics)
             except Exception as exc:
                 errors.append(f"playwright-{attempt}: {exc}")
                 time.sleep(attempt)
