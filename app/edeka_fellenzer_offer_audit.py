@@ -17,12 +17,42 @@ from .web_offer_audit_runtime import quality_deduplicate
 FELLENZER_MARKET_ID = "071378"
 FELLENZER_OFFERS_URL = "https://edeka-fellenzer.de/angebote/"
 _ALLOWED_HOSTS = {"edeka-fellenzer.de", "www.edeka-fellenzer.de"}
+_IMAGE_HOST = "media.smp-it-media.de"
 _PRICE_RE = re.compile(r"(?<!\d)(\d{1,3})\s*[.,]\s*(\d{2})(?!\d)")
 _VALIDITY_RE = re.compile(
     r"gültig\s+vom\s+(\d{1,2})\.(\d{1,2})\.\s*(?:bis\s+(?:zum\s+)?)?(\d{1,2})\.(\d{1,2})\.(\d{4})",
     re.I,
 )
 _SKIP_ALT_RE = re.compile(r"(?:logo|prospekt|pdf|download|banner|header|footer)", re.I)
+
+
+def _trusted_fellenzer_image(url: str | None) -> bool:
+    if not url or url.startswith("data:"):
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    return parsed.scheme == "https" and host == _IMAGE_HOST and bool(parsed.path)
+
+
+class FellenzerWebOfferRecord(WebOfferRecord):
+    """Keep verified Fellenzer CDN images even when their URL has no suffix.
+
+    The shared validator intentionally requires a known image CDN or a classic
+    image filename extension. Fellenzer's official CDN serves product images as
+    `/products/image/<opaque-id>` without `.jpg`/`.png`, so the generic rule
+    rejects otherwise valid images. This subclass restores only HTTPS images on
+    the exact verified Fellenzer image host; all other validation remains shared.
+    """
+
+    def validate(self) -> "FellenzerWebOfferRecord":
+        original_image = self.image_url
+        original_source = self.image_source
+        super().validate()
+        if _trusted_fellenzer_image(original_image):
+            self.image_url = original_image
+            self.image_source = original_source
+            self.validation_errors = [error for error in self.validation_errors if error != "invalid_image"]
+        return self
 
 
 def _price(text: str) -> float | None:
@@ -102,7 +132,7 @@ def _parse_html(html: str, store: Store, source_url: str = FELLENZER_OFFERS_URL)
         image_url = _image_url(img, source_url)
         if not title or _SKIP_ALT_RE.search(title) or not image_url:
             continue
-        if "media.smp-it-media.de" not in urlparse(image_url).netloc.lower():
+        if not _trusted_fellenzer_image(image_url):
             continue
         key = (title.lower(), image_url)
         if key in seen_images:
@@ -121,7 +151,7 @@ def _parse_html(html: str, store: Store, source_url: str = FELLENZER_OFFERS_URL)
         quantity, quantity_value, quantity_unit = _quantity(" ".join(part for part in (title, description or "") if part))
         fingerprint = sha256(f"{title}|{price:.2f}|{description or ''}".encode("utf-8")).hexdigest()[:24]
         raw.append(
-            WebOfferRecord(
+            FellenzerWebOfferRecord(
                 retailer="EDEKA",
                 store_id=store.id,
                 source_url=source_url,
