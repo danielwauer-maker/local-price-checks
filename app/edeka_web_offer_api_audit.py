@@ -30,6 +30,8 @@ from .web_offer_audit_runtime import (
 )
 
 EDEKA_OFFERS_ENDPOINT = "https://www.edeka.de/eh/service/eh/offers"
+EDEKA_PAGE_ROWS = 100
+EDEKA_MAX_PAGES = 100
 
 
 def _epoch_date(value: object):
@@ -99,6 +101,12 @@ def _parse_edeka_doc(row: dict, store: Store, source_url: str) -> WebOfferRecord
     )
 
 
+def _doc_signature(row: dict) -> str:
+    return _clean(_first(row, "angebotid", "angebotId", "offerId", "id")) or json.dumps(
+        row, sort_keys=True, ensure_ascii=False, default=str
+    )
+
+
 def _fetch_edeka_api(store: Store, http_get=httpx.get) -> WebAuditResult:
     if not store.external_id:
         raise WebAuditError("browser_required", "EDEKA benötigt eine verifizierte Markt-ID für den Angebots-API-Audit.")
@@ -106,94 +114,167 @@ def _fetch_edeka_api(store: Store, http_get=httpx.get) -> WebAuditResult:
     if not market_id:
         raise WebAuditError("browser_required", "EDEKA-Markt-ID enthält keine nutzbare numerische ID.")
 
-    params = {"marketId": market_id, "limit": 99999}
-    request_url = f"{EDEKA_OFFERS_ENDPOINT}?{urlencode(params)}"
     started = time.monotonic()
-    try:
-        response = http_get(
-            EDEKA_OFFERS_ENDPOINT,
-            params=params,
-            follow_redirects=True,
-            timeout=settings.collector_timeout_seconds,
-            headers={
-                "Accept": "application/json, text/plain, */*",
-                "Accept-Language": "de-DE,de;q=0.9,en;q=0.7",
-                "User-Agent": "Spareno-Web-Audit/1.0",
-            },
-        )
-    except httpx.TimeoutException as exc:
-        raise WebAuditError(
-            "timeout",
-            f"EDEKA Angebots-API Timeout: {exc}",
-            {"fetch_mode": "edeka-web-api-http", "api_url": request_url},
-        ) from exc
-    except httpx.HTTPError as exc:
+    all_docs: list[dict] = []
+    seen: set[str] = set()
+    page_meta: list[dict] = []
+    start = 0
+    total_found: int | None = None
+    final_url = EDEKA_OFFERS_ENDPOINT
+    final_content_type = ""
+    total_response_bytes = 0
+
+    for page_number in range(1, EDEKA_MAX_PAGES + 1):
+        params = {"marketId": market_id, "rows": EDEKA_PAGE_ROWS, "start": start}
+        request_url = f"{EDEKA_OFFERS_ENDPOINT}?{urlencode(params)}"
+        try:
+            response = http_get(
+                EDEKA_OFFERS_ENDPOINT,
+                params=params,
+                follow_redirects=True,
+                timeout=settings.collector_timeout_seconds,
+                headers={
+                    "Accept": "application/json, text/plain, */*",
+                    "Accept-Language": "de-DE,de;q=0.9,en;q=0.7",
+                    "User-Agent": "Spareno-Web-Audit/1.0",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise WebAuditError(
+                "timeout",
+                f"EDEKA Angebots-API Timeout auf Seite {page_number}: {exc}",
+                {"fetch_mode": "edeka-web-api-http", "api_url": request_url, "page": page_number},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise WebAuditError(
+                "endpoint_changed",
+                f"EDEKA Angebots-API HTTP-Fehler auf Seite {page_number}: {exc}",
+                {"fetch_mode": "edeka-web-api-http", "api_url": request_url, "page": page_number},
+            ) from exc
+
+        final_url = str(response.url)
+        final_content_type = response.headers.get("content-type", "")
+        total_response_bytes += len(response.content)
+        diagnostics = {
+            "fetch_mode": "edeka-web-api-http",
+            "api_url": request_url,
+            "http_status": response.status_code,
+            "content_type": final_content_type,
+            "response_bytes": total_response_bytes,
+            "final_url": final_url,
+            "page": page_number,
+            "start": start,
+            "rows": EDEKA_PAGE_ROWS,
+            "network_payloads": [],
+            "console_errors": [],
+            "failed_requests": [],
+        }
+        if response.status_code in {401, 403, 429}:
+            raise WebAuditError(
+                "blocked",
+                f"EDEKA Angebots-API antwortet mit HTTP {response.status_code}; kein Browser-Fallback und keine Umgehung wird versucht.",
+                diagnostics,
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise WebAuditError(
+                "endpoint_changed",
+                f"EDEKA Angebots-API antwortet mit HTTP {response.status_code}.",
+                diagnostics,
+            ) from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise WebAuditError(
+                "invalid_json",
+                f"EDEKA Angebots-API lieferte kein gültiges JSON (HTTP {response.status_code}, {final_content_type or 'ohne Content-Type'}).",
+                diagnostics,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise WebAuditError("invalid_json", "EDEKA Angebots-API lieferte kein JSON-Objekt.", diagnostics)
+        docs = payload.get("docs")
+        if not isinstance(docs, list):
+            diagnostics["response_keys"] = sorted(str(key) for key in payload.keys())[:100]
+            raise WebAuditError("endpoint_changed", "EDEKA Angebots-API enthält kein erwartetes 'docs'-Array.", diagnostics)
+
+        if total_found is None:
+            raw_total = payload.get("numFound")
+            try:
+                total_found = int(raw_total) if raw_total is not None else None
+            except (TypeError, ValueError):
+                total_found = None
+
+        new_docs = 0
+        for row in docs:
+            if not isinstance(row, dict):
+                continue
+            signature = _doc_signature(row)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            all_docs.append(row)
+            new_docs += 1
+
+        page_meta.append({
+            "page": page_number,
+            "start": start,
+            "requested_rows": EDEKA_PAGE_ROWS,
+            "received_docs": len(docs),
+            "new_docs": new_docs,
+            "numFound": total_found,
+        })
+
+        if not docs or new_docs == 0:
+            break
+        if total_found is not None and len(all_docs) >= total_found:
+            break
+        if total_found is None and len(docs) < EDEKA_PAGE_ROWS:
+            # The API may cap rows below the requested value. Continue once by
+            # the actual received count; a repeated page is stopped by new_docs==0.
+            start += len(docs)
+        else:
+            start += len(docs)
+    else:
         raise WebAuditError(
             "endpoint_changed",
-            f"EDEKA Angebots-API HTTP-Fehler: {exc}",
-            {"fetch_mode": "edeka-web-api-http", "api_url": request_url},
-        ) from exc
+            f"EDEKA Angebots-API überschritt das Sicherheitslimit von {EDEKA_MAX_PAGES} Seiten.",
+            {"fetch_mode": "edeka-web-api-http", "pages": page_meta},
+        )
 
-    content_type = response.headers.get("content-type", "")
+    request_url = f"{EDEKA_OFFERS_ENDPOINT}?{urlencode({'marketId': market_id, 'rows': EDEKA_PAGE_ROWS, 'start': 0})}"
     diagnostics = {
         "fetch_mode": "edeka-web-api-http",
         "api_url": request_url,
-        "http_status": response.status_code,
-        "content_type": content_type,
-        "response_bytes": len(response.content),
-        "final_url": str(response.url),
+        "http_status": 200,
+        "content_type": final_content_type,
+        "response_bytes": total_response_bytes,
+        "final_url": final_url,
+        "docs_count": len(all_docs),
+        "numFound": total_found,
+        "pages_fetched": len(page_meta),
+        "pages": page_meta,
         "network_payloads": [],
         "console_errors": [],
         "failed_requests": [],
     }
-    if response.status_code in {401, 403, 429}:
-        raise WebAuditError(
-            "blocked",
-            f"EDEKA Angebots-API antwortet mit HTTP {response.status_code}; kein Browser-Fallback und keine Umgehung wird versucht.",
-            diagnostics,
-        )
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise WebAuditError(
-            "endpoint_changed",
-            f"EDEKA Angebots-API antwortet mit HTTP {response.status_code}.",
-            diagnostics,
-        ) from exc
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise WebAuditError(
-            "invalid_json",
-            f"EDEKA Angebots-API lieferte kein gültiges JSON (HTTP {response.status_code}, {content_type or 'ohne Content-Type'}).",
-            diagnostics,
-        ) from exc
-    if not isinstance(payload, dict):
-        raise WebAuditError("invalid_json", "EDEKA Angebots-API lieferte kein JSON-Objekt.", diagnostics)
-    docs = payload.get("docs")
-    if not isinstance(docs, list):
-        diagnostics["response_keys"] = sorted(str(key) for key in payload.keys())[:100]
-        raise WebAuditError("endpoint_changed", "EDEKA Angebots-API enthält kein erwartetes 'docs'-Array.", diagnostics)
 
-    raw = [_parse_edeka_doc(row, store, request_url) for row in docs if isinstance(row, dict)]
+    raw = [_parse_edeka_doc(row, store, request_url) for row in all_docs]
     raw = [row for row in raw if row is not None]
     offers, duplicates = quality_deduplicate(raw)
     if not offers:
-        diagnostics["docs_count"] = len(docs)
         diagnostics["parsed_count"] = len(raw)
         raise WebAuditError("empty", "EDEKA Angebots-API lieferte keine validen Angebotsdatensätze.", diagnostics)
 
-    diagnostics["docs_count"] = len(docs)
     diagnostics["parsed_count"] = len(raw)
-    diagnostics["response_keys"] = sorted(str(key) for key in payload.keys())[:100]
     return WebAuditResult(
         offers=offers,
         source_url=request_url,
-        final_url=str(response.url),
+        final_url=final_url,
         collector_path="edeka_web_offer_api",
         raw_count=len(raw),
         duplicate_count=duplicates,
-        message=f"{round((time.monotonic() - started) * 1000)} ms via EDEKA Web API",
+        message=f"{round((time.monotonic() - started) * 1000)} ms via EDEKA Web API ({len(page_meta)} Seite(n))",
         artifacts=diagnostics,
     )
 
