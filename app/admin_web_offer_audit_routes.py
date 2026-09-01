@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
-from .edeka_web_offer_api_audit import run_web_offer_audit
+from .edeka_web_offer_api_audit_v2 import run_web_offer_audit
 from .models import Store
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
 from .web_offer_audit_models import WebOfferAuditRun
@@ -103,9 +103,6 @@ def start_web_offer_audit(
     store = db.get(Store, store_id)
     if not store or not store.active or store.retailer not in SUPPORTED_RETAILERS:
         raise HTTPException(status_code=404, detail="Unterstützter aktiver Markt nicht gefunden")
-    # Only an admin-reviewed Store and a deterministic retailer URL derived
-    # from its verified external id can reach the fetcher. The form cannot turn
-    # this endpoint into an arbitrary URL fetcher or external redirect.
     try:
         run = run_web_offer_audit(db, store, period_key=period_key, source_url=_audit_source_url(store))
     except ValueError as exc:
