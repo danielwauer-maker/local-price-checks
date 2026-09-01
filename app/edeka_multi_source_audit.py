@@ -15,6 +15,10 @@ def _market_id(store: Store) -> str:
     return "".join(character for character in str(store.external_id or "") if character.isdigit())
 
 
+def _central_market_page(store: Store) -> str:
+    return f"https://www.edeka.de/maerkte/{_market_id(store)}/angebote/"
+
+
 def _identity_key(offer: WebOfferRecord) -> tuple[str, str] | None:
     if offer.ean:
         return ("ean", offer.ean.strip())
@@ -102,6 +106,7 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         "central_collector_path": central.collector_path,
         "local_collector_path": local.collector_path if local else None,
         "central_source_url": central.source_url,
+        "central_market_page_url": central.final_url,
         "local_source_url": local.source_url if local else None,
     })
 
@@ -117,7 +122,8 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         ),
         message=(
             f"EDEKA Quellen kombiniert: zentral {central_count}, lokal {local_count}, "
-            f"Überschneidung {overlap}, lokal zusätzlich {local_only}, unique {len(merged_rows)}"
+            f"Überschneidung {overlap}, lokal zusätzlich {local_only}, unique {len(merged_rows)}, "
+            f"Preis-Konflikte {price_conflicts}"
         ),
         artifacts=artifacts,
     )
@@ -131,6 +137,8 @@ def fetch_central_edeka(store: Store) -> WebAuditResult:
     result.artifacts = dict(result.artifacts or {})
     result.artifacts["market_id"] = _market_id(store)
     result.artifacts["source_role"] = "central_primary"
+    result.artifacts["collector_endpoint_url"] = result.final_url
+    result.final_url = _central_market_page(store)
     return result
 
 
