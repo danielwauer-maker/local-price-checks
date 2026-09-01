@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/AppShell";
 import { CategoryIcon } from "@/components/lokero/CategoryIcon";
 import { OfferRow } from "@/components/lokero/OfferCard";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
-import { fetchOffers, fetchOfferWeek } from "@/services/lokero-api";
+import { fetchOffers, fetchOfferWeek, type OfferView } from "@/services/lokero-api";
 import { fetchCategories } from "@/services/lokero-categories-api";
 import type { CategoryId } from "@/data/lokero";
 import { formatDateRange } from "@/lib/format";
@@ -43,6 +43,30 @@ function readStoredCategories(initialCategory?: CategoryId) {
   }
   if (initialCategory) return new Set([initialCategory]);
   return next;
+}
+
+function offerDisplayKey(offer: OfferView) {
+  const chain = String(offer.market.chain ?? "").trim().toLocaleUpperCase("de");
+  const price = Number.isFinite(offer.price) ? offer.price.toFixed(4) : String(offer.price);
+  const oldPrice = offer.oldPrice == null ? "" : Number(offer.oldPrice).toFixed(4);
+  return [offer.productId, chain, price, oldPrice, offer.validFrom ?? "", offer.validUntil ?? ""].join("|");
+}
+
+function preferredOffer(current: OfferView, candidate: OfferView) {
+  const currentDistance = Number(current.market.distanceKm ?? 0);
+  const candidateDistance = Number(candidate.market.distanceKm ?? 0);
+  if (candidateDistance > 0 && (currentDistance <= 0 || candidateDistance < currentDistance)) return candidate;
+  return current;
+}
+
+export function dedupeOffersForDisplay(offers: OfferView[]) {
+  const deduped = new Map<string, OfferView>();
+  for (const offer of offers) {
+    const key = offerDisplayKey(offer);
+    const existing = deduped.get(key);
+    deduped.set(key, existing ? preferredOffer(existing, offer) : offer);
+  }
+  return [...deduped.values()];
 }
 
 function OffersScreen() {
@@ -83,7 +107,7 @@ function OffersScreen() {
     const needle = search.trim().toLocaleLowerCase("de");
     const categoryRows = categories.data ?? [];
     const categoryLabels = new Map(categoryRows.map((category) => [category.id, category.label.toLocaleLowerCase("de")]));
-    const rows = (query.data ?? []).filter((offer) => {
+    const rows = dedupeOffersForDisplay(query.data ?? []).filter((offer) => {
       if (!needle) return true;
       const product = offer.product;
       const categoryLabel = categoryLabels.get(product.category) ?? "";
