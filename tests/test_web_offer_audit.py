@@ -336,7 +336,8 @@ def test_failed_run_artifacts_include_bounded_html_json_console_requests_and_scr
     monkeypatch.setattr(web_offer_audit, "settings", replace(web_offer_audit.settings, data_dir=tmp_path))
     run = run_web_offer_audit(db, store)
     assert (run.status, run.error_type) == ("failed", "captcha")
-    manifest = next((tmp_path / "diagnostics" / "web_offer_audit" / str(store.id)).glob("run-*.json"))
+    artifact_dir = tmp_path / "diagnostics" / "web_offer_audit" / str(store.id)
+    manifest = next(path for path in artifact_dir.glob("run-*.json") if not path.name.endswith(".network.json"))
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["raw_response_metadata"]["console_errors"] == ["blocked script"]
     assert manifest.with_suffix(".html").exists()
