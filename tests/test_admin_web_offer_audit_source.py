@@ -16,14 +16,14 @@ def _store(retailer: str, external_id: str | None, source_url: str | None) -> St
     )
 
 
-def test_edeka_audit_uses_offer_url_from_external_market_id():
+def test_edeka_audit_uses_central_offer_url_from_external_market_id():
     store = _store("EDEKA", "071378", "https://www.edeka.de/marktseite/test")
-    assert _audit_source_url(store) == "https://www.edeka.de/maerkte/071378/angebote/"
+    assert _audit_source_url(store) == "https://www.edeka.de/angebote/?selectedMarktID=071378"
 
 
 def test_edeka_audit_preserves_leading_zero_when_id_contains_prefix():
     store = _store("EDEKA", "edeka-071378", None)
-    assert _audit_source_url(store) == "https://www.edeka.de/maerkte/071378/angebote/"
+    assert _audit_source_url(store) == "https://www.edeka.de/angebote/?selectedMarktID=071378"
 
 
 def test_other_retailers_keep_persisted_reviewed_source_url():
