@@ -6,6 +6,7 @@ import json
 import os
 import time
 import socket
+import re
 
 import httpx
 
@@ -66,7 +67,9 @@ def _edeka_http_first(url:str,timeout_ms:int)->BrowserFetchResult|None:
     parsed=urlparse(url)
     host=(parsed.hostname or "").lower()
     query=parse_qs(parsed.query)
-    if host not in {"edeka.de","www.edeka.de"} or parsed.path.rstrip("/")!="/angebote" or not query.get("selectedMarktID"):
+    central_landing = parsed.path.rstrip("/") == "/angebote" and bool(query.get("selectedMarktID"))
+    market_detail = bool(re.fullmatch(r"/maerkte/\d+/angebote/?", parsed.path))
+    if host not in {"edeka.de","www.edeka.de"} or not (central_landing or market_detail):
         return None
     try:
         response=httpx.get(

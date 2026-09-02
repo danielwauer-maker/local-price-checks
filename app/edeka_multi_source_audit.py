@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from .edeka_central_page_audit import central_market_page_url, fetch_central_market_page
 from .edeka_fellenzer_offer_audit import FELLENZER_MARKET_ID, fetch_fellenzer_offers
 from .edeka_marketsearch_offer_audit import fetch_resolved_market_offers
 from .edeka_web_offer_api_audit import _fetch_edeka_api
@@ -17,7 +18,7 @@ def _market_id(store: Store) -> str:
 
 
 def _central_market_page(store: Store) -> str:
-    return f"https://www.edeka.de/maerkte/{_market_id(store)}/angebote/"
+    return central_market_page_url(_market_id(store))
 
 
 def _identity_key(offer: WebOfferRecord) -> tuple[str, str] | None:
@@ -99,6 +100,8 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         "local_only": local_only,
         "price_conflicts": price_conflicts,
         "unique_combined": len(merged_rows),
+        "central_completeness": (central.artifacts or {}).get("central_completeness", "unknown"),
+        "local_status": local.status if local else "not_applicable",
     }
 
     artifacts = dict(central.artifacts or {})
@@ -109,6 +112,7 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         "central_source_url": central.source_url,
         "central_market_page_url": central.final_url,
         "local_source_url": local.source_url if local else None,
+        "local_error": (local.artifacts or {}).get("local_error") if local else None,
     })
 
     return WebAuditResult(
@@ -121,6 +125,7 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
             central.duplicate_count + central_dupes
             + (local.duplicate_count if local else 0) + local_dupes + cross_dupes
         ),
+        status="partial" if central.status == "partial" or (local and local.status == "partial") else central.status,
         message=(
             f"EDEKA Quellen kombiniert: zentral {central_count}, lokal {local_count}, "
             f"Überschneidung {overlap}, lokal zusätzlich {local_only}, unique {len(merged_rows)}, "
@@ -133,6 +138,13 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
 def fetch_central_edeka(store: Store) -> WebAuditResult:
     errors: list[str] = []
     try:
+        return fetch_central_market_page(store)
+    except WebAuditError as page_exc:
+        errors.append(f"central_market_page:{page_exc.error_type}")
+    except Exception as page_exc:
+        errors.append(f"central_market_page:{type(page_exc).__name__}")
+
+    try:
         result = fetch_resolved_market_offers(store)
     except WebAuditError as exc:
         errors.append(f"marketsearch_resolver:{exc.error_type}")
@@ -140,7 +152,15 @@ def fetch_central_edeka(store: Store) -> WebAuditResult:
             result = _fetch_all_categories(store)
         except WebAuditError as category_exc:
             errors.append(f"category_api:{category_exc.error_type}")
-            result = _fetch_edeka_api(store)
+            try:
+                result = _fetch_edeka_api(store)
+            except WebAuditError as api_exc:
+                errors.append(f"legacy_api:{api_exc.error_type}")
+                result = WebAuditResult(
+                    offers=[], source_url=_central_market_page(store), final_url=_central_market_page(store),
+                    collector_path="edeka_central_unavailable", raw_count=0, status="partial",
+                    message="EDEKA-Zentralquelle nicht vollständig abrufbar.", artifacts={},
+                )
 
     result.artifacts = dict(result.artifacts or {})
     result.artifacts["market_page_id"] = _market_id(store)
@@ -149,6 +169,20 @@ def fetch_central_edeka(store: Store) -> WebAuditResult:
     if errors:
         result.artifacts["central_fallbacks"] = errors
     result.final_url = _central_market_page(store)
+    result.status = "partial"
+    result.artifacts.update({
+        "central_completeness": "partial",
+        "central_completeness_status": "partial",
+        "central_completeness_reason": "Offizielle Marktseite fehlgeschlagen; API-Daten sind nur unvollständige Diagnose-Evidenz.",
+        "known_reference_count": 224 if _market_id(store) == "071378" else None,
+        "known_reference_visible_count": 224 if _market_id(store) == "071378" else None,
+        "central_expected_reference_count": 224 if _market_id(store) == "071378" else None,
+        "central_categories_detected": 0,
+        "central_categories_completed": 0,
+        "central_raw_count": result.raw_count,
+        "central_unique_count": len(result.offers),
+        "parsed_central_count": len(result.offers),
+    })
     return result
 
 
@@ -157,8 +191,14 @@ def fetch_local_edeka(store: Store) -> WebAuditResult | None:
         return None
     try:
         result = fetch_fellenzer_offers(store)
-    except WebAuditError:
-        return None
+    except WebAuditError as exc:
+        return WebAuditResult(
+            offers=[], source_url="https://edeka-fellenzer.de/angebote/",
+            final_url="https://edeka-fellenzer.de/angebote/",
+            collector_path="edeka_local_fellenzer_unavailable", raw_count=0, status="partial",
+            message=f"Lokale Fellenzer-Quelle nicht verfügbar: {exc.error_type}",
+            artifacts={"local_error": exc.error_type, "local_error_message": str(exc)},
+        )
     result.artifacts = dict(result.artifacts or {})
     result.artifacts["market_id"] = _market_id(store)
     result.artifacts["source_role"] = "local_supplement"

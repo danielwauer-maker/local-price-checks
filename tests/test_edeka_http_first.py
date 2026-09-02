@@ -19,14 +19,22 @@ def test_edeka_selected_market_offer_page_uses_http_first(monkeypatch):
     assert b"Himbeeren" in result.content
 
 
-def test_edeka_market_detail_and_other_retailers_do_not_use_http_first(monkeypatch):
+def test_edeka_market_detail_uses_http_first_but_other_retailers_do_not(monkeypatch):
+    html = ("<html><body>" + ("Angebot: Himbeeren 1,79 € " * 400) + "</body></html>").encode()
+
+    def fake_get(url, **kwargs):
+        request = httpx.Request("GET", url)
+        return httpx.Response(200, request=request, content=html, headers={"content-type": "text/html"})
+
+    monkeypatch.setattr(browser_fetch_module.httpx, "get", fake_get)
+    assert browser_fetch_module._edeka_http_first(
+        "https://www.edeka.de/maerkte/071378/angebote/", 45000
+    ) is not None
+
     def fail_get(*args, **kwargs):
         raise AssertionError("HTTP-first must not run for non-target URLs")
 
     monkeypatch.setattr(browser_fetch_module.httpx, "get", fail_get)
-    assert browser_fetch_module._edeka_http_first(
-        "https://www.edeka.de/maerkte/071378/angebote/", 45000
-    ) is None
     assert browser_fetch_module._edeka_http_first(
         "https://www.penny.de/angebote", 45000
     ) is None
