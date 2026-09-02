@@ -15,13 +15,49 @@ STORES = [
 
 
 def seed_stores(db):
+    """Seed initial demo stores without overwriting operator publication decisions.
+
+    ``verified`` is only a bootstrap default for a newly created store. Existing
+    stores may have passed the activation/quality workflow since the original
+    seed was written, so startup must never reset ``benchmark_verified`` from
+    this static list.
+
+    Older versions did exactly that. If such a restart left a store's durable
+    activation state at ``public`` while clearing only ``benchmark_verified``,
+    repair that narrow, auditable inconsistency here. A manually suspended or
+    inactive market is never re-enabled by the repair.
+    """
+    # Local import avoids making the lightweight seed module responsible for
+    # market-activation model registration during module import.
+    from .market_activation import activation_state
+
     for retailer, name, pc, city, address, lat, lon, verified, external_id in STORES:
         store = db.query(Store).filter(Store.name == name).first()
-        if not store:
-            store = Store(retailer=retailer, name=name, postal_code=pc, city=city, address=address)
+        created = store is None
+        if created:
+            store = Store(
+                retailer=retailer,
+                name=name,
+                postal_code=pc,
+                city=city,
+                address=address,
+                benchmark_verified=verified,
+            )
             db.add(store)
+            db.flush()
+
         store.latitude = lat
         store.longitude = lon
-        store.benchmark_verified = verified
         store.external_id = external_id
+
+        if not created:
+            state = activation_state(db, store.id)
+            if (
+                state is not None
+                and state.lifecycle_status == "public"
+                and not state.manually_suspended
+                and store.active
+            ):
+                store.benchmark_verified = True
+
     db.commit()
