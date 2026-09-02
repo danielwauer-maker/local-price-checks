@@ -28,6 +28,7 @@ from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_web_offer_audit_routes import router as admin_web_offer_audit_router
 from .admin_candidate_coordinate_routes import router as admin_candidate_coordinate_router
 from .admin_coverage_routes import router as admin_coverage_router
+from .admin_rollout_routes import router as admin_rollout_router
 from .coverage_routes import router as coverage_router
 from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
@@ -160,6 +161,7 @@ app.include_router(admin_collector_router)
 app.include_router(admin_provenance_router)
 app.include_router(admin_prospect_audit_router)
 app.include_router(admin_web_offer_audit_router)
+app.include_router(admin_rollout_router)
 # Keep the existing Coverage button/URL, but handle it with the visual coordinate review first.
 app.include_router(admin_candidate_coordinate_router)
 app.include_router(admin_coverage_router)
