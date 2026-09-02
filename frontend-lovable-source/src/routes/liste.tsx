@@ -8,6 +8,7 @@ import { Tabs } from "@/components/lokero/FilterChips";
 import { OptimizedTripSummary, ShoppingMarketGroup, TripRouteRow } from "@/components/lokero/OptimizedTrip";
 import { ProductImage } from "@/components/lokero/ProductImage";
 import { MarketLogo } from "@/components/lokero/MarketLogo";
+import { ListAlternativeSuggestion, type ListAlternative } from "@/components/lokero/ListAlternativeSuggestion";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
 import { manualListKey, useStore } from "@/lib/app-store";
 import { bestPriceFor, fetchFeatures, fetchOffers, fetchOptimizedTrip, getMarket, getProduct, type OfferView } from "@/services/lokero-api";
@@ -52,12 +53,7 @@ function SwipeableRow({ children, onCheck, onDelete, checked }: { children: Reac
   const horizontalGesture = useRef(false);
   const [offset, setOffset] = useState(0);
   const updateOffset = (next: number) => { offsetRef.current = next; setOffset(next); };
-  const reset = () => {
-    startX.current = null;
-    startY.current = null;
-    horizontalGesture.current = false;
-    updateOffset(0);
-  };
+  const reset = () => { startX.current = null; startY.current = null; horizontalGesture.current = false; updateOffset(0); };
   const finish = () => {
     const finalOffset = offsetRef.current;
     reset();
@@ -72,22 +68,13 @@ function SwipeableRow({ children, onCheck, onDelete, checked }: { children: Reac
         className="relative bg-surface transition-transform duration-150"
         style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y" }}
         data-swipe-offset={Math.round(offset)}
-        onTouchStart={(event) => {
-          startX.current = event.touches[0]?.clientX ?? null;
-          startY.current = event.touches[0]?.clientY ?? null;
-          offsetRef.current = 0;
-        }}
+        onTouchStart={(event) => { startX.current = event.touches[0]?.clientX ?? null; startY.current = event.touches[0]?.clientY ?? null; offsetRef.current = 0; }}
         onTouchMove={(event) => {
           if (startX.current == null || startY.current == null) return;
-          const currentX = event.touches[0]?.clientX;
-          const currentY = event.touches[0]?.clientY;
+          const currentX = event.touches[0]?.clientX; const currentY = event.touches[0]?.clientY;
           if (currentX == null || currentY == null) return;
-          const deltaX = currentX - startX.current;
-          const deltaY = currentY - startY.current;
-          if (!horizontalGesture.current) {
-            if (Math.abs(deltaY) >= Math.abs(deltaX) || Math.abs(deltaX) < 10) return;
-            horizontalGesture.current = true;
-          }
+          const deltaX = currentX - startX.current; const deltaY = currentY - startY.current;
+          if (!horizontalGesture.current) { if (Math.abs(deltaY) >= Math.abs(deltaX) || Math.abs(deltaX) < 10) return; horizontalGesture.current = true; }
           updateOffset(Math.max(-96, Math.min(96, deltaX)));
         }}
         onTouchEnd={finish}
@@ -100,9 +87,7 @@ function SwipeableRow({ children, onCheck, onDelete, checked }: { children: Reac
 
 function cheapestPerProduct(rows: OfferView[]): OfferView[] {
   const byProduct = new Map<string, OfferView>();
-  for (const row of [...rows].sort((a, b) => a.price - b.price)) {
-    if (!byProduct.has(row.productId)) byProduct.set(row.productId, row);
-  }
+  for (const row of [...rows].sort((a, b) => a.price - b.price)) if (!byProduct.has(row.productId)) byProduct.set(row.productId, row);
   return Array.from(byProduct.values()).slice(0, 6);
 }
 
@@ -142,7 +127,7 @@ function ListScreen() {
 
   const groups = useMemo<ListGroup[]>(() => {
     const byMarket = new Map<string, ListGroup>();
-    const unknown: ListGroup = { key: "unknown", marketName: "Noch kein Marktpreis", distanceKm: Number.POSITIVE_INFINITY, subtotal: null, entries: [] };
+    const unknown: ListGroup = { key: "unknown", marketName: "Bekannte Artikel ohne aktuelles Angebot", distanceKm: Number.POSITIVE_INFINITY, subtotal: null, entries: [] };
     for (const entry of listEntries) {
       const best = bestPriceFor(entry.productId);
       const market = best ? getMarket(best.marketId) : undefined;
@@ -164,33 +149,27 @@ function ListScreen() {
 
   const confirmClearList = () => {
     if (!window.confirm("Möchtest du wirklich die komplette Einkaufsliste leeren?")) return;
-    clearList();
-    toast.success("Liste geleert");
+    clearList(); toast.success("Liste geleert");
   };
 
   const submitManualItem = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const name = manualName.trim();
-    if (!name) return;
-    addManualListItem(name);
-    setManualName("");
-    setSuggestionQuery("");
-    setInputFocused(false);
-    toast.success(`${name} hinzugefügt`);
+    event.preventDefault(); const name = manualName.trim(); if (!name) return;
+    addManualListItem(name); setManualName(""); setSuggestionQuery(""); setInputFocused(false); toast.success(`${name} hinzugefügt`);
   };
 
   const chooseSuggestion = (offer: OfferView) => {
-    addToList(offer.productId);
-    setManualName("");
-    setSuggestionQuery("");
-    setInputFocused(false);
-    toast.success(`${offer.product.name} hinzugefügt`);
+    addToList(offer.productId); setManualName(""); setSuggestionQuery(""); setInputFocused(false); toast.success(`${offer.product.name} hinzugefügt`);
+  };
+
+  const replaceKnownProduct = (productId: string, qty: number, alternative: ListAlternative) => {
+    const previous = getProduct(productId);
+    setQty(productId, 0);
+    addToList(alternative.product.id, qty);
+    toast.success(`${previous?.name ?? "Artikel"} durch ${alternative.product.name} ersetzt`);
   };
 
   const toggleGroup = (key: string) => setCollapsedGroups((current) => {
-    const next = new Set(current);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
+    const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next;
   });
 
   const startVoiceInput = () => {
@@ -202,11 +181,9 @@ function ListScreen() {
     if (!Recognition) { toast.info("Spracheingabe wird von diesem Browser leider nicht unterstützt."); return; }
     if (isListening) { try { recognitionRef.current?.stop(); } catch { recognitionRef.current = null; setIsListening(false); } return; }
     try {
-      const recognition = new Recognition();
-      recognition.lang = "de-DE"; recognition.interimResults = false; recognition.continuous = false;
+      const recognition = new Recognition(); recognition.lang = "de-DE"; recognition.interimResults = false; recognition.continuous = false;
       recognition.onresult = (event) => {
-        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
-        if (!transcript) return;
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim(); if (!transcript) return;
         const names = transcript.split(/,| und /i).map((item) => item.trim()).filter(Boolean).slice(0, 10);
         names.forEach((name) => addManualListItem(name));
         toast.success(names.length > 1 ? `${names.length} Artikel hinzugefügt` : `${names[0]} hinzugefügt`);
@@ -241,21 +218,11 @@ function ListScreen() {
               <button type="button" onClick={startVoiceInput} className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border ${isListening ? "border-primary bg-primary-soft text-primary" : "border-border bg-surface text-muted-foreground"}`} aria-label={isListening ? "Spracheingabe beenden" : "Artikel per Sprache hinzufügen"}><Mic className="h-4 w-4" /></button>
               <button type="submit" disabled={!manualName.trim()} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40" aria-label="Freien Artikel hinzufügen"><Plus className="h-4 w-4" /></button>
             </div>
-
             {showSuggestions && (
               <div className="absolute left-3 right-3 top-[92px] z-30 overflow-hidden rounded-2xl border border-border bg-surface shadow-xl">
                 {suggestionsQuery.isFetching && suggestions.length === 0 && <p className="px-3 py-3 text-[11px] text-muted-foreground">Aktuelle Angebote werden gesucht …</p>}
                 {!suggestionsQuery.isFetching && suggestions.length === 0 && <p className="px-3 py-3 text-[11px] text-muted-foreground">Kein aktuelles Angebot gefunden. Mit + fügst du „{manualName.trim()}“ als freien Artikel hinzu.</p>}
-                {suggestions.length > 0 && <div className="divide-y divide-border">
-                  <p className="bg-primary/[0.035] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Aktuelle Angebote · günstigstes zuerst</p>
-                  {suggestions.map((offer) => (
-                    <button key={`${offer.productId}-${offer.marketId}`} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(offer)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left active:bg-muted-surface">
-                      <ProductImage product={offer.product} size="xs" />
-                      <div className="min-w-0 flex-1"><p className="line-clamp-1 text-[12px] font-semibold text-navy">{offer.product.name}</p><div className="mt-0.5 flex items-center gap-1.5"><MarketLogo chain={offer.market.chain} size="xs" /><span className="truncate text-[10px] text-muted-foreground">{offer.market.name}</span></div></div>
-                      <span className="tabular shrink-0 text-[13px] font-bold text-primary-deep">{formatEuro(offer.price)}</span>
-                    </button>
-                  ))}
-                </div>}
+                {suggestions.length > 0 && <div className="divide-y divide-border"><p className="bg-primary/[0.035] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Aktuelle Angebote · günstigstes zuerst</p>{suggestions.map((offer) => <button key={`${offer.productId}-${offer.marketId}`} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(offer)} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left active:bg-muted-surface"><ProductImage product={offer.product} size="sm" className="h-10 w-10" /><div className="min-w-0 flex-1"><p className="line-clamp-1 text-[12px] font-semibold text-navy">{offer.product.name}</p><div className="mt-0.5 flex items-center gap-1.5"><MarketLogo chain={offer.market.chain} size="xs" /><span className="truncate text-[10px] text-muted-foreground">{offer.market.name}</span></div></div><span className="tabular shrink-0 text-[13px] font-bold text-primary-deep">{formatEuro(offer.price)}</span></button>)}</div>}
               </div>
             )}
             <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Spareno sucht beim Tippen nach aktuellen Angeboten. Ohne Auswahl wird der Text als freier Artikel hinzugefügt.</p>
@@ -270,14 +237,25 @@ function ListScreen() {
             const displayEntries = [...group.entries].sort((a, b) => Number(checkedListItems.includes(a.productId)) - Number(checkedListItems.includes(b.productId)));
             return <section key={group.key} className="overflow-hidden rounded-2xl border border-border bg-surface">
               <button type="button" onClick={() => toggleGroup(group.key)} className="flex w-full items-center gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}>
-                {market && <MarketLogo chain={market.chain} size="sm" />}<div className="min-w-0 flex-1"><h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{group.marketName}</h2><p className="mt-0.5 text-[10px] text-muted-foreground">{group.entries.length} Artikel{market ? ` · ${formatKm(group.distanceKm)}` : ""}</p></div>
+                {market && <MarketLogo chain={market.chain} size="sm" />}
+                <div className="min-w-0 flex-1"><h2 className="line-clamp-2 text-[13px] font-semibold leading-snug text-navy">{group.marketName}</h2><p className="mt-0.5 text-[10px] text-muted-foreground">{group.entries.length} Artikel{market ? ` · ${formatKm(group.distanceKm)}` : " · diese Woche kein passender Marktpreis"}</p></div>
                 {group.subtotal != null && <div className="shrink-0 text-right"><p className="text-[10px] text-muted-foreground">Zwischensumme</p><p className="tabular text-[14px] font-bold text-navy">{formatEuro(group.subtotal)}</p></div>}
                 <span className="ml-1 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground" aria-hidden="true">{collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span>
               </button>
               {!collapsed && <div className="divide-y divide-border">
                 {displayEntries.map(({ productId, qty, price }) => {
                   const product = getProduct(productId); if (!product) return null; const checked = checkedListItems.includes(productId);
-                  return <SwipeableRow key={productId} checked={checked} onCheck={() => toggleListChecked(productId)} onDelete={() => { setQty(productId, 0); toast.success(`${product.name} entfernt`); }}><article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}><SparenoCheckbox checked={checked} onChange={() => toggleListChecked(productId)} label={checked ? `${product.name} wieder öffnen` : `${product.name} als erledigt markieren`} /><ProductImage product={product} size="sm" /><Link to="/produkt/$productId" params={{ productId }} className="min-w-0 flex-1 rounded-lg px-1 py-2 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p><p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p></Link><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span><button type="button" disabled={checked} onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>;
+                  return <div key={productId}>
+                    <SwipeableRow checked={checked} onCheck={() => toggleListChecked(productId)} onDelete={() => { setQty(productId, 0); toast.success(`${product.name} entfernt`); }}>
+                      <article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}>
+                        <SparenoCheckbox checked={checked} onChange={() => toggleListChecked(productId)} label={checked ? `${product.name} wieder öffnen` : `${product.name} als erledigt markieren`} />
+                        <ProductImage product={product} size="sm" />
+                        <Link to="/produkt/$productId" params={{ productId }} className="min-w-0 flex-1 rounded-lg px-1 py-2 text-left"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{product.name}</p><p className="tabular mt-1 text-[11px] text-muted-foreground">{qty > 1 ? `${qty} Stück` : "1 Stück"}{price != null ? ` · ${formatEuro(price)} je Stück` : ""}</p></Link>
+                        <div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setQty(productId, qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{qty}</span><button type="button" disabled={checked} onClick={() => addToList(productId)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div>
+                      </article>
+                    </SwipeableRow>
+                    {group.key === "unknown" && !checked && <ListAlternativeSuggestion productId={productId} onReplace={(alternative) => replaceKnownProduct(productId, qty, alternative)} />}
+                  </div>;
                 })}
                 {checkedInGroup > 0 && <p className="px-3 py-2 text-[10px] text-muted-foreground">{checkedInGroup} von {group.entries.length} erledigt · erledigte Artikel stehen unten</p>}
               </div>}
@@ -286,7 +264,7 @@ function ListScreen() {
 
           {manualListItems.length > 0 && (() => {
             const key = "manual"; const collapsed = collapsedGroups.has(key); const sortedItems = [...manualListItems].sort((a, b) => Number(checkedListItems.includes(manualListKey(a.id))) - Number(checkedListItems.includes(manualListKey(b.id))));
-            return <section className="overflow-hidden rounded-2xl border border-border bg-surface"><button type="button" onClick={() => toggleGroup(key)} className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}><div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} Artikel · ohne Preisvergleich</p></div><div className="flex items-center gap-2"><span className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</span>{collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}</div></button>{!collapsed && <div className="divide-y divide-border">{sortedItems.map((item) => { const itemKey = manualListKey(item.id); const checked = checkedListItems.includes(itemKey); return <SwipeableRow key={item.id} checked={checked} onCheck={() => toggleListChecked(itemKey)} onDelete={() => { removeManualListItem(item.id); toast.success(`${item.name} entfernt`); }}><article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}><SparenoCheckbox checked={checked} onChange={() => toggleListChecked(itemKey)} label={checked ? `${item.name} wieder öffnen` : `${item.name} als erledigt markieren`} /><div className="min-w-0 flex-1 px-1 py-2"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p></div><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>; })}</div>}</section>;
+            return <section className="overflow-hidden rounded-2xl border border-border bg-surface"><button type="button" onClick={() => toggleGroup(key)} className="flex w-full items-center justify-between gap-3 border-b border-border bg-muted-surface/70 px-3 py-3 text-left" aria-expanded={!collapsed}><div><h2 className="text-[13px] font-semibold text-navy">Weitere Artikel</h2><p className="text-[10px] text-muted-foreground">{manualListItems.length} freie Artikel · ohne Preisvergleich</p></div><div className="flex items-center gap-2"><span className="text-[11px] font-medium text-muted-foreground">{checkedManualCount}/{manualListItems.length}</span>{collapsed ? <ChevronRight className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}</div></button>{!collapsed && <div className="divide-y divide-border">{sortedItems.map((item) => { const itemKey = manualListKey(item.id); const checked = checkedListItems.includes(itemKey); return <SwipeableRow key={item.id} checked={checked} onCheck={() => toggleListChecked(itemKey)} onDelete={() => { removeManualListItem(item.id); toast.success(`${item.name} entfernt`); }}><article className={`flex items-center gap-1 p-2 transition-opacity ${checked ? "opacity-55" : ""}`}><SparenoCheckbox checked={checked} onChange={() => toggleListChecked(itemKey)} label={checked ? `${item.name} wieder öffnen` : `${item.name} als erledigt markieren`} /><div className="min-w-0 flex-1 px-1 py-2"><p className={`line-clamp-2 text-[13px] font-semibold leading-snug text-navy ${checked ? "line-through" : ""}`}>{item.name}</p><p className="mt-1 text-[11px] text-muted-foreground">{item.qty > 1 ? `${item.qty} Stück` : "1 Stück"}</p></div><div className={`flex shrink-0 items-center gap-1 rounded-xl bg-muted-surface p-1 ${checked ? "opacity-45" : ""}`} aria-disabled={checked}><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty - 1)} aria-label="Menge verringern" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Minus className="h-3.5 w-3.5" /></button><span className="tabular w-5 text-center text-[13px] font-semibold">{item.qty}</span><button type="button" disabled={checked} onClick={() => setManualListQty(item.id, item.qty + 1)} aria-label="Menge erhöhen" className="grid h-8 w-8 place-items-center rounded-lg bg-surface text-navy disabled:cursor-not-allowed disabled:text-muted-foreground"><Plus className="h-3.5 w-3.5" /></button></div></article></SwipeableRow>; })}</div>}</section>;
           })()}
         </div>
       )}

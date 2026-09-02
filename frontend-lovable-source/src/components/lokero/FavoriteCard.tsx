@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { Bell, ChevronRight, Heart } from "lucide-react";
-import type { AlternativeKind, Product } from "@/data/lokero";
+import type { AlternativeKind, Chain, Product } from "@/data/lokero";
 import { formatEuro } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ProductImage } from "./ProductImage";
+import { MarketLogo } from "./MarketLogo";
 
 export function FavoriteCard({
   product,
@@ -91,12 +92,14 @@ export function AlternativeCard({
   comparePrice,
   kind,
   reason,
+  market,
 }: {
   product: Product;
   price?: number;
   comparePrice?: number;
   kind: AlternativeKind;
   reason?: string;
+  market?: { id: string; name: string; chain: Chain };
 }) {
   return (
     <Link
@@ -110,7 +113,13 @@ export function AlternativeCard({
           Alternative · {KIND_LABEL[kind]}
         </p>
         <p className="truncate text-[12px] font-semibold text-navy">{product.name}</p>
-        {reason && <p className="truncate text-[10px] text-muted-foreground">{reason}</p>}
+        {market && (
+          <div className="mt-1 flex min-w-0 items-center gap-1.5">
+            <MarketLogo chain={market.chain} size="xs" />
+            <span className="truncate text-[10px] text-muted-foreground">{market.name}</span>
+          </div>
+        )}
+        {reason && <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{reason}</p>}
       </div>
       {price != null && (
         <div className="shrink-0 text-right">
