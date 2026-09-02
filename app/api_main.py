@@ -27,6 +27,7 @@ from .admin_provenance_routes import router as admin_provenance_router
 from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_web_offer_audit_routes import router as admin_web_offer_audit_router
 from .admin_candidate_coordinate_routes import router as admin_candidate_coordinate_router
+from .admin_candidate_promotion_guard_routes import router as admin_candidate_promotion_guard_router
 from .admin_coverage_canonical_routes import router as admin_coverage_canonical_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .admin_rollout_routes import router as admin_rollout_router
@@ -87,12 +88,6 @@ _performance_logger = logging.getLogger("spareno.performance")
 
 @app.middleware("http")
 async def persistent_client_identity(request, call_next):
-    """Give each browser/PWA installation one durable opaque client key.
-
-    The key itself is cheap and may be issued on a read-only request. A database
-    UserProfile/UserClient is materialized lazily only when a real personal
-    write occurs (or when an existing client/account already resolves).
-    """
     header_key = request.headers.get("x-localprices-client") or ""
     cookie_key = request.cookies.get("lp_client_id") or ""
     valid_header = header_key if _CLIENT_RE.fullmatch(header_key) else ""
@@ -144,7 +139,6 @@ async def request_performance_metrics(request, call_next):
         end_request_query_metrics(token)
 
 
-# Optimized bootstrap is intentionally registered before the legacy /api/bootstrap route.
 app.include_router(bootstrap_router)
 app.include_router(router)
 app.include_router(product_detail_router)
@@ -153,7 +147,6 @@ app.include_router(activity_router)
 app.include_router(account_router)
 app.include_router(profile_router)
 app.include_router(push_router)
-# Register the event-driven list stream before the legacy polling route with the same path.
 app.include_router(realtime_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
@@ -166,9 +159,10 @@ app.include_router(admin_prospect_audit_router)
 app.include_router(admin_web_offer_audit_router)
 app.include_router(admin_rollout_router)
 app.include_router(admin_market_identity_router)
+# Promotion guard must win over the legacy candidate promotion endpoint.
+app.include_router(admin_candidate_promotion_guard_router)
 # Canonical coverage GET must be registered before the legacy raw Store GET.
 app.include_router(admin_coverage_canonical_router)
-# Keep the existing Coverage coordinate-review/write routes unchanged.
 app.include_router(admin_candidate_coordinate_router)
 app.include_router(admin_coverage_router)
 app.include_router(coverage_router)
