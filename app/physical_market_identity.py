@@ -11,8 +11,10 @@ def _fold(value: str | None) -> str:
     text = unicodedata.normalize("NFKD", (value or "").casefold())
     text = "".join(char for char in text if not unicodedata.combining(char))
     text = text.replace("ß", "ss")
-    text = re.sub(r"\bstr(?:asse|\.)?\b", "strasse", text)
-    text = re.sub(r"\bstraße\b", "strasse", text)
+    # Normalize German street spelling before punctuation is stripped. This
+    # intentionally treats "Str.", "Str", "Straße" and "Strasse" as equal.
+    text = re.sub(r"\bstr(?:asse|aße)?\.?\b", "strasse", text)
+    text = re.sub(r"\bstra(?:ss|ß)e\b", "strasse", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -33,10 +35,9 @@ def normalized_address(store: Store) -> tuple[str, str, str]:
 def physical_store_key(store: Store) -> tuple[str, ...]:
     """Return a conservative identity key for one physical grocery market.
 
-    A complete postal-code/city/address is the primary identity. This makes
-    differently named rows such as "REWE Dierdorf" and "REWE:XL Hundertmark"
-    one physical market while keeping two branches at different addresses
-    (for example the two REWE stores in Altenkirchen) separate.
+    Complete postal-code/city/address is the primary identity. Differently
+    named rows for the same retailer/location therefore become one physical
+    market, while branches at different addresses remain separate.
 
     A retailer external id is used only when the physical address is missing.
     With neither address nor external id we deliberately fall back to the row id
