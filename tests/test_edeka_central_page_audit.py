@@ -65,7 +65,7 @@ def test_real_load_more_shape_counts_hidden_server_rendered_rows():
     assert diagnostics["load_more_mechanism"] == "server_rendered_dom_data_attribute_toggle"
 
 
-def test_known_fellenzer_reference_is_complete_only_at_full_224():
+def test_known_fellenzer_reference_is_complete_at_historical_224():
     full = _surface([23, 34, 47, 11, 40, 32, 19, 14], featured=4)
     result = fetch_central_market_page(_store(), fetcher=_fetcher(full, {
         "http_status": 200,
@@ -81,6 +81,8 @@ def test_known_fellenzer_reference_is_complete_only_at_full_224():
     assert len(result.offers) == 224
     assert result.artifacts["central_completeness"] == "complete"
     assert result.artifacts["known_reference_count"] == 224
+    assert result.artifacts["reference_minimum_count"] == 213
+    assert result.artifacts["reference_coverage_ratio"] == 1.0
     assert result.artifacts["central_categories_completed"] == 8
     assert result.artifacts["unparsed_dom_offer_count"] == 0
     assert result.source_url == "https://www.edeka.de/maerkte/071378/angebote/"
@@ -91,6 +93,28 @@ def test_known_fellenzer_reference_is_complete_only_at_full_224():
     assert result.artifacts["central_dom_count"] == 224
     assert result.artifacts["central_parsed_count"] == 224
     assert result.artifacts["central_reference_count"] == 224
+
+
+def test_fellenzer_complete_dom_accepts_normal_weekly_count_drift():
+    current_week = _surface([23, 34, 47, 11, 40, 32, 19, 13], featured=4)
+    result = fetch_central_market_page(_store(), fetcher=_fetcher(current_week))
+
+    assert len(result.offers) == 223
+    assert result.status == "success"
+    assert result.artifacts["central_completeness"] == "complete"
+    assert result.artifacts["reference_minimum_count"] == 213
+    assert result.artifacts["reference_coverage_ratio"] > 0.99
+    assert result.artifacts["unparsed_dom_offer_count"] == 0
+
+
+def test_fellenzer_reference_collapse_below_95_percent_stays_partial():
+    collapsed = _surface([22, 32, 44, 10, 38, 30, 18, 14], featured=4)
+    result = fetch_central_market_page(_store(), fetcher=_fetcher(collapsed))
+
+    assert len(result.offers) == 212
+    assert result.status == "partial"
+    assert result.artifacts["central_completeness"] == "partial"
+    assert result.artifacts["reference_minimum_count"] == 213
 
 
 def test_small_dom_result_is_partial_and_never_reported_as_success():
