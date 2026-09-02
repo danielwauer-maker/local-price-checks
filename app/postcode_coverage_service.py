@@ -14,6 +14,7 @@ from .config import settings
 from .coverage_service import normalize_retailer
 from .geo import haversine_km
 from .models import Store
+from .physical_market_identity import official_retailer_id
 from .postcode_geometry import seed_bundled_postcode_geometries
 
 
@@ -332,6 +333,12 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
     if not candidate_ready_for_promotion(candidate):
         raise ValueError("Markt ist noch nicht vollständig verifiziert")
 
+    from .market_identity_conflicts import weak_candidate_promotion_conflict
+
+    conflict = weak_candidate_promotion_conflict(db, candidate)
+    if conflict.blocked:
+        raise ValueError(conflict.reason or "Möglicher physischer Doppelmarkt")
+
     store = db.get(Store, candidate.matched_store_id) if candidate.matched_store_id else None
     if store is None and candidate.source_external_id:
         store = db.query(Store).filter(
@@ -339,6 +346,20 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
             Store.external_id == candidate.source_external_id,
         ).first()
     if store is None:
+        candidate_identity = Store(
+            id=0,
+            retailer=candidate.retailer,
+            name=candidate.name or candidate.retailer,
+            postal_code=candidate.postal_code,
+            city=candidate.city,
+            address=candidate.address,
+            latitude=candidate.latitude,
+            longitude=candidate.longitude,
+            active=False,
+            benchmark_verified=False,
+            external_id=candidate.source_external_id,
+            source_url=candidate.source_url,
+        )
         store = next(
             (
                 row
@@ -347,6 +368,12 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
                     Store.postal_code == candidate.postal_code,
                 ).all()
                 if addresses_match(row.address, candidate.address)
+                and not (
+                    official_retailer_id(row)
+                    and official_retailer_id(candidate_identity)
+                    and official_retailer_id(row)
+                    != official_retailer_id(candidate_identity)
+                )
             ),
             None,
         )

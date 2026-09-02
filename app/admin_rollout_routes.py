@@ -12,7 +12,7 @@ from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .db import get_db
 from .market_activation import activation_overview
 from .models import Store
-from .physical_market_identity import collapse_physical_stores, duplicate_groups
+from .physical_market_identity import canonical_store_map, collapse_physical_stores, duplicate_groups
 from .postcode_coverage_service import candidate_ready_for_promotion
 from .postcode_reconciliation import deduplicate_candidates
 from .retailer_capabilities import retailer_capabilities
@@ -86,17 +86,14 @@ def rollout_admin(
     health = {row.store_id: row for row in scrape_health_rows(db) if row.retailer == selected_retailer}
 
     duplicates = duplicate_groups(raw_stores)
-    duplicate_aliases = {
-        group[0].postal_code: [
-            {
-                "canonical": collapse_physical_stores(group)[0],
-                "aliases": group,
-            }
-            for group in duplicates
-            if group[0].postal_code == postcode
-        ]
-        for postcode in {row.postal_code for row in raw_stores}
-    }
+    canonical_map = canonical_store_map(raw_stores)
+    duplicate_aliases: dict[str, list[dict]] = defaultdict(list)
+    for group in duplicates:
+        canonical = canonical_map[group[0].id]
+        duplicate_aliases[canonical.postal_code].append({
+            "canonical": canonical,
+            "aliases": group,
+        })
 
     progress = {
         "candidates": len(candidates),
@@ -121,7 +118,7 @@ def rollout_admin(
             "overviews": overviews,
             "step_states": step_states,
             "health": health,
-            "duplicate_aliases": duplicate_aliases,
+            "duplicate_aliases": dict(duplicate_aliases),
             "progress": progress,
             "candidate_ready_for_promotion": candidate_ready_for_promotion,
         },
