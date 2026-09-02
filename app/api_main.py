@@ -31,6 +31,7 @@ from .admin_coverage_canonical_routes import router as admin_coverage_canonical_
 from .admin_coverage_routes import router as admin_coverage_router
 from .admin_rollout_routes import router as admin_rollout_router
 from .coverage_routes import router as coverage_router
+from .canonical_lokero_market_routes import router as canonical_lokero_market_router
 from .lokero_routes import router as lokero_router
 from .lokero_state_routes import router as lokero_state_router
 from .lokero_admin_routes import router as lokero_admin_router
@@ -169,6 +170,8 @@ app.include_router(admin_coverage_canonical_router)
 app.include_router(admin_candidate_coordinate_router)
 app.include_router(admin_coverage_router)
 app.include_router(coverage_router)
+# Canonical public market/offer endpoints win over legacy raw Store endpoints.
+app.include_router(canonical_lokero_market_router)
 app.include_router(lokero_router)
 app.include_router(lokero_state_router)
 app.include_router(lokero_admin_router)
