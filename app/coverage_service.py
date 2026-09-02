@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .coverage_models import CoverageRegion
 from .geo import haversine_km, resolve_center
 from .models import Offer, Store
+from .physical_market_identity import collapse_physical_stores, physical_store_key
 
 KNOWN_RETAILERS = {
     "rewe": "REWE",
@@ -58,7 +59,7 @@ def region_center(postal_code: str, city: str) -> tuple[float, float]:
 
 
 def stores_in_region(db: Session, region: CoverageRegion) -> list[Store]:
-    stores = db.query(Store).filter(Store.active.is_(True)).all()
+    stores = collapse_physical_stores(db.query(Store).filter(Store.active.is_(True)).all())
     return [
         store
         for store in stores
@@ -84,8 +85,6 @@ def coverage_payload(db: Session, region: CoverageRegion) -> dict[str, Any]:
             Offer.valid_to >= today,
         ).all()
         current_offer_rows = len(rows)
-        # User-facing count: the same product/pack/price/validity available in
-        # several branches is one distinct promotion, not one card per store.
         keys = {
             (
                 row.master_product_id,
@@ -161,15 +160,44 @@ def discover_supermarkets(region: CoverageRegion) -> list[dict[str, Any]]:
     return rows
 
 
+def _store_like(item: dict[str, Any], *, row_id: int = -1) -> Store:
+    return Store(
+        id=row_id,
+        retailer=item["retailer"],
+        name=item["name"],
+        postal_code=item["postal_code"],
+        city=item["city"],
+        address=item["address"],
+        latitude=item["latitude"],
+        longitude=item["longitude"],
+        external_id=item["external_id"],
+        source_url=item["source_url"],
+        active=True,
+        benchmark_verified=False,
+    )
+
+
 def upsert_discovered_stores(db: Session, region: CoverageRegion) -> tuple[int, int]:
     created = 0
     matched = 0
     for item in discover_supermarkets(region):
         existing = None
-        for candidate in db.query(Store).filter(Store.retailer == item["retailer"]).all():
-            if candidate.latitude is None or candidate.longitude is None:
-                continue
-            if haversine_km(candidate.latitude, candidate.longitude, item["latitude"], item["longitude"]) < 0.15:
+        probe = _store_like(item)
+        probe_key = physical_store_key(probe)
+        retailer_rows = db.query(Store).filter(Store.retailer == item["retailer"]).all()
+        for candidate in retailer_rows:
+            same_physical_identity = physical_store_key(candidate) == probe_key
+            same_external_id = bool(
+                item["external_id"]
+                and candidate.external_id
+                and str(item["external_id"]) == str(candidate.external_id)
+            )
+            nearby = bool(
+                candidate.latitude is not None
+                and candidate.longitude is not None
+                and haversine_km(candidate.latitude, candidate.longitude, item["latitude"], item["longitude"]) < 0.15
+            )
+            if same_physical_identity or same_external_id or nearby:
                 existing = candidate
                 break
         if existing:
