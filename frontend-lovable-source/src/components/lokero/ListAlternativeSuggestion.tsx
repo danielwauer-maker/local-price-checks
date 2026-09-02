@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, X } from "lucide-react";
-import type { AlternativeKind, Product } from "@/data/lokero";
+import type { AlternativeKind, Chain, Product } from "@/data/lokero";
 import { formatEuro } from "@/lib/format";
 import { ProductImage } from "./ProductImage";
 import { MarketLogo } from "./MarketLogo";
@@ -9,7 +9,7 @@ import { MarketLogo } from "./MarketLogo";
 export type ListAlternative = {
   product: Product;
   price: number;
-  market: { id: string; name: string; chain: Product extends never ? never : string };
+  market: { id: string; name: string; chain: Chain };
   kind: AlternativeKind;
   reason?: string;
   confidence?: number;
@@ -75,7 +75,7 @@ export function ListAlternativeSuggestion({
           <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">Passendes aktuelles Angebot?</p>
           <p className="line-clamp-2 text-[12px] font-semibold text-navy">{alternative.product.name}</p>
           <div className="mt-1 flex min-w-0 items-center gap-1.5">
-            <MarketLogo chain={alternative.market.chain as never} size="xs" />
+            <MarketLogo chain={alternative.market.chain} size="xs" />
             <span className="truncate text-[10px] text-muted-foreground">{alternative.market.name}</span>
             <span className="tabular ml-auto shrink-0 text-[12px] font-bold text-primary-deep">{formatEuro(alternative.price)}</span>
           </div>
