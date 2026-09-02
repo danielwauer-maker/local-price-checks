@@ -8,10 +8,13 @@ import { MarketLogo } from "./MarketLogo";
 import { ProductThumb } from "./CategoryIcon";
 
 export function OptimizedTripSummary({ trip }: { trip: OptimizedTrip }) {
+  const coveredItemCount = trip.stops.reduce((sum, stop) => sum + stop.itemCount, 0);
+  const noSingleStoreComparison = trip.stops.length > 1 && trip.savings <= 0.01;
+  const coverageValue = trip.itemCount > 0 ? `${coveredItemCount}/${trip.itemCount}` : "0";
   const kpis = [
-    { value: String(trip.itemCount), label: "Artikel" },
-    { value: formatEuro(trip.total), label: "Gesamtpreis" },
-    { value: formatEuro(trip.savings), label: "Ersparnis", highlight: true },
+    { value: coverageValue, label: "preislich" },
+    { value: formatEuro(trip.total), label: "berechenbar" },
+    { value: noSingleStoreComparison ? "–" : formatEuro(trip.savings), label: noSingleStoreComparison ? "Ein-Markt" : "Ersparnis", highlight: !noSingleStoreComparison },
     { value: formatEuro(trip.travelCost), label: "Fahrtkosten" },
   ];
 
@@ -36,13 +39,29 @@ export function OptimizedTripSummary({ trip }: { trip: OptimizedTrip }) {
         ))}
       </div>
       <div className="mt-3 rounded-xl bg-white/12 px-3 py-2 text-center">
-        <p className="text-[12px] font-semibold">
-          {trip.combinationLabel} spart dir {formatEuro(trip.savings)}
-        </p>
-        <p className="mt-0.5 flex items-center justify-center gap-1 text-[10px] text-white/75">
-          <Info className="h-3 w-3" /> {trip.savingsExplanation}
-        </p>
+        {noSingleStoreComparison ? (
+          <>
+            <p className="text-[12px] font-semibold">{trip.stops.length} Märkte nötig für alle aktuellen Angebotsartikel</p>
+            <p className="mt-0.5 flex items-center justify-center gap-1 text-[10px] text-white/75">
+              <Info className="h-3 w-3" /> Kein einzelner Markt deckt aktuell alle {coveredItemCount} preislich vergleichbaren Artikel ab.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-[12px] font-semibold">
+              {trip.combinationLabel} spart dir {formatEuro(trip.savings)}
+            </p>
+            <p className="mt-0.5 flex items-center justify-center gap-1 text-[10px] text-white/75">
+              <Info className="h-3 w-3" /> {trip.savingsExplanation}
+            </p>
+          </>
+        )}
       </div>
+      {coveredItemCount < trip.itemCount && (
+        <p className="mt-2 text-center text-[10px] text-white/75">
+          {coveredItemCount} von {trip.itemCount} Artikeln haben aktuell einen Marktpreis; die übrigen bleiben auf deiner Liste.
+        </p>
+      )}
     </section>
   );
 }
