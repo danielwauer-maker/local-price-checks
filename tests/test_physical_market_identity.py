@@ -1,8 +1,18 @@
 from app.models import Store
-from app.physical_market_identity import canonical_store_map, collapse_physical_stores
+from app.physical_market_identity import alias_groups, canonical_store_map, collapse_physical_stores
 
 
-def _store(row_id, name, address, *, city="Dierdorf", postal_code="56269", external_id=None, verified=False):
+def _store(
+    row_id,
+    name,
+    address,
+    *,
+    city="Dierdorf",
+    postal_code="56269",
+    external_id=None,
+    verified=False,
+    source_url="https://www.rewe.de/marktseite/test/",
+):
     return Store(
         id=row_id,
         retailer="REWE",
@@ -13,7 +23,7 @@ def _store(row_id, name, address, *, city="Dierdorf", postal_code="56269", exter
         active=True,
         benchmark_verified=verified,
         external_id=external_id,
-        source_url="https://www.rewe.de/marktseite/test/",
+        source_url=source_url,
     )
 
 
@@ -35,28 +45,41 @@ def test_same_physical_rewe_address_collapses_even_with_different_names():
     assert aliases[2].id == 2
 
 
-def test_same_physical_strassenhaus_aliases_collapse():
-    generic = _store(
-        3,
-        "REWE Straßenhaus",
-        "Kirschbüchel 2",
+def test_strassenhaus_wrong_map_address_is_quarantined_next_to_one_official_identity():
+    # Production failure mode: the OSM/map row points to Raiffeisenstraße while
+    # the real REWE Dennis Weirich carries retailer id 1940425 at Kirschbüchel 2.
+    map_alias = _store(
+        16,
+        "REWE (2)",
+        "Raiffeisenstraße",
         city="Straßenhaus",
         postal_code="56587",
+        external_id="way/92219239",
+        source_url="http://www.rewe.de",
     )
     official = _store(
-        4,
+        15,
         "REWE Dennis Weirich",
         "Kirschbüchel 2",
         city="Straßenhaus",
         postal_code="56587",
         external_id="1940425",
-        verified=True,
+        source_url=None,
     )
 
-    assert [row.id for row in collapse_physical_stores([generic, official])] == [4]
+    collapsed = collapse_physical_stores([map_alias, official])
+    assert [row.id for row in collapsed] == [15]
+
+    mapping = canonical_store_map([map_alias, official])
+    assert mapping[16].id == 15
+    groups = alias_groups([map_alias, official])
+    assert len(groups) == 1
+    assert groups[0].canonical.id == 15
+    assert [row.id for row in groups[0].aliases] == [16]
+    assert "OSM/Map-Alias" in groups[0].reason
 
 
-def test_two_rewe_branches_at_different_addresses_remain_separate():
+def test_two_rewe_branches_at_different_addresses_with_official_ids_remain_separate():
     bahnhof = _store(
         5,
         "PETZ REWE Bahnhofstr. 30",
@@ -77,3 +100,35 @@ def test_two_rewe_branches_at_different_addresses_remain_separate():
     )
 
     assert {row.id for row in collapse_physical_stores([bahnhof, dammweg])} == {5, 6}
+
+
+def test_second_osm_candidate_is_not_hidden_when_two_official_branches_exist():
+    official_a = _store(
+        5,
+        "PETZ REWE Bahnhofstr. 30",
+        "Bahnhofstr. 30",
+        city="Altenkirchen",
+        postal_code="57610",
+        external_id="8534500",
+    )
+    official_b = _store(
+        6,
+        "PETZ REWE Dammweg 10",
+        "Dammweg 10",
+        city="Altenkirchen",
+        postal_code="57610",
+        external_id="2500021",
+    )
+    uncertain = _store(
+        7,
+        "REWE map candidate",
+        "Unklare Straße 1",
+        city="Altenkirchen",
+        postal_code="57610",
+        external_id="way/999",
+    )
+
+    # With multiple strong identities the postcode alone is insufficient. The
+    # uncertain row stays visible for manual identity review instead of being
+    # assigned to an arbitrary branch.
+    assert {row.id for row in collapse_physical_stores([official_a, official_b, uncertain])} == {5, 6, 7}
