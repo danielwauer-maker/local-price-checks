@@ -23,13 +23,27 @@ templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
 
+_LIFECYCLE_LABELS = {
+    "discovered": "Entdeckt",
+    "identity_verified": "Identität geprüft",
+    "promoted": "Bereit für Test-Scrape",
+    "scrape_pending": "Test-Scrape läuft",
+    "scrape_failed": "Test-Scrape fehlgeschlagen",
+    "quality_review": "Qualität prüfen",
+    "quality_passed": "Quality Gate bestanden",
+    "public": "Öffentlich",
+    "suspended": "Gesperrt",
+}
+
+
 def _step_state(store: Store, overview) -> tuple[str, str]:
     if store.benchmark_verified and store.active:
         return "public", "Öffentlich"
     state = getattr(overview, "state", None)
-    state_value = getattr(state, "status", None) or getattr(state, "activation_status", None)
+    state_value = getattr(state, "lifecycle_status", None)
     if state_value:
-        return str(state_value), str(state_value).replace("_", " ").title()
+        value = str(state_value)
+        return value, _LIFECYCLE_LABELS.get(value, value.replace("_", " ").title())
     latest_run = getattr(overview, "latest_run", None)
     if latest_run and latest_run.status in {"success", "warning"}:
         return "quality", "Qualität prüfen"
