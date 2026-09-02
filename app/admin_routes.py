@@ -31,6 +31,7 @@ from .models import (
     ProductCategory,
     Store,
 )
+from .physical_market_identity import canonical_store_map, collapse_physical_stores
 
 BASE = Path(__file__).resolve().parent
 MEDIA_DIR = settings.data_dir / "admin_media"
@@ -57,11 +58,16 @@ def _slug(text: str) -> str:
     return value or "kategorie"
 
 
+def _canonical_store(db: Session, store_id: int) -> Store | None:
+    return canonical_store_map(db.query(Store).all()).get(store_id)
+
+
 def _dashboard(db: Session):
     today = app_today()
     products = db.query(MasterProduct).count()
-    stores = db.query(Store).count()
-    active_stores = db.query(Store).filter(Store.active.is_(True)).count()
+    physical_stores = collapse_physical_stores(db.query(Store).all())
+    stores = len(physical_stores)
+    active_stores = sum(1 for store in physical_stores if store.active)
     current_offers = db.query(Offer).filter(Offer.valid_from <= today, Offer.valid_to >= today).count()
     corrected = db.query(ProductAdminData).filter(ProductAdminData.name_locked.is_(True)).count()
     aliases = db.query(ProductAlias).count()
@@ -103,12 +109,14 @@ def admin_dashboard(request: Request, tab: str = "dashboard", q: str = "", db: S
             barcodes.setdefault(row.master_product_id, []).append(row.barcode)
         context.update({"products": products, "metas": metas, "barcodes": barcodes})
     elif tab == "stores":
-        context["stores_list"] = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+        context["stores_list"] = collapse_physical_stores(
+            db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+        )
     elif tab == "quality":
         context["quality"] = build_quality_report(db)
     elif tab == "media":
         context["media_assets"] = db.query(MediaAsset).order_by(MediaAsset.created_at.desc()).limit(300).all()
-        context["stores_list"] = db.query(Store).order_by(Store.name).all()
+        context["stores_list"] = collapse_physical_stores(db.query(Store).order_by(Store.name).all())
         context["products"] = db.query(MasterProduct).order_by(MasterProduct.name).limit(500).all()
         context["retailers"] = [r[0] for r in db.query(Store.retailer).distinct().order_by(Store.retailer).all()]
     elif tab == "settings":
@@ -131,7 +139,7 @@ def update_product(product_id: int, name: str = Form(...), brand: str = Form("")
 
 @router.post("/admin/stores/{store_id}/toggle")
 def admin_toggle_store(store_id: int, db: Session = Depends(get_db), actor: str = Depends(_admin)):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     store.active = not store.active
@@ -142,7 +150,7 @@ def admin_toggle_store(store_id: int, db: Session = Depends(get_db), actor: str 
 
 @router.post("/admin/stores/{store_id}")
 def update_store(store_id: int, name: str = Form(...), address: str = Form(...), postal_code: str = Form(...), city: str = Form(...), source_url: str = Form(""), external_id: str = Form(""), db: Session = Depends(get_db), actor: str = Depends(_admin)):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     store.name = name.strip()
@@ -201,7 +209,9 @@ async def upload_media(kind: str = Form(...), product_id: str = Form(""), store_
         local_path = filename
         mime = file.content_type
     pid = int(product_id) if product_id.strip().isdigit() else None
-    sid = int(store_id) if store_id.strip().isdigit() else None
+    requested_sid = int(store_id) if store_id.strip().isdigit() else None
+    canonical = _canonical_store(db, requested_sid) if requested_sid is not None else None
+    sid = canonical.id if canonical is not None else requested_sid
     is_primary = primary == "1"
     if is_primary:
         q = db.query(MediaAsset).filter(MediaAsset.kind == kind)
