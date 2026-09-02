@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -45,42 +47,90 @@ def test_seed_does_not_overwrite_existing_publication_decision():
 def test_seed_repairs_legacy_public_state_mismatch_after_restart():
     db = _db()
     store = _fellenzer(db, benchmark_verified=False)
-    db.add(
-        StoreActivationState(
-            store_id=store.id,
-            lifecycle_status="public",
-            identity_verified=True,
-            manually_suspended=False,
-        )
+    state = StoreActivationState(
+        store_id=store.id,
+        lifecycle_status="public",
+        identity_verified=True,
+        manually_suspended=False,
+        published_at=datetime.utcnow(),
     )
+    db.add(state)
     db.commit()
 
     seed_stores(db)
     db.refresh(store)
+    db.refresh(state)
 
     assert store.active is True
     assert store.benchmark_verified is True
+    assert state.lifecycle_status == "public"
+    db.close()
+
+
+def test_seed_repairs_corrupted_lifecycle_when_prior_publication_is_proven():
+    db = _db()
+    store = _fellenzer(db, benchmark_verified=False)
+    state = StoreActivationState(
+        store_id=store.id,
+        lifecycle_status="quality_review",
+        identity_verified=True,
+        manually_suspended=False,
+        published_at=datetime.utcnow(),
+    )
+    db.add(state)
+    db.commit()
+
+    seed_stores(db)
+    db.refresh(store)
+    db.refresh(state)
+
+    assert store.benchmark_verified is True
+    assert state.lifecycle_status == "public"
+    db.close()
+
+
+def test_seed_does_not_auto_publish_quality_only_market_without_publication_proof():
+    db = _db()
+    store = _fellenzer(db, benchmark_verified=False)
+    state = StoreActivationState(
+        store_id=store.id,
+        lifecycle_status="quality_passed",
+        identity_verified=True,
+        manually_suspended=False,
+        published_at=None,
+    )
+    db.add(state)
+    db.commit()
+
+    seed_stores(db)
+    db.refresh(store)
+    db.refresh(state)
+
+    assert store.benchmark_verified is False
+    assert state.lifecycle_status == "quality_passed"
     db.close()
 
 
 def test_seed_never_reactivates_manually_suspended_store():
     db = _db()
     store = _fellenzer(db, benchmark_verified=False, active=True)
-    db.add(
-        StoreActivationState(
-            store_id=store.id,
-            lifecycle_status="public",
-            identity_verified=True,
-            manually_suspended=True,
-            suspension_reason="operator hold",
-        )
+    state = StoreActivationState(
+        store_id=store.id,
+        lifecycle_status="quality_review",
+        identity_verified=True,
+        manually_suspended=True,
+        suspension_reason="operator hold",
+        published_at=datetime.utcnow(),
     )
+    db.add(state)
     db.commit()
 
     seed_stores(db)
     db.refresh(store)
+    db.refresh(state)
 
     assert store.benchmark_verified is False
+    assert state.lifecycle_status == "quality_review"
     db.close()
 
 
