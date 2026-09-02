@@ -62,6 +62,21 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
     )
+    if settings.scrape_health_email_enabled:
+        # Import lazily so SMTP configuration has zero effect on installations
+        # that do not opt into status e-mails.
+        from .scrape_health_email import send_scrape_health_report
+
+        _scheduler.add_job(
+            send_scrape_health_report,
+            trigger="cron",
+            hour=settings.scrape_health_email_hour,
+            minute=settings.scrape_health_email_minute,
+            id="scrape-health-email",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
     _scheduler.start()
     return _scheduler
 
