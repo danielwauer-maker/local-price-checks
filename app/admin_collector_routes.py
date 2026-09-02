@@ -14,8 +14,9 @@ from .admin_reset import reset_all_test_data, reset_store_offers, reset_store_qa
 from .admin_routes import _admin
 from .config import settings
 from .db import SessionLocal, get_db
-from .edeka_discovery import collect_edeka_market_pdf
+from .edeka_live_collector import collect_edeka_web_for_store
 from .models import CollectionRun, CollectionRunProgress, Store
+from .physical_market_identity import canonical_store_map, collapse_physical_stores
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
@@ -35,6 +36,12 @@ templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
 _LIDL_HARD_TIMEOUT_SECONDS = 550.0
+
+
+def _canonical_store(db: Session, store_id: int) -> Store | None:
+    rows = db.query(Store).all()
+    mapping = canonical_store_map(rows)
+    return mapping.get(store_id)
 
 
 def _expire_stuck_lidl_run(store_id: int) -> None:
@@ -179,17 +186,12 @@ def _persist_background_failure(
 
 
 def _run_store_collection_background(store_id: int, activation_test: bool = False) -> None:
-    """Run one market collection outside the HTTP request lifecycle.
-
-    Long-running browser collectors (especially Lidl flipbooks) can exceed
-    nginx's upstream timeout. The background job therefore owns its own DB
-    session and continues independently after the admin request has returned.
-    """
+    """Run one market collection outside the HTTP request lifecycle."""
     db = SessionLocal()
     timeout_timer = None
     job_started_at = datetime.utcnow()
     try:
-        store = db.get(Store, store_id)
+        store = _canonical_store(db, store_id)
         if not store or not store.active:
             return
         if store.retailer == "Lidl":
@@ -202,16 +204,18 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
             timeout_timer.start()
         context = BenchmarkContext.PRODUCTION if store.benchmark_verified else BenchmarkContext.NOT_APPLICABLE
         if store.retailer == "EDEKA":
-            _, _, run = collect_edeka_market_pdf(db, store, benchmark_context=context)
+            _, _, run = collect_edeka_web_for_store(db, store, benchmark_context=context)
         else:
             _, _, run = collect_store_from_web(db, store.name, benchmark_context=context)
         if activation_test:
             complete_test_scrape(db, store, run)
     except Exception as exc:
         try:
+            canonical = _canonical_store(db, store_id)
+            effective_store_id = canonical.id if canonical is not None else store_id
             _persist_background_failure(
                 db,
-                store_id=store_id,
+                store_id=effective_store_id,
                 job_started_at=job_started_at,
                 exc=exc,
             )
@@ -219,11 +223,12 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
             db.rollback()
         if activation_test:
             try:
-                store = db.get(Store, store_id)
+                store = _canonical_store(db, store_id)
+                effective_store_id = store.id if store is not None else store_id
                 run = (
                     db.query(CollectionRun)
                     .filter(
-                        CollectionRun.store_id == store_id,
+                        CollectionRun.store_id == effective_store_id,
                         CollectionRun.started_at >= job_started_at,
                     )
                     .order_by(CollectionRun.started_at.desc())
@@ -241,7 +246,8 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
 
 @router.get("/admin/collector")
 def collector_admin(request: Request, collected: str = "", db: Session = Depends(get_db), actor: str = Depends(_admin)):
-    stores = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+    raw_stores = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+    stores = collapse_physical_stores(raw_stores)
     latest = {}
     prospects = {}
     next_prospects = {}
@@ -299,7 +305,7 @@ def collector_run_store(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     if not store.active:
@@ -339,7 +345,7 @@ def collector_release_store(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     try:
@@ -361,7 +367,7 @@ def collector_reset_store_offers(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     if confirm != "RESET":
@@ -382,7 +388,7 @@ def collector_reset_store_qa(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     if confirm != "RESET QA":
@@ -421,7 +427,7 @@ async def upload_store_prospect(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = db.get(Store, store_id)
+    store = _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
     if period not in {"current", "next"}:
