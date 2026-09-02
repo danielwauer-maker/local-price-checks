@@ -22,10 +22,11 @@ def seed_stores(db):
     seed was written, so startup must never reset ``benchmark_verified`` from
     this static list.
 
-    Older versions did exactly that. If such a restart left a store's durable
-    activation state at ``public`` while clearing only ``benchmark_verified``,
-    repair that narrow, auditable inconsistency here. A manually suspended or
-    inactive market is never re-enabled by the repair.
+    Older versions did exactly that. Recover only a narrow, auditable legacy
+    inconsistency for stores that have durable proof of a previous explicit
+    publication. ``published_at`` is that proof. A store that merely passed the
+    quality gate but was never explicitly published must stay unpublished.
+    Manually suspended or inactive markets are never re-enabled by this repair.
     """
     # Local import avoids making the lightweight seed module responsible for
     # market-activation model registration during module import.
@@ -52,12 +53,19 @@ def seed_stores(db):
 
         if not created:
             state = activation_state(db, store.id)
-            if (
+            was_explicitly_published = bool(
                 state is not None
-                and state.lifecycle_status == "public"
+                and state.published_at is not None
                 and not state.manually_suspended
                 and store.active
-            ):
+            )
+            if was_explicitly_published:
                 store.benchmark_verified = True
+                # A prior restart could have corrupted only the lifecycle/flag
+                # projection while leaving the publication audit timestamp.
+                # Restore the projection from that durable publication proof.
+                state.lifecycle_status = "public"
+                state.suspension_reason = None
+                state.suspended_at = None
 
     db.commit()
