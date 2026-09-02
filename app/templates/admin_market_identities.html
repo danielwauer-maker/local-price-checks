@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Marktidentitäten · Spareno Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#b63b2e}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:none;margin-left:250px;padding:22px 24px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:25px;font-weight:850}.sub,.small{color:var(--muted);font-size:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.04)}.notice{padding:12px 14px;border-radius:12px;background:#fff4d8;border:1px solid #f0d28a;margin-top:14px}.notice.ok{background:#edf7ef;border-color:#cfe8d5}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:11px;text-transform:uppercase;color:var(--muted)}.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef3ed}.pill.warn{background:#fff0cf;color:#9a5a00}.pill.on{background:#def5e6;color:#086b43}.pill.off{background:#fae9e6;color:#a33b2c}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;border:0;border-radius:10px;padding:9px 12px;font-weight:750;cursor:pointer;background:var(--green);color:#fff;text-decoration:none}.btn.secondary{background:#edf5e8;color:#165a3b}.btn.danger{background:#fae9e6;color:#a33b2e}.btn[disabled]{opacity:.45;cursor:not-allowed}.delete-confirm{display:flex;gap:6px;flex-wrap:wrap}.delete-confirm input{width:110px;padding:8px;border:1px solid var(--line);border-radius:8px}.alias{background:#fffaf0}.reason{max-width:420px}.scroll{overflow:auto}@media(max-width:850px){.wrap{margin-left:0;padding:12px}}
+  </style>
+</head>
+<body>
+{% include 'admin_sidebar.html' %}
+<div class="wrap">
+  <div class="top"><div><div class="brand">Marktidentitäten & Fehlmärkte</div><div class="sub">Zentrale Diagnose der kanonischen Store-Auflösung; keine automatische Löschung oder Veröffentlichung.</div></div><div class="actions"><a class="btn secondary" href="/admin?tab=stores">Märkte</a><a class="btn secondary" href="/admin/coverage">Coverage</a><a class="btn secondary" href="/admin/rollout">Rollout</a></div></div>
+  {% if result %}<div class="notice ok"><b>Ergebnis:</b> {{ result }}</div>{% endif %}
+  <div class="notice"><b>Identitätshierarchie:</b> Abweichende offizielle IDs bleiben getrennt; gleiche offizielle ID oder konfliktfreie gleiche normalisierte Adresse werden vereinigt. Nähe gilt nur für einen eindeutigen schwachen OSM-/Map-Alias zu genau einer starken Händleridentität.</div>
+
+  <div class="card"><h2>Unterdrückte Aliase / mögliche Fehlmärkte</h2><p class="small">Business-, Nutzer- oder Verlaufsdaten blockieren Hard Delete generisch über alle registrierten Store-Fremdschlüssel. Discovery-Provenienz bleibt als rejected erhalten.</p><div class="scroll"><table>
+    <tr><th>Kanonischer Markt</th><th>Alias</th><th>Grund</th><th>Datenlage</th><th>Aktion</th></tr>
+    {% for group in groups %}{% for alias in group.aliases %}{% set preview = previews.get(alias.id) %}
+      <tr class="alias"><td><b>{{ group.canonical.name }}</b><br>{{ group.canonical.retailer }} · {{ group.canonical.address }}<br>{{ group.canonical.postal_code }} {{ group.canonical.city }}<br><span class="small">Store {{ group.canonical.id }} · ID {{ group.canonical.external_id or '–' }}</span></td><td><b>{{ alias.name }}</b><br>{{ alias.retailer }} · {{ alias.address }}<br>{{ alias.postal_code }} {{ alias.city }}<br><span class="small">Store {{ alias.id }} · ID {{ alias.external_id or '–' }}</span></td><td class="reason">{{ group.reason }}</td><td>{% if alias.benchmark_verified %}<span class="pill off">öffentlich</span>{% else %}<span class="pill warn">nicht öffentlich</span>{% endif %}{% if preview and preview.dependent_counts %}<div class="small">Referenzen: {% for name,count in preview.dependent_counts.items() %}{{ name }}={{ count }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% else %}<div class="small">keine Geschäftsdaten</div>{% endif %}</td><td>{% if preview and preview.allowed %}<form class="delete-confirm" method="post" action="/admin/market-identities/{{ alias.id }}/delete" onsubmit="return confirm('Exakte Store-Zeile {{ alias.id }} wirklich löschen?');"><input name="confirm" placeholder="LOESCHEN" autocomplete="off" required><button class="btn danger" type="submit">Falschen Markt löschen</button></form>{% else %}<button class="btn danger" disabled>Dauerhaft löschen</button><div class="small">{% if preview %}{{ preview.blockers|join('; ') }}{% endif %}</div>{% endif %}</td></tr>
+    {% endfor %}{% else %}<tr><td colspan="5">Aktuell keine unterdrückten Store-Aliase vorhanden.</td></tr>{% endfor %}
+  </table></div></div>
+
+  <div class="card"><h2>Kanonische Märkte</h2><div class="scroll"><table><tr><th>Markt</th><th>Adresse</th><th>External-ID</th><th>Status</th></tr>{% for store in standalone %}<tr><td><b>{{ store.name }}</b><br>{{ store.retailer }}</td><td>{{ store.address }}<br>{{ store.postal_code }} {{ store.city }}</td><td>{{ store.external_id or '–' }}</td><td>{% if store.benchmark_verified %}<span class="pill on">public</span>{% else %}<span class="pill">pre-public</span>{% endif %}</td></tr>{% endfor %}</table></div></div>
+</div>
+</body>
+</html>

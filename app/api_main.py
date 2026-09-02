@@ -30,6 +30,7 @@ from .admin_candidate_coordinate_routes import router as admin_candidate_coordin
 from .admin_coverage_canonical_routes import router as admin_coverage_canonical_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .admin_rollout_routes import router as admin_rollout_router
+from .admin_market_identity_routes import router as admin_market_identity_router
 from .coverage_routes import router as coverage_router
 from .canonical_lokero_market_routes import router as canonical_lokero_market_router
 from .lokero_routes import router as lokero_router
@@ -164,6 +165,7 @@ app.include_router(admin_provenance_router)
 app.include_router(admin_prospect_audit_router)
 app.include_router(admin_web_offer_audit_router)
 app.include_router(admin_rollout_router)
+app.include_router(admin_market_identity_router)
 # Canonical coverage GET must be registered before the legacy raw Store GET.
 app.include_router(admin_coverage_canonical_router)
 # Keep the existing Coverage coordinate-review/write routes unchanged.

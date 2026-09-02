@@ -3,22 +3,18 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from .admin_learning import audit
 from .admin_routes import _admin
-from .collection_quality import CollectionQualitySnapshot
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .db import get_db
-from .market_activation import StoreActivationState, StoreQualityAssessment, activation_overview
-from .models import CollectionRun, FavoriteStore, MediaAsset, Offer, Store
+from .market_activation import activation_overview
+from .models import Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores, duplicate_groups
 from .postcode_coverage_service import candidate_ready_for_promotion
 from .postcode_reconciliation import deduplicate_candidates
-from .prospect_models import Prospect, ProspectArchive
 from .retailer_capabilities import retailer_capabilities
 from .scrape_health import scrape_health_rows
 
@@ -38,61 +34,6 @@ def _step_state(store: Store, overview) -> tuple[str, str]:
     if latest_run and latest_run.status in {"success", "warning"}:
         return "quality", "Qualität prüfen"
     return "test", "Test-Scrape"
-
-
-def _delete_blockers(db: Session, store: Store) -> list[str]:
-    blockers: list[str] = []
-    if store.benchmark_verified:
-        blockers.append("Markt ist öffentlich/freigegeben")
-    checks = (
-        (Offer, "store_id", "Angebote"),
-        (CollectionRun, "store_id", "Collector-Läufe"),
-        (FavoriteStore, "store_id", "Nutzer-Favoriten"),
-        (Prospect, "store_id", "Prospekte"),
-        (ProspectArchive, "store_id", "Prospekt-Archive"),
-        (MediaAsset, "store_id", "Marktmedien"),
-    )
-    for model, field_name, label in checks:
-        if db.query(model).filter(getattr(model, field_name) == store.id).first():
-            blockers.append(label)
-    return blockers
-
-
-@router.post("/admin/rollout/stores/{store_id}/delete")
-def delete_false_store(
-    store_id: int,
-    confirm: str = Form(...),
-    db: Session = Depends(get_db),
-    actor: str = Depends(_admin),
-):
-    # Deliberately use the exact row, not the canonical alias mapping: the
-    # administrator must be able to remove one wrong alias without deleting the
-    # real physical market that represents the group.
-    store = db.get(Store, store_id)
-    if store is None:
-        raise HTTPException(404, "Markt nicht gefunden")
-    if confirm.strip() != "LOESCHEN":
-        raise HTTPException(400, "Zum endgültigen Löschen exakt LOESCHEN eingeben")
-    blockers = _delete_blockers(db, store)
-    if blockers:
-        raise HTTPException(400, "Markt kann nicht gelöscht werden: " + ", ".join(blockers))
-
-    # Preserve discovery provenance but reject the wrong mapping so the same
-    # candidate cannot silently promote the bad Store row again.
-    candidates = db.query(StoreDiscoveryCandidate).filter_by(matched_store_id=store.id).all()
-    for candidate in candidates:
-        candidate.matched_store_id = None
-        candidate.status = "rejected"
-        note = "Store-Zeile im Admin als falscher Markt gelöscht."
-        candidate.verification_note = f"{candidate.verification_note}; {note}" if candidate.verification_note else note
-
-    db.query(StoreQualityAssessment).filter_by(store_id=store.id).delete(synchronize_session=False)
-    db.query(CollectionQualitySnapshot).filter_by(store_id=store.id).delete(synchronize_session=False)
-    db.query(StoreActivationState).filter_by(store_id=store.id).delete(synchronize_session=False)
-    audit(db, "false_store_deleted", "store", store.id, f"{store.retailer} | {store.name} | {store.address}", actor)
-    db.delete(store)
-    db.commit()
-    return RedirectResponse("/admin/rollout?deleted=1", status_code=303)
 
 
 @router.get("/admin/rollout")
@@ -154,7 +95,6 @@ def rollout_admin(
             "aliases": group,
         })
 
-    deletable = {store.id: not _delete_blockers(db, store) for store in raw_stores}
     progress = {
         "candidates": len(candidates),
         "identity_ready": sum(1 for row in candidates if candidate_ready_for_promotion(row)),
@@ -179,7 +119,6 @@ def rollout_admin(
             "step_states": step_states,
             "health": health,
             "duplicate_aliases": dict(duplicate_aliases),
-            "deletable": deletable,
             "progress": progress,
             "candidate_ready_for_promotion": candidate_ready_for_promotion,
         },

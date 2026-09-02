@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .geo import haversine_km
 from .models import Store
+from .physical_market_identity import is_osm_external_id
 from .postcode_coverage_service import addresses_match, normalize_identity_text
 from .retailer_store_sources import RetailerSourceResult, retailer_source_results
 
@@ -228,6 +229,13 @@ def store_matches_candidate(store: Store, candidate: StoreDiscoveryCandidate) ->
         and candidate.source_external_id == store.external_id
     ):
         return store.retailer == candidate.retailer and store.postal_code == candidate.postal_code
+    if (
+        candidate.source_external_id
+        and store.external_id
+        and not is_osm_external_id(candidate.source_external_id)
+        and not is_osm_external_id(store.external_id)
+    ):
+        return False
     city_matches = not (store.city and candidate.city) or (
         normalize_identity_text(store.city) == normalize_identity_text(candidate.city)
     )
