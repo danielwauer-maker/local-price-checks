@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import ceil
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
@@ -126,6 +127,25 @@ def fetch_central_market_page(store: Store, period_key: str = "current", fetcher
         "central_expected_reference_count": reference,
         "known_reference_visible_count": reference,
         "central_completeness_status": diagnostics["central_completeness"],
+        "central_fetch_method": (
+            "DOM_DIRECT"
+            if result.artifacts.get("fetch_mode") == "http-edeka-server-rendered"
+            else "PLAYWRIGHT_DOM"
+        ),
+        "central_fetch_http_status": result.artifacts.get("http_status"),
+        "central_fetch_http_version": result.artifacts.get("http_version"),
+        "central_fetch_final_host": result.artifacts.get("final_host") or (
+            urlparse(result.final_url or source_url).hostname or ""
+        ).lower(),
+        "central_fetch_response_headers": result.artifacts.get("response_headers", {}),
+        "central_fetch_redirect_chain": result.artifacts.get("redirect_chain", []),
+        "central_fetch_attempts": result.artifacts.get("fetch_attempts", []),
+        "central_fetch_block_reason": result.artifacts.get("block_reason"),
+        "central_fetch_fallback_used": bool(result.artifacts.get("fallback_used")),
+        "central_structured_endpoint": None,
+        "central_dom_count": rendered_count,
+        "central_parsed_count": parsed_count,
+        "central_reference_count": reference,
     })
     for offer in result.offers:
         offer.provenance = {

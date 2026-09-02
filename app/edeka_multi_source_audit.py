@@ -137,12 +137,19 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
 
 def fetch_central_edeka(store: Store) -> WebAuditResult:
     errors: list[str] = []
+    market_page_diagnostics: dict = {}
     try:
         return fetch_central_market_page(store)
     except WebAuditError as page_exc:
         errors.append(f"central_market_page:{page_exc.error_type}")
+        market_page_diagnostics.update(dict(page_exc.artifacts or {}))
+        market_page_diagnostics["market_page_error_type"] = page_exc.error_type
+        market_page_diagnostics["market_page_error"] = str(page_exc)[:1000]
     except Exception as page_exc:
         errors.append(f"central_market_page:{type(page_exc).__name__}")
+        market_page_diagnostics.update(dict(getattr(page_exc, "diagnostics", {}) or {}))
+        market_page_diagnostics["market_page_error_type"] = type(page_exc).__name__
+        market_page_diagnostics["market_page_error"] = str(page_exc)[:1000]
 
     try:
         result = fetch_resolved_market_offers(store)
@@ -168,6 +175,27 @@ def fetch_central_edeka(store: Store) -> WebAuditResult:
     result.artifacts["collector_endpoint_url"] = result.final_url
     if errors:
         result.artifacts["central_fallbacks"] = errors
+    attempts = list(market_page_diagnostics.get("fetch_attempts") or [])
+    status_attempt = next(
+        (attempt for attempt in attempts if attempt.get("http_status") is not None),
+        attempts[-1] if attempts else {},
+    )
+    explicit_block_reason = next(
+        (
+            attempt.get("body_marker")
+            for attempt in attempts
+            if attempt.get("body_marker") not in (None, "")
+        ),
+        None,
+    )
+    structured_endpoint = next(
+        (
+            result.artifacts.get(key)
+            for key in ("api_url", "request_url", "endpoint_url", "collector_endpoint_url")
+            if result.artifacts.get(key)
+        ),
+        None,
+    )
     result.final_url = _central_market_page(store)
     result.status = "partial"
     result.artifacts.update({
@@ -182,6 +210,23 @@ def fetch_central_edeka(store: Store) -> WebAuditResult:
         "central_raw_count": result.raw_count,
         "central_unique_count": len(result.offers),
         "parsed_central_count": len(result.offers),
+        "central_fetch_method": f"MARKET_PAGE_FAILED -> {result.collector_path}",
+        "central_fetch_http_status": status_attempt.get("http_status"),
+        "central_fetch_http_version": status_attempt.get("http_version"),
+        "central_fetch_final_host": status_attempt.get("final_host") or "www.edeka.de",
+        "central_fetch_response_headers": status_attempt.get("response_headers", {}),
+        "central_fetch_redirect_chain": status_attempt.get("redirect_chain", []),
+        "central_fetch_block_reason": (
+            explicit_block_reason
+            or market_page_diagnostics.get("block_reason")
+            or market_page_diagnostics.get("market_page_error_type")
+        ),
+        "central_fetch_fallback_used": True,
+        "central_structured_endpoint": structured_endpoint,
+        "central_dom_count": 0,
+        "central_parsed_count": len(result.offers),
+        "central_reference_count": 224 if _market_id(store) == "071378" else None,
+        "central_fetch_attempts": attempts,
     })
     return result
 

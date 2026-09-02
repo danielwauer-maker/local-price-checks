@@ -32,6 +32,10 @@ def _attach_source_breakdown(db, run, result) -> None:
         "central_categories_detected", "central_categories_completed", "central_raw_count",
         "central_unique_count", "central_expected_reference_count", "known_reference_visible_count",
         "central_completeness_status", "unparsed_dom_offer_count", "unexpected_parsed_offer_count",
+        "central_fetch_method", "central_fetch_http_status", "central_fetch_http_version",
+        "central_fetch_final_host", "central_fetch_block_reason", "central_fetch_fallback_used",
+        "central_structured_endpoint", "central_dom_count", "central_parsed_count",
+        "central_reference_count", "central_fetch_response_headers", "central_fetch_redirect_chain",
     ):
         if key in (result.artifacts or {}):
             comparison[key] = result.artifacts[key]

@@ -42,9 +42,11 @@ def _surface(category_counts: list[int], featured: int = 0) -> str:
     return "".join(chunks)
 
 
-def _fetcher(html: str):
+def _fetcher(html: str, diagnostics: dict | None = None, mode: str = "fixture"):
     def fetch(url, **kwargs):
-        return BrowserFetchResult(html.encode(), "text/html", url, "fixture")
+        return BrowserFetchResult(
+            html.encode(), "text/html", url, mode, diagnostics=diagnostics or {}
+        )
     return fetch
 
 
@@ -65,7 +67,14 @@ def test_real_load_more_shape_counts_hidden_server_rendered_rows():
 
 def test_known_fellenzer_reference_is_complete_only_at_full_224():
     full = _surface([23, 34, 47, 11, 40, 32, 19, 14], featured=4)
-    result = fetch_central_market_page(_store(), fetcher=_fetcher(full))
+    result = fetch_central_market_page(_store(), fetcher=_fetcher(full, {
+        "http_status": 200,
+        "http_version": "HTTP/1.1",
+        "final_host": "www.edeka.de",
+        "response_headers": {"content-type": "text/html"},
+        "redirect_chain": [],
+        "fallback_used": False,
+    }, mode="http-edeka-server-rendered"))
 
     assert result.status == "success"
     assert result.collector_path == "edeka_central_market_page_dom"
@@ -76,6 +85,12 @@ def test_known_fellenzer_reference_is_complete_only_at_full_224():
     assert result.artifacts["unparsed_dom_offer_count"] == 0
     assert result.source_url == "https://www.edeka.de/maerkte/071378/angebote/"
     assert {row.source_category for row in result.offers if row.source_category} >= {"highlight", "category-0"}
+    assert result.artifacts["central_fetch_method"] == "DOM_DIRECT"
+    assert result.artifacts["central_fetch_http_status"] == 200
+    assert result.artifacts["central_fetch_final_host"] == "www.edeka.de"
+    assert result.artifacts["central_dom_count"] == 224
+    assert result.artifacts["central_parsed_count"] == 224
+    assert result.artifacts["central_reference_count"] == 224
 
 
 def test_small_dom_result_is_partial_and_never_reported_as_success():
