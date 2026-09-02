@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import permutations
 from math import inf
 from urllib.parse import urlencode
@@ -23,6 +24,97 @@ class RoutingResult:
     source: str
     estimated: bool
     order: tuple[str, ...]
+
+
+def _routing_matrix(
+    origin_lat: float,
+    origin_lon: float,
+    stops: list[RoutingStop],
+    *,
+    base_url: str,
+    timeout_seconds: float,
+) -> list[list[float | None]]:
+    coordinate_pairs = [(float(origin_lon), float(origin_lat))] + [
+        (float(stop.longitude), float(stop.latitude)) for stop in stops
+    ]
+    coordinates = ";".join(f"{lon:.7f},{lat:.7f}" for lon, lat in coordinate_pairs)
+    query = urlencode({"annotations": "distance"})
+    url = f"{base_url.rstrip('/')}/table/v1/driving/{coordinates}?{query}"
+    request = Request(url, headers={"User-Agent": "Spareno/1.0 routing"})
+    with urlopen(request, timeout=max(float(timeout_seconds), 0.1)) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("code") != "Ok" or not isinstance(payload.get("distances"), list):
+        raise ValueError(f"OSRM table failed: {payload.get('code') or 'invalid response'}")
+    return payload["distances"]
+
+
+@lru_cache(maxsize=512)
+def _cached_road_distances(
+    origin_lat: float,
+    origin_lon: float,
+    stops: tuple[RoutingStop, ...],
+    base_url: str,
+    timeout_seconds: float,
+    fallback_distance_factor: float,
+) -> tuple[tuple[str, float], ...]:
+    valid_stops = [stop for stop in stops if stop.latitude is not None and stop.longitude is not None]
+    if not valid_stops:
+        return ()
+    try:
+        matrix = _routing_matrix(
+            origin_lat,
+            origin_lon,
+            valid_stops,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+        )
+        expected = len(valid_stops) + 1
+        if len(matrix) != expected or not matrix or len(matrix[0]) != expected:
+            raise ValueError("routing matrix has unexpected dimensions")
+        result: list[tuple[str, float]] = []
+        for index, stop in enumerate(valid_stops, start=1):
+            distance = matrix[0][index]
+            if distance is not None:
+                result.append((stop.key, float(distance) / 1000.0))
+        if result:
+            return tuple(result)
+    except Exception:
+        pass
+    return tuple(
+        (
+            stop.key,
+            haversine_km(origin_lat, origin_lon, stop.latitude, stop.longitude) * fallback_distance_factor,
+        )
+        for stop in valid_stops
+    )
+
+
+def road_distances_from_origin(
+    origin_lat: float | None,
+    origin_lon: float | None,
+    stops: list[RoutingStop],
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    fallback_distance_factor: float,
+) -> dict[str, float]:
+    """Return one-way driving distance from the user to every requested stop.
+
+    A single OSRM table call is used for all stores. Results are cached by exact
+    origin/store coordinates for the lifetime of the app process. If the provider
+    is unavailable, Spareno falls back per store to the conservative Haversine factor.
+    """
+    if origin_lat is None or origin_lon is None or not stops:
+        return {}
+    rows = _cached_road_distances(
+        round(float(origin_lat), 6),
+        round(float(origin_lon), 6),
+        tuple(stops),
+        base_url.rstrip("/"),
+        round(float(timeout_seconds), 3),
+        round(float(fallback_distance_factor), 4),
+    )
+    return dict(rows)
 
 
 def _best_roundtrip_from_matrix(matrix: list[list[float | None]], stops: list[RoutingStop]) -> RoutingResult:
@@ -128,23 +220,17 @@ def optimized_roundtrip(
     if not valid_stops:
         return RoutingResult(0.0, "missing_coordinates", True, ())
 
-    # If any requested stop has no coordinates, retain non-crashing legacy
-    # behavior but make this an estimated result internally.
     incomplete_coordinates = len(valid_stops) != len(stops)
 
     try:
-        coordinate_pairs = [(float(origin_lon), float(origin_lat))] + [
-            (float(stop.longitude), float(stop.latitude)) for stop in valid_stops
-        ]
-        coordinates = ";".join(f"{lon:.7f},{lat:.7f}" for lon, lat in coordinate_pairs)
-        query = urlencode({"annotations": "distance"})
-        url = f"{base_url.rstrip('/')}/table/v1/driving/{coordinates}?{query}"
-        request = Request(url, headers={"User-Agent": "Spareno/1.0 routing"})
-        with urlopen(request, timeout=max(float(timeout_seconds), 0.1)) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        if payload.get("code") != "Ok" or not isinstance(payload.get("distances"), list):
-            raise ValueError(f"OSRM table failed: {payload.get('code') or 'invalid response'}")
-        result = _best_roundtrip_from_matrix(payload["distances"], valid_stops)
+        matrix = _routing_matrix(
+            float(origin_lat),
+            float(origin_lon),
+            valid_stops,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+        )
+        result = _best_roundtrip_from_matrix(matrix, valid_stops)
         if incomplete_coordinates:
             return RoutingResult(result.distance_km, "osrm_partial_coordinates", True, result.order)
         return result

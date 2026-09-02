@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .db import get_db
 from .feature_flags import feature_enabled, get_feature_flags
 from .geo import haversine_km
@@ -16,6 +17,7 @@ from .lokero_routes import (
 from .models import FavoriteStore, Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
 from .reviewer_auth import reviewer_device
+from .routing import RoutingStop, road_distances_from_origin
 from .services import current_user
 
 router = APIRouter(prefix="/api/lokero", tags=["lokero-canonical-markets"])
@@ -38,6 +40,33 @@ def _released_physical_stores(db: Session, user, *, include_qa: bool = False) ->
     return result
 
 
+def _road_distance_map(user, stores: list[Store]) -> dict[int, float]:
+    stops = [
+        RoutingStop(str(store.id), float(store.latitude), float(store.longitude))
+        for store in stores
+        if store.latitude is not None and store.longitude is not None
+    ]
+    rows = road_distances_from_origin(
+        user.latitude,
+        user.longitude,
+        stops,
+        base_url=settings.routing_base_url,
+        timeout_seconds=settings.routing_timeout_seconds,
+        fallback_distance_factor=settings.route_distance_factor,
+    )
+    return {int(store_id): distance for store_id, distance in rows.items()}
+
+
+def _market_payload_with_road_distance(db: Session, user, store: Store, road_distances: dict[int, float], *, savings: bool = False) -> dict:
+    payload = _market_payload(db, user, store, savings=savings)
+    if store.id in road_distances:
+        payload["distanceKm"] = round(float(road_distances[store.id]), 1)
+        payload["distanceSource"] = "road"
+    else:
+        payload["distanceSource"] = "estimated"
+    return payload
+
+
 @router.get("/markets")
 def canonical_markets(db: Session = Depends(get_db)):
     user = current_user(db)
@@ -45,9 +74,11 @@ def canonical_markets(db: Session = Depends(get_db)):
     if not flags["markets"]:
         return []
     include_qa = bool(reviewer_device(db))
+    stores = _released_physical_stores(db, user, include_qa=include_qa)
+    road_distances = _road_distance_map(user, stores)
     return [
-        _market_payload(db, user, store, savings=flags["savings"])
-        for store in _released_physical_stores(db, user, include_qa=include_qa)
+        _market_payload_with_road_distance(db, user, store, road_distances, savings=flags["savings"])
+        for store in stores
     ]
 
 
@@ -79,6 +110,8 @@ def canonical_offers(
         }
         store_ids &= wanted
 
+    scoped_stores = [store for store in stores if store.id in store_ids]
+    road_distances = _road_distance_map(user, scoped_stores)
     rows = _current_offers(db, sorted(store_ids))
     if q.strip():
         needle = q.strip().lower()
@@ -95,7 +128,7 @@ def canonical_offers(
         result.append({
             **_offer_payload(db, offer, expose_normal_price=flags["normal_price_badges"]),
             "product": _product_payload(db, offer.product),
-            "market": _market_payload(db, user, offer.store, savings=flags["savings"]),
+            "market": _market_payload_with_road_distance(db, user, offer.store, road_distances, savings=flags["savings"]),
         })
     return result
 
@@ -115,4 +148,5 @@ def canonical_favorite_markets(db: Session = Depends(get_db)):
             continue
         seen.add(store.id)
         stores.append(store)
-    return [_market_payload(db, user, store) for store in stores]
+    road_distances = _road_distance_map(user, stores)
+    return [_market_payload_with_road_distance(db, user, store, road_distances) for store in stores]

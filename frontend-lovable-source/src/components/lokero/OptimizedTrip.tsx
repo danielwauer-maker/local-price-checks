@@ -1,16 +1,20 @@
 import { useState } from "react";
-import { Car, CheckCircle2, ChevronDown, Info } from "lucide-react";
+import { Car, CheckCircle2, ChevronDown, Info, MapPin } from "lucide-react";
 import type { OptimizedStop, OptimizedTrip } from "@/data/lokero";
 import { getMarket, getProduct } from "@/services/lokero-api";
+import { useStore } from "@/lib/app-store";
 import { formatEuro } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MarketLogo } from "./MarketLogo";
 import { ProductThumb } from "./CategoryIcon";
 
 export function OptimizedTripSummary({ trip }: { trip: OptimizedTrip }) {
+  const { listEntries, manualListItems } = useStore();
   const coveredItemCount = trip.stops.reduce((sum, stop) => sum + stop.itemCount, 0);
+  const visibleItemCount = listEntries.length + manualListItems.length;
+  const totalItemCount = visibleItemCount > 0 ? visibleItemCount : trip.itemCount;
   const noSingleStoreComparison = trip.stops.length > 1 && trip.savings <= 0.01;
-  const coverageValue = trip.itemCount > 0 ? `${coveredItemCount}/${trip.itemCount}` : "0";
+  const coverageValue = totalItemCount > 0 ? `${coveredItemCount}/${totalItemCount}` : "0";
   const kpis = [
     { value: coverageValue, label: "preislich" },
     { value: formatEuro(trip.total), label: "berechenbar" },
@@ -57,9 +61,9 @@ export function OptimizedTripSummary({ trip }: { trip: OptimizedTrip }) {
           </>
         )}
       </div>
-      {coveredItemCount < trip.itemCount && (
+      {coveredItemCount < totalItemCount && (
         <p className="mt-2 text-center text-[10px] text-white/75">
-          {coveredItemCount} von {trip.itemCount} Artikeln haben aktuell einen Marktpreis; die übrigen bleiben auf deiner Liste.
+          {coveredItemCount} von {totalItemCount} Artikeln haben aktuell einen Marktpreis; die übrigen bleiben auf deiner Liste.
         </p>
       )}
     </section>
@@ -67,11 +71,37 @@ export function OptimizedTripSummary({ trip }: { trip: OptimizedTrip }) {
 }
 
 export function TripRouteRow({ trip }: { trip: OptimizedTrip }) {
+  const [open, setOpen] = useState(false);
+  const stops = trip.stops.map((stop) => getMarket(stop.marketId)?.name ?? stop.marketName ?? "Markt");
   return (
-    <div className="card-surface tabular flex items-center gap-2 px-3 py-2.5 text-[12px] text-muted-foreground">
-      <Car className="h-4 w-4 shrink-0 text-info" />
-      Fahrtkosten: {formatEuro(trip.travelCost)} · {trip.stops.length} Stopps ·{" "}
-      {trip.distanceKm.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km
+    <div className="card-surface overflow-hidden text-[12px] text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="tabular flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        <Car className="h-4 w-4 shrink-0 text-info" />
+        <span className="min-w-0 flex-1">Fahrtkosten: {formatEuro(trip.travelCost)} · {trip.stops.length} Stopps · {trip.distanceKm.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km</span>
+        <ChevronDown className={cn("h-4 w-4 shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Rundtour</p>
+          <div className="space-y-2">
+            {["Zuhause", ...stops, "Zuhause"].map((label, index, route) => (
+              <div key={`${label}-${index}`} className="flex items-center gap-2">
+                <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full", index === 0 || index === route.length - 1 ? "bg-info/10 text-info" : "bg-primary-soft text-primary")}>
+                  {index === 0 || index === route.length - 1 ? <Car className="h-3.5 w-3.5" /> : <MapPin className="h-3.5 w-3.5" />}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-navy">{label}</span>
+                {index < route.length - 1 && <span className="text-[10px] text-muted-foreground">→</span>}
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Die Kilometer oben beziehen sich auf die komplette Straßen-Rundtour einschließlich Rückfahrt nach Hause.</p>
+        </div>
+      )}
     </div>
   );
 }
