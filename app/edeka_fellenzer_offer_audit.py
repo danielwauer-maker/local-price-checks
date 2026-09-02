@@ -34,15 +34,23 @@ def _trusted_fellenzer_image(url: str | None) -> bool:
     return parsed.scheme == "https" and host == _IMAGE_HOST and bool(parsed.path)
 
 
-class FellenzerWebOfferRecord(WebOfferRecord):
-    """Keep verified Fellenzer CDN images even when their URL has no suffix.
+def _approved_local_url(url: str) -> bool:
+    parsed = urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower().rstrip(".") in _ALLOWED_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+    )
 
-    The shared validator intentionally requires a known image CDN or a classic
-    image filename extension. Fellenzer's official CDN serves product images as
-    `/products/image/<opaque-id>` without `.jpg`/`.png`, so the generic rule
-    rejects otherwise valid images. This subclass restores only HTTPS images on
-    the exact verified Fellenzer image host; all other validation remains shared.
-    """
+
+class FellenzerWebOfferRecord(WebOfferRecord):
+    """Keep verified Fellenzer CDN images even when their URL has no suffix."""
 
     def validate(self) -> "FellenzerWebOfferRecord":
         original_image = self.image_url
@@ -213,31 +221,119 @@ def _parse_html(html: str, store: Store, source_url: str = FELLENZER_OFFERS_URL)
     )
 
 
+def _fetch_profile(http_get, *, headers: dict[str, str], profile: str) -> tuple[httpx.Response | None, list[dict]]:
+    request_url = FELLENZER_OFFERS_URL
+    attempts: list[dict] = []
+    for _ in range(5):
+        response = http_get(
+            request_url,
+            follow_redirects=False,
+            timeout=settings.collector_timeout_seconds,
+            headers=headers,
+        )
+        host = (urlparse(str(response.url)).hostname or "").lower().rstrip(".")
+        attempt = {
+            "profile": profile,
+            "http_status": response.status_code,
+            "final_host": host,
+            "response_bytes": len(response.content),
+        }
+        attempts.append(attempt)
+        if response.is_redirect:
+            target = urljoin(str(response.url), response.headers.get("location") or "")
+            if not _approved_local_url(target):
+                attempt["block_reason"] = "unapproved_redirect"
+                raise WebAuditError(
+                    "blocked",
+                    "Unerwartetes Redirect-Ziel der Fellenzer-Seite.",
+                    {"local_fetch_attempts": attempts, "local_fetch_block_reason": "unapproved_redirect"},
+                )
+            request_url = target
+            continue
+        return response, attempts
+    raise WebAuditError(
+        "blocked",
+        "Redirect-Limit der Fellenzer-Seite überschritten.",
+        {"local_fetch_attempts": attempts, "local_fetch_block_reason": "redirect_limit"},
+    )
+
+
 def fetch_fellenzer_offers(store: Store, http_get=httpx.get) -> WebAuditResult:
     market_id = "".join(character for character in str(store.external_id or "") if character.isdigit())
     if market_id != FELLENZER_MARKET_ID:
         raise WebAuditError("blocked", "Fellenzer-Collector ist ausschließlich für den verifizierten Markt 071378 freigegeben.")
-    try:
-        response = http_get(
-            FELLENZER_OFFERS_URL,
-            follow_redirects=True,
-            timeout=settings.collector_timeout_seconds,
-            headers={
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "de-DE,de;q=0.9",
-                "User-Agent": "Spareno-Web-Audit/1.0",
-            },
-        )
-    except httpx.TimeoutException as exc:
-        raise WebAuditError("timeout", f"EDEKA-Fellenzer-Seite Timeout: {exc}") from exc
-    except httpx.HTTPError as exc:
-        raise WebAuditError("endpoint_changed", f"EDEKA-Fellenzer-Seite HTTP-Fehler: {exc}") from exc
 
-    final_host = (urlparse(str(response.url)).hostname or "").lower().rstrip(".")
-    if final_host not in _ALLOWED_HOSTS:
-        raise WebAuditError("blocked", f"Unerwartetes Redirect-Ziel der Fellenzer-Seite: {final_host or 'ohne Host'}")
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise WebAuditError("endpoint_changed", f"EDEKA-Fellenzer-Seite antwortet mit HTTP {response.status_code}.") from exc
-    return _parse_html(response.text, store, str(response.url))
+    profiles = [
+        (
+            "transparent_spareno_audit",
+            {
+                "User-Agent": "Spareno-Audit/1.0",
+                "Accept": "text/html",
+                "Accept-Language": "de-DE,de;q=0.9",
+            },
+        ),
+        (
+            "plain_http",
+            {"Accept": "text/html"},
+        ),
+    ]
+    all_attempts: list[dict] = []
+    last_error: Exception | None = None
+
+    for profile, headers in profiles:
+        try:
+            response, attempts = _fetch_profile(http_get, headers=headers, profile=profile)
+            all_attempts.extend(attempts)
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            all_attempts.append({"profile": profile, "block_reason": "timeout"})
+            continue
+        except httpx.HTTPError as exc:
+            last_error = exc
+            all_attempts.append({"profile": profile, "block_reason": "http_error", "error": type(exc).__name__})
+            continue
+
+        if response is None:
+            continue
+        final_host = (urlparse(str(response.url)).hostname or "").lower().rstrip(".")
+        if final_host not in _ALLOWED_HOSTS:
+            raise WebAuditError(
+                "blocked",
+                f"Unerwartetes Redirect-Ziel der Fellenzer-Seite: {final_host or 'ohne Host'}",
+                {"local_fetch_attempts": all_attempts, "local_fetch_block_reason": "unapproved_redirect"},
+            )
+        if response.status_code in {401, 403, 429}:
+            all_attempts[-1]["block_reason"] = f"http_{response.status_code}"
+            continue
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            all_attempts[-1]["block_reason"] = f"http_{response.status_code}"
+            continue
+        if len(response.content) < 3000:
+            all_attempts[-1]["block_reason"] = "unexpected_small_response"
+            continue
+
+        result = _parse_html(response.text, store, str(response.url))
+        result.artifacts = dict(result.artifacts or {})
+        result.artifacts.update({
+            "local_fetch_method": profile,
+            "local_fetch_http_status": response.status_code,
+            "local_fetch_final_host": final_host,
+            "local_fetch_block_reason": None,
+            "local_fetch_attempts": all_attempts,
+        })
+        return result
+
+    raise WebAuditError(
+        "endpoint_changed" if last_error else "blocked",
+        "EDEKA-Fellenzer-Seite konnte über keinen freigegebenen transparenten HTTP-Pfad geladen werden.",
+        {
+            "local_fetch_attempts": all_attempts,
+            "local_fetch_method": profiles[-1][0],
+            "local_fetch_http_status": next((a.get("http_status") for a in reversed(all_attempts) if a.get("http_status") is not None), None),
+            "local_fetch_final_host": next((a.get("final_host") for a in reversed(all_attempts) if a.get("final_host")), "edeka-fellenzer.de"),
+            "local_fetch_block_reason": next((a.get("block_reason") for a in reversed(all_attempts) if a.get("block_reason")), "all_local_fetch_paths_failed"),
+        },
+    )
