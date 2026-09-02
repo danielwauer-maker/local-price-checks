@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Markt-Freigabe · Spareno Admin</title>
+  <style>
+    :root{--green:#176b48;--green2:#e9f4ed;--line:#dce6df;--muted:#69766e;--bg:#f5f7f5;--text:#17231c;--amber:#946900;--red:#a23d32}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1500px;margin:auto;padding:24px}.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}.hero{display:flex;gap:18px;align-items:flex-start;justify-content:space-between}.hero h1{margin:0 0 5px;font-size:25px}.muted{color:var(--muted)}.steps{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;margin-top:14px}.step{padding:10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfb}.step b{display:block;font-size:12px}.step span{font-size:11px;color:var(--muted)}.filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.filters label{font-size:11px;font-weight:800;text-transform:uppercase;color:var(--muted)}select,.btn,button{font:inherit}.filters select{display:block;margin-top:4px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;min-width:190px}.btn{display:inline-block;border:1px solid var(--line);background:#fff;color:var(--text);padding:8px 10px;border-radius:8px;text-decoration:none;cursor:pointer;font-weight:700}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.btn.warn{background:#fff8df;border-color:#ead28a;color:#6f5200}.grid{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px}.metric{padding:12px;border:1px solid var(--line);border-radius:10px}.metric strong{display:block;font-size:23px}.capabilities{display:flex;gap:8px;flex-wrap:wrap}.cap{padding:8px 10px;border-radius:999px;border:1px solid var(--line);background:#fff}.cap.ready{background:var(--green2);color:#145c3e;border-color:#b9dbc8}.cap.waiting{color:#7c817e;background:#f3f4f3}.section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.section-title h2{font-size:18px;margin:0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:11px;text-transform:uppercase;color:var(--muted)}.badge{display:inline-block;padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800;background:#edf1ee}.badge.ok{background:var(--green2);color:#145c3e}.badge.warn{background:#fff4d2;color:var(--amber)}.badge.bad{background:#fbe7e4;color:var(--red)}.actions{display:flex;gap:5px;flex-wrap:wrap}.actions form{margin:0}.alias{padding:9px 10px;border-left:3px solid #d4b45b;background:#fff9e7;margin:6px 0;border-radius:6px}.empty{padding:18px;text-align:center;color:var(--muted)}@media(max-width:1050px){.steps{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:650px){.steps,.grid{grid-template-columns:1fr}.wrap{padding:12px}}
+  </style>
+</head>
+<body>
+{% include "admin_sidebar.html" %}
+<div class="wrap">
+  <section class="card hero">
+    <div>
+      <h1>Geführte Markt-Freigabe</h1>
+      <div class="muted">Ein Markt wird erst öffentlich, wenn Identität, Quelle, Test-Scrape und Quality Gate abgeschlossen sind. Veröffentlichung bleibt immer ein eigener letzter Schritt.</div>
+      <div class="steps">
+        <div class="step"><b>1 · Kette</b><span>Collector freigegeben</span></div>
+        <div class="step"><b>2 · PLZ</b><span>Rollout-Gebiet aktiv</span></div>
+        <div class="step"><b>3 · Identität</b><span>Adresse + Quelle prüfen</span></div>
+        <div class="step"><b>4 · Test-Scrape</b><span>Angebote einsammeln</span></div>
+        <div class="step"><b>5 · Qualität</b><span>Gate objektiv prüfen</span></div>
+        <div class="step"><b>6 · Publish</b><span>Explizit freigeben</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><h2>1. Kettenstatus</h2></div>
+    <div class="capabilities">
+      {% for capability in capabilities %}
+        <span class="cap {{ 'ready' if capability.rollout_enabled else 'waiting' }}"><b>{{ capability.retailer }}</b> · {{ capability.scrape_status }}</span>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card">
+    <form class="filters" method="get" action="/admin/rollout">
+      <div><label>Kette<select name="retailer" onchange="this.form.submit()">{% for capability in capabilities %}{% if capability.rollout_enabled %}<option value="{{ capability.retailer }}" {% if capability.retailer==selected_retailer %}selected{% endif %}>{{ capability.retailer }}</option>{% endif %}{% endfor %}</select></label></div>
+      <div><label>PLZ<select name="postal_code" onchange="this.form.submit()"><option value="">Alle freigegebenen PLZ</option>{% for postcode in postcodes %}<option value="{{ postcode.postal_code }}" {% if postcode.postal_code==selected_postcode %}selected{% endif %}>{{ postcode.postal_code }}{% if postcode.city %} · {{ postcode.city }}{% endif %}</option>{% endfor %}</select></label></div>
+      <a class="btn" href="/admin/coverage">PLZ verwalten / Discovery</a>
+      <a class="btn" href="/admin/collector">Collector Support</a>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="grid">
+      <div class="metric"><span class="muted">Kandidaten</span><strong>{{ progress.candidates }}</strong></div>
+      <div class="metric"><span class="muted">Identität bereit</span><strong>{{ progress.identity_ready }}</strong></div>
+      <div class="metric"><span class="muted">Physische Märkte</span><strong>{{ progress.stores }}</strong></div>
+      <div class="metric"><span class="muted">Öffentlich</span><strong>{{ progress.public }}</strong></div>
+      <div class="metric"><span class="muted">Versteckte Alias-Gruppen</span><strong>{{ progress.duplicate_groups }}</strong></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><h2>2–3. PLZ & Marktidentität prüfen</h2><span class="muted">{{ selected_retailer }}</span></div>
+    {% if candidates %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>PLZ</th><th>Markt</th><th>Adresse</th><th>Quelle</th><th>Prüfung</th><th>Nächster Schritt</th></tr></thead>
+      <tbody>
+      {% for candidate in candidates %}
+        <tr>
+          <td><b>{{ candidate.postal_code }}</b></td>
+          <td>{{ candidate.name }}</td>
+          <td>{{ candidate.address }}<br><span class="muted">{{ candidate.city }}</span></td>
+          <td>{{ candidate.source }}{% if candidate.source_url %}<br><a href="{{ candidate.source_url }}" target="_blank" rel="noopener">Quelle öffnen</a>{% endif %}</td>
+          <td>
+            <span class="badge {{ 'ok' if candidate.address_verified else 'warn' }}">Adresse {{ '✓' if candidate.address_verified else 'offen' }}</span>
+            <span class="badge {{ 'ok' if candidate.coordinates_verified else 'warn' }}">Koordinaten {{ '✓' if candidate.coordinates_verified else 'offen' }}</span>
+            <span class="badge {{ 'ok' if candidate.official_source_verified else 'warn' }}">Quelle {{ '✓' if candidate.official_source_verified else 'offen' }}</span>
+          </td>
+          <td class="actions">
+            {% if candidate_ready_for_promotion(candidate) and not candidate.matched_store_id %}
+              <form method="post" action="/admin/coverage/candidates/{{ candidate.id }}/promote"><button class="btn primary">Als Markt übernehmen</button></form>
+            {% elif candidate.matched_store_id %}
+              <span class="badge ok">Store #{{ candidate.matched_store_id }}</span>
+            {% else %}
+              <a class="btn warn" href="/admin/coverage/candidates/{{ candidate.id }}/coordinates">Identität fertig prüfen</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<div class="empty">Für diese Auswahl sind noch keine deduplizierten Marktkandidaten vorhanden. Discovery zuerst unter „Regionen & Onboarding“ ausführen.</div>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="section-title"><h2>4–6. Test-Scrape → Quality Gate → Veröffentlichung</h2></div>
+    {% if stores %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>PLZ</th><th>Physischer Markt</th><th>Identität</th><th>Scrape Health</th><th>Freigabestand</th><th>Aktion</th></tr></thead>
+      <tbody>
+      {% for store in stores %}
+        {% set step = step_states.get(store.id) %}
+        {% set healthrow = health.get(store.id) %}
+        <tr>
+          <td><b>{{ store.postal_code }}</b></td>
+          <td><b>{{ store.name }}</b><br><span class="muted">{{ store.address }}, {{ store.city }}</span></td>
+          <td>{% if store.external_id %}<span class="badge ok">ID {{ store.external_id }}</span>{% else %}<span class="badge warn">External-ID fehlt</span>{% endif %}</td>
+          <td>{% if healthrow %}<span class="badge {{ 'ok' if healthrow.state=='healthy' else ('bad' if healthrow.state=='manual_required' else 'warn') }}">{{ healthrow.state }}</span><br><span class="muted">{{ healthrow.action }}</span>{% else %}<span class="badge warn">needs_test</span>{% endif %}</td>
+          <td><span class="badge {{ 'ok' if store.benchmark_verified else 'warn' }}">{{ step[1] if step else 'Test-Scrape' }}</span></td>
+          <td class="actions">
+            {% if not store.benchmark_verified %}
+              <form method="post" action="/admin/coverage/stores/{{ store.id }}/test-scrape"><button class="btn">Test-Scrape starten</button></form>
+              <form method="post" action="/admin/coverage/stores/{{ store.id }}/quality"><button class="btn">Quality Gate prüfen</button></form>
+              <form method="post" action="/admin/coverage/stores/{{ store.id }}/publish"><button class="btn primary">Markt veröffentlichen</button></form>
+            {% else %}
+              <span class="badge ok">In App freigegeben</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% for group in duplicate_aliases.get(store.postal_code, []) %}
+          {% if group.canonical.id == store.id %}
+          <tr><td></td><td colspan="5"><div class="alias"><b>Alias-Dubletten unterdrückt:</b> {% for alias in group.aliases %}#{{ alias.id }} {{ alias.name }}{% if not loop.last %} · {% endif %}{% endfor %}. In Admin/API zählt nur der kanonische Markt #{{ store.id }}.</div></td></tr>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<div class="empty">Noch kein promovierter physischer Markt für diese Auswahl.</div>{% endif %}
+  </section>
+
+  <section class="card">
+    <b>Automatisierungsziel</b>
+    <p class="muted">Dieser Ablauf ist absichtlich deterministisch aufgebaut. Ein künftiger Agent darf Discovery, Quellenprüfung, Test-Scrapes und Fehlerdiagnose automatisieren. Das Publish-Gate bleibt bis zu einer expliziten späteren Policy-Änderung separat und nachvollziehbar.</p>
+  </section>
+</div>
+</body>
+</html>
