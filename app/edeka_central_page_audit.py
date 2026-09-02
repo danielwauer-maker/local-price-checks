@@ -12,6 +12,7 @@ from .web_offer_audit_runtime import ReviewedEdekaWebOfferAdapter
 
 
 KNOWN_REFERENCE_COUNTS = {"071378": 224}
+REFERENCE_COVERAGE_MIN = 0.95
 
 
 def central_market_page_url(market_id: str) -> str:
@@ -99,6 +100,7 @@ def fetch_central_market_page(store: Store, period_key: str = "current", fetcher
         category["completed"] = bool(category_ids) and category_ids <= parsed_ids
     rendered_count = diagnostics["server_rendered_offer_count"]
     reference = diagnostics["known_reference_count"]
+    reference_minimum = ceil(reference * REFERENCE_COVERAGE_MIN) if reference is not None else None
     categories_complete = bool(diagnostics["categories_detected"]) and all(
         row["completed"] and row["server_rendered_count"] >= row["initial_visible_count"] and row["batch_size"] > 0
         for row in diagnostics["categories"]
@@ -107,16 +109,18 @@ def fetch_central_market_page(store: Store, period_key: str = "current", fetcher
         categories_complete
         and rendered_count > 0
         and dom_ids <= parsed_ids
-        and (reference is None or parsed_count >= reference)
+        and (reference_minimum is None or parsed_count >= reference_minimum)
     )
     diagnostics.update({
         "parsed_central_count": parsed_count,
         "unparsed_dom_offer_count": len(dom_ids - parsed_ids),
         "unexpected_parsed_offer_count": len(parsed_ids - dom_ids),
+        "reference_minimum_count": reference_minimum,
+        "reference_coverage_ratio": round(parsed_count / reference, 4) if reference else None,
         "central_completeness": "complete" if complete else "partial",
         "central_completeness_reason": (
-            "Alle serverseitig gerenderten Angebots-IDs einschließlich versteckter Kategorien wurden geparst."
-            if complete else "DOM-/Parser-Anzahl oder bekannte Referenz wurde nicht vollständig erreicht."
+            "Alle serverseitig gerenderten Angebots-IDs einschließlich versteckter Kategorien wurden geparst; historische Referenz liegt innerhalb der zulässigen Wochenabweichung."
+            if complete else "DOM-/Parser-Vollständigkeit oder Mindestabdeckung der historischen Referenz wurde nicht erreicht."
         ),
     })
     diagnostics.update({
