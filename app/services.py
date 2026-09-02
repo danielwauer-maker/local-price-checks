@@ -8,18 +8,14 @@ from .client_context import get_client_key, get_legacy_client_key, get_request_m
 from .client_models import AccountClientLink, UserClient
 from .clock import app_today
 from .geo import haversine_km
-from .models import FavoriteStore, Offer, UserProfile
+from .models import FavoriteStore, Offer, Store, UserProfile
+from .physical_market_identity import canonical_store_map
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _unclaimed_profile(db: Session) -> UserProfile | None:
-    """Return an existing profile that is not yet attached to any browser client.
-
-    This preserves compatibility with pre-multi-user installations and tests
-    that seed a UserProfile before the first browser request. Read-only traffic
-    may read such a profile, but never claims it or creates a UserClient.
-    """
+    """Return an existing profile that is not yet attached to any browser client."""
     claimed_ids = db.query(UserClient.user_id)
     return (
         db.query(UserProfile)
@@ -42,18 +38,7 @@ def _guest_profile() -> UserProfile:
 
 
 def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
-    """Resolve the profile for the current browser/PWA client.
-
-    Existing anonymous clients and verified accounts always resolve normally.
-    A previously unseen client is not persisted for safe/read-only HTTP
-    methods. If a legacy unclaimed profile already exists, it may be read
-    without claiming it; otherwise a transient guest profile is returned.
-    UserProfile + UserClient are materialized only on a real personal write.
-
-    ``persist`` can explicitly override the HTTP-method decision. Direct
-    server-side/test calls without request context retain the historical
-    materializing behavior for backwards compatibility.
-    """
+    """Resolve the profile for the current browser/PWA client."""
     client_key = get_client_key()
     if client_key:
         if persist is None:
@@ -107,7 +92,6 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
         db.refresh(user)
         return user
 
-    # Startup/background jobs do not have an HTTP client identity.
     user = db.query(UserProfile).first()
     if not user:
         user = UserProfile(display_name="Local User", radius_km=15)
@@ -117,39 +101,45 @@ def current_user(db: Session, *, persist: bool | None = None) -> UserProfile:
     return user
 
 
+def _canonical_mapping(db: Session) -> dict[int, Store]:
+    return canonical_store_map(db.query(Store).all())
+
+
 def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return persistent favorites that are currently public."""
+    """Return public favorites as canonical physical market ids."""
     from .market_activation import store_is_public
+
+    mapping = _canonical_mapping(db)
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
     ids: list[int] = []
+    seen: set[int] = set()
     for row in rows:
-        store = row.store
-        if not store_is_public(store):
+        store = mapping.get(row.store_id, row.store)
+        if not store_is_public(store) or store.id in seen:
             continue
+        seen.add(store.id)
         ids.append(store.id)
     return ids
 
 
 def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
-    """Return favorite markets that are released for offers and inside the search radius.
-
-    benchmark_verified is the user-facing release gate only. Unverified markets
-    may still be collected and audited in the admin workflow, but their data is
-    never used for offers or shopping-plan calculations.
-    """
+    """Return canonical released favorite markets inside the search radius."""
     favorite_ids = set(favorite_store_ids(db, user))
     if not favorite_ids:
         return []
 
+    mapping = _canonical_mapping(db)
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
     ids: list[int] = []
+    seen: set[int] = set()
     for row in rows:
-        store = row.store
-        if store.id not in favorite_ids:
+        store = mapping.get(row.store_id, row.store)
+        if store.id not in favorite_ids or store.id in seen:
             continue
         if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
             if haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) > user.radius_km:
                 continue
+        seen.add(store.id)
         ids.append(store.id)
     return ids
 
