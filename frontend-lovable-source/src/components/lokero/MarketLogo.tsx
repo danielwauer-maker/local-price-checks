@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Chain } from "@/data/lokero";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +10,14 @@ const STYLE: Record<Chain, { bg: string; fg: string; label: string }> = {
   EDEKA: { bg: "#003C7D", fg: "#FFDD00", label: "EDEKA" },
 };
 
-/** Kompakte Markt-Kennzeichnung (Chain-Badge statt geschützter Logodatei). */
+/**
+ * Einheitliche Händlerkennzeichnung.
+ *
+ * Primär wird das im Spareno-Admin unter "Bilder & Logos" hinterlegte
+ * retailer_logo verwendet. Falls für eine Kette noch kein Logo hinterlegt ist
+ * oder das Asset nicht geladen werden kann, bleibt der bisherige farbige
+ * Chain-Badge als robuster Fallback erhalten.
+ */
 export function MarketLogo({
   chain,
   size = "md",
@@ -19,13 +27,30 @@ export function MarketLogo({
   size?: "xs" | "sm" | "md";
   className?: string;
 }) {
+  const [failed, setFailed] = useState(false);
   const s = STYLE[chain];
-  const box = size === "xs" ? "h-5 px-1.5 text-[9px]" : size === "sm" ? "h-6 px-2 text-[10px]" : "h-9 w-9 text-[10px]";
+  const badgeBox = size === "xs" ? "h-5 px-1.5 text-[9px]" : size === "sm" ? "h-6 px-2 text-[10px]" : "h-9 w-9 text-[10px]";
+  const imageBox = size === "xs" ? "h-5 w-9" : size === "sm" ? "h-7 w-11" : "h-10 w-12";
+
+  if (!failed) {
+    return (
+      <span className={cn("inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white", imageBox, className)}>
+        <img
+          src={`/api/lokero/retailer-logo/${encodeURIComponent(chain)}`}
+          alt={`${chain} Logo`}
+          loading="lazy"
+          className="h-full w-full object-contain p-0.5"
+          onError={() => setFailed(true)}
+        />
+      </span>
+    );
+  }
+
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-lg font-bold leading-none tracking-tight",
-        box,
+        badgeBox,
         className,
       )}
       style={{ backgroundColor: s.bg, color: s.fg }}
