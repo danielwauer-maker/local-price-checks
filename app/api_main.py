@@ -27,6 +27,7 @@ from .admin_provenance_routes import router as admin_provenance_router
 from .admin_prospect_audit_routes import router as admin_prospect_audit_router
 from .admin_web_offer_audit_routes import router as admin_web_offer_audit_router
 from .admin_candidate_coordinate_routes import router as admin_candidate_coordinate_router
+from .admin_coverage_canonical_routes import router as admin_coverage_canonical_router
 from .admin_coverage_routes import router as admin_coverage_router
 from .admin_rollout_routes import router as admin_rollout_router
 from .coverage_routes import router as coverage_router
@@ -162,7 +163,9 @@ app.include_router(admin_provenance_router)
 app.include_router(admin_prospect_audit_router)
 app.include_router(admin_web_offer_audit_router)
 app.include_router(admin_rollout_router)
-# Keep the existing Coverage button/URL, but handle it with the visual coordinate review first.
+# Canonical coverage GET must be registered before the legacy raw Store GET.
+app.include_router(admin_coverage_canonical_router)
+# Keep the existing Coverage coordinate-review/write routes unchanged.
 app.include_router(admin_candidate_coordinate_router)
 app.include_router(admin_coverage_router)
 app.include_router(coverage_router)
