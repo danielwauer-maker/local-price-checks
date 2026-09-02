@@ -5,8 +5,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .config import settings
 from .collection_quality import BenchmarkContext
 from .db import SessionLocal
-from .edeka_discovery import collect_edeka_market_pdf
+from .edeka_live_collector import collect_edeka_web_for_store
 from .models import Store
+from .physical_market_identity import collapse_physical_stores
 from .web_collector import collect_store_from_web
 
 _scheduler: BackgroundScheduler | None = None
@@ -16,7 +17,7 @@ def run_verified_market_collection() -> dict[str, str]:
     results: dict[str, str] = {}
     db = SessionLocal()
     try:
-        stores = (
+        stores = collapse_physical_stores(
             db.query(Store)
             .filter(Store.active.is_(True), Store.benchmark_verified.is_(True))
             .order_by(Store.retailer, Store.name)
@@ -25,7 +26,7 @@ def run_verified_market_collection() -> dict[str, str]:
         for store in stores:
             try:
                 if store.retailer == "EDEKA":
-                    _, summary, run = collect_edeka_market_pdf(
+                    _, summary, run = collect_edeka_web_for_store(
                         db,
                         store,
                         benchmark_context=BenchmarkContext.PRODUCTION,
