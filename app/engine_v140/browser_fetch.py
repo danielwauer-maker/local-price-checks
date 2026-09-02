@@ -1,7 +1,8 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlencode, urljoin, urlparse, parse_qs, urlunparse
+from hashlib import sha256
 import json
 import os
 import time
@@ -22,6 +23,98 @@ class BrowserFetchResult:
     console_errors:tuple[str,...]=()
     failed_requests:tuple[str,...]=()
     screenshot_png:bytes|None=None
+    diagnostics:dict=field(default_factory=dict)
+
+
+class BrowserFetchError(RuntimeError):
+    def __init__(self,message:str,diagnostics:dict|None=None):
+        super().__init__(message)
+        self.diagnostics=diagnostics or {}
+
+
+_EDEKA_PAGE_HOSTS={"edeka.de","www.edeka.de"}
+_SAFE_RESPONSE_HEADERS=(
+    "content-type","content-length","server","via","x-cache","x-request-id",
+    "cache-control","date","strict-transport-security","alt-svc",
+)
+_URL_IN_TEXT=re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _safe_response_headers(headers)->dict[str,str]:
+    """Retain operational response evidence without cookies or credentials."""
+    return {
+        name:str(headers.get(name))[:1000]
+        for name in _SAFE_RESPONSE_HEADERS
+        if headers.get(name) is not None
+    }
+
+
+def _safe_diagnostic_url(url:str)->str:
+    parsed=urlparse(url)
+    hostname=(parsed.hostname or "").lower()
+    netloc=hostname
+    try:
+        if parsed.port is not None:
+            netloc=f"{hostname}:{parsed.port}"
+    except ValueError:
+        pass
+    query=""
+    if hostname in _EDEKA_PAGE_HOSTS:
+        allowed=parse_qs(parsed.query).get("selectedMarktID",[])
+        if allowed:
+            query=urlencode({"selectedMarktID":allowed[0]})
+    return urlunparse((parsed.scheme,netloc,parsed.path,parsed.params,query,""))
+
+
+def _safe_error_text(value:object)->str:
+    return _URL_IN_TEXT.sub(lambda match:_safe_diagnostic_url(match.group(0)),str(value))[:1000]
+
+
+def _approved_edeka_navigation(url:str)->bool:
+    parsed=urlparse(url)
+    try:
+        port=parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme=="https"
+        and (parsed.hostname or "").lower() in _EDEKA_PAGE_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None,443)
+    )
+
+
+def _block_reason(response,body_prefix:str)->str|None:
+    low=body_prefix.lower()
+    if "access denied" in low or "you don't have permission to access" in low:
+        return "akamai_access_denied" if (response.headers.get("server") or "").lower()=="akamaighost" else "access_denied"
+    if "captcha" in low or "robot or human" in low:
+        return "captcha"
+    if response.status_code in {401,403,429}:
+        return f"http_{response.status_code}"
+    return None
+
+
+def _http_attempt(response,request_url:str,dns_result,redirect_chain:list[str])->dict:
+    body_prefix=response.text[:10000]
+    return {
+        "method":"GET",
+        "request_url":_safe_diagnostic_url(request_url),
+        "request_profile":"transparent_spareno_audit",
+        "dns_method":dns_result.method,
+        "dns_ips":list(dns_result.ips),
+        "http_status":response.status_code,
+        "http_version":response.http_version,
+        "final_url":_safe_diagnostic_url(str(response.url)),
+        "final_host":(response.url.host or "").lower(),
+        "redirect_chain":[_safe_diagnostic_url(item) for item in redirect_chain],
+        "response_headers":_safe_response_headers(response.headers),
+        "content_type":response.headers.get("content-type",""),
+        "response_bytes":len(response.content),
+        "body_sha256":sha256(response.content).hexdigest(),
+        "body_marker":_block_reason(response,body_prefix),
+    }
 
 
 def _resolve_host(hostname:str)->list[str]:
@@ -56,7 +149,7 @@ def _system_browser_candidates()->list[str]:
     return candidates
 
 
-def _edeka_http_first(url:str,timeout_ms:int)->BrowserFetchResult|None:
+def _edeka_http_first(url:str,timeout_ms:int,attempts:list[dict]|None=None)->BrowserFetchResult|None:
     """Read EDEKA's official server-rendered market offer surface without JS.
 
     The central ``/angebote/?selectedMarktID=...`` page is an official public
@@ -69,37 +162,82 @@ def _edeka_http_first(url:str,timeout_ms:int)->BrowserFetchResult|None:
     query=parse_qs(parsed.query)
     central_landing = parsed.path.rstrip("/") == "/angebote" and bool(query.get("selectedMarktID"))
     market_detail = bool(re.fullmatch(r"/maerkte/\d+/angebote/?", parsed.path))
-    if host not in {"edeka.de","www.edeka.de"} or not (central_landing or market_detail):
+    if host not in _EDEKA_PAGE_HOSTS or not (central_landing or market_detail):
         return None
+    evidence=attempts if attempts is not None else []
+    dns_result=resolve_host(host)
+    redirect_chain=[]
+    request_url=url
     try:
-        response=httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=max(timeout_ms/1000,1),
-            headers={
-                "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-                "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language":"de-DE,de;q=0.9,en;q=0.7",
-                "Cache-Control":"no-cache",
-            },
+        for _ in range(6):
+            response=httpx.get(
+                request_url,
+                follow_redirects=False,
+                timeout=max(timeout_ms/1000,1),
+                headers={
+                    # Be transparent.  The previously spoofed Chrome UA is
+                    # reproducibly rejected by Akamai while this public GET is
+                    # accepted without cookies or browser impersonation.
+                    "User-Agent":"Spareno-Audit/1.0",
+                    "Accept":"text/html",
+                    "Accept-Language":"de-DE,de;q=0.9",
+                },
+            )
+            if response.is_redirect:
+                location=response.headers.get("location")
+                target=urljoin(str(response.url),location or "")
+                attempt=_http_attempt(response,request_url,dns_result,redirect_chain)
+                attempt["redirect_target"]=_safe_diagnostic_url(target)
+                evidence.append(attempt)
+                if not _approved_edeka_navigation(target):
+                    raise BrowserFetchError(
+                        "EDEKA-Redirect zu nicht freigegebenem Host blockiert.",
+                        {"fetch_attempts":list(evidence),"block_reason":"unapproved_redirect"},
+                    )
+                redirect_chain.append(target)
+                request_url=target
+                continue
+
+            attempt=_http_attempt(response,request_url,dns_result,redirect_chain)
+            evidence.append(attempt)
+            if response.status_code in {401,403,429} or attempt["body_marker"]:
+                return None
+            response.raise_for_status()
+            # Reject tiny/interstitial responses so Playwright can still try.
+            if len(response.content)<5000:
+                attempt["body_marker"]="unexpected_small_response"
+                return None
+            return BrowserFetchResult(
+                response.content,
+                response.headers.get("content-type","text/html; charset=utf-8"),
+                str(response.url),
+                "http-edeka-server-rendered",
+                dns_result.method,
+                diagnostics={
+                    "fetch_attempts":list(evidence),
+                    "http_status":response.status_code,
+                    "http_version":response.http_version,
+                    "response_headers":_safe_response_headers(response.headers),
+                    "redirect_chain":[_safe_diagnostic_url(item) for item in redirect_chain],
+                    "final_host":(response.url.host or "").lower(),
+                    "block_reason":None,
+                    "fallback_used":False,
+                },
+            )
+        raise BrowserFetchError(
+            "EDEKA-Redirect-Limit überschritten.",
+            {"fetch_attempts":list(evidence),"block_reason":"redirect_limit"},
         )
-        if response.status_code in {401,403,429}:
-            return None
-        response.raise_for_status()
-        low=response.text[:10000].lower()
-        if "access denied" in low or "you don't have permission to access" in low or "captcha" in low:
-            return None
-        # Reject tiny/interstitial responses so Playwright can still try.
-        if len(response.content)<5000:
-            return None
-        return BrowserFetchResult(
-            response.content,
-            response.headers.get("content-type","text/html; charset=utf-8"),
-            str(response.url),
-            "http-edeka-server-rendered",
-            "system",
-        )
-    except (httpx.TimeoutException,httpx.HTTPError):
+    except (httpx.TimeoutException,httpx.HTTPError) as exc:
+        evidence.append({
+            "method":"GET","request_url":_safe_diagnostic_url(request_url),
+            "request_profile":"transparent_spareno_audit",
+            "dns_method":dns_result.method,"dns_ips":list(dns_result.ips),
+            "final_host":(urlparse(request_url).hostname or "").lower(),
+            "redirect_chain":[_safe_diagnostic_url(item) for item in redirect_chain],
+            "error_type":type(exc).__name__,"error":_safe_error_text(exc),
+            "body_marker":"network_or_http_error",
+        })
         return None
 
 
@@ -190,7 +328,7 @@ def _capture_page(
         bare_result=resolve_host(bare)
         if bare_result.ips:
             rules.append(f"MAP {bare} {bare_result.ips[0]}")
-    args=["--disable-dev-shm-usage","--no-sandbox","--disable-blink-features=AutomationControlled"]
+    args=["--disable-dev-shm-usage","--no-sandbox"]
     if rules:
         args.append("--host-resolver-rules="+", ".join(rules))
 
@@ -242,8 +380,42 @@ def _capture_page(
         page=context.new_page()
 
     attach(page)
+    navigation_attempt={
+        "method":"GET","request_url":_safe_diagnostic_url(url),"request_profile":"playwright",
+        "dns_method":dns_result.method,"dns_ips":list(dns_result.ips),
+        "final_url":_safe_diagnostic_url(url),"final_host":host.lower(),"redirect_chain":[],
+    }
+    blocked_navigation=[]
+    if host.lower() in _EDEKA_PAGE_HOSTS:
+        def guard_edeka_navigation(route):
+            request=route.request
+            if request.is_navigation_request() and request.frame==page.main_frame:
+                if not _approved_edeka_navigation(request.url):
+                    blocked_navigation.append(_safe_diagnostic_url(request.url))
+                    route.abort("blockedbyclient")
+                    return
+            route.continue_()
+        page.route("**/*",guard_edeka_navigation)
     try:
-        page.goto(url,wait_until="domcontentloaded",timeout=timeout_ms)
+        try:
+            navigation_response=page.goto(url,wait_until="domcontentloaded",timeout=timeout_ms)
+        except Exception as exc:
+            if blocked_navigation:
+                navigation_attempt["redirect_chain"]=blocked_navigation
+                navigation_attempt["body_marker"]="unapproved_redirect"
+                raise BrowserFetchError(
+                    "EDEKA-Browsernavigation zu nicht freigegebenem Host blockiert.",
+                    {"fetch_attempts":[navigation_attempt],"block_reason":"unapproved_redirect"},
+                ) from exc
+            raise
+        if navigation_response is not None:
+            navigation_attempt.update({
+                "http_status":navigation_response.status,
+                "final_url":_safe_diagnostic_url(navigation_response.url),
+                "final_host":(urlparse(navigation_response.url).hostname or "").lower(),
+                "response_headers":_safe_response_headers(navigation_response.headers),
+                "content_type":navigation_response.headers.get("content-type",""),
+            })
         try:
             page.wait_for_load_state("networkidle",timeout=12000)
         except Exception:
@@ -251,9 +423,11 @@ def _capture_page(
 
         body=(page.locator("body").inner_text(timeout=4000) or "")[:5000].lower()
         if "err_name_not_resolved" in body:
-            raise RuntimeError("Browser-DNS-Fehlerseite")
+            navigation_attempt["body_marker"]="browser_dns_error"
+            raise BrowserFetchError("Browser-DNS-Fehlerseite",{"fetch_attempts":[navigation_attempt],"block_reason":"browser_dns_error"})
         if "access denied" in body or "you don't have permission to access" in body:
-            raise RuntimeError("CDN Access Denied")
+            navigation_attempt["body_marker"]="access_denied"
+            raise BrowserFetchError("CDN Access Denied",{"fetch_attempts":[navigation_attempt],"block_reason":"access_denied"})
 
         for label in ("Alle akzeptieren","Akzeptieren","Zustimmen","Einverstanden","Alle Cookies akzeptieren","Auswahl bestätigen"):
             try:
@@ -287,6 +461,15 @@ def _capture_page(
         return BrowserFetchResult(
             page_html.encode("utf-8"),"text/html; charset=utf-8",final_url,mode,dns_result.method,
             tuple(console_errors),tuple(failed_requests),screenshot_png,
+            diagnostics={
+                "fetch_attempts":[navigation_attempt],
+                "http_status":navigation_attempt.get("http_status"),
+                "response_headers":navigation_attempt.get("response_headers",{}),
+                "redirect_chain":navigation_attempt.get("redirect_chain",[]),
+                "final_host":(urlparse(final_url).hostname or "").lower(),
+                "block_reason":None,
+                "fallback_used":False,
+            },
         )
     finally:
         try: context.close()
@@ -299,7 +482,8 @@ def _capture_page(
 def browser_fetch(
     url:str,timeout_ms:int=45000,capture_diagnostics:bool=False,drain_offer_surface:bool=False,
 )->BrowserFetchResult:
-    direct=_edeka_http_first(url,timeout_ms)
+    attempts=[]
+    direct=_edeka_http_first(url,timeout_ms,attempts=attempts)
     if direct is not None:
         return direct
 
@@ -311,21 +495,53 @@ def browser_fetch(
         for executable in _system_browser_candidates():
             try:
                 profile=Path(__file__).resolve().parent.parent/"data"/"browser_profile"
-                return _capture_page(
+                result=_capture_page(
                     pw,url,executable,"system-browser",timeout_ms,dns_result,
                     profile_dir=profile,capture_diagnostics=capture_diagnostics,
                     drain_offer_surface=drain_offer_surface,
                 )
+                result.diagnostics["fetch_attempts"]=[*attempts,*result.diagnostics.get("fetch_attempts",[])]
+                result.diagnostics["fallback_used"]=bool(attempts)
+                return result
             except Exception as exc:
                 errors.append(f"system-browser:{Path(executable).name}: {exc}")
+                if isinstance(exc,BrowserFetchError):
+                    attempts.extend(exc.diagnostics.get("fetch_attempts",[]))
+                else:
+                    attempts.append({
+                        "method":"GET","request_url":_safe_diagnostic_url(url),"request_profile":"system_browser",
+                        "final_host":host.lower(),"error":_safe_error_text(exc),
+                    })
         for attempt in range(1,3):
             try:
-                return _capture_page(
+                result=_capture_page(
                     pw,url,None,f"playwright-{attempt}",timeout_ms,dns_result,
                     profile_dir=None,capture_diagnostics=capture_diagnostics,
                     drain_offer_surface=drain_offer_surface,
                 )
+                result.diagnostics["fetch_attempts"]=[*attempts,*result.diagnostics.get("fetch_attempts",[])]
+                result.diagnostics["fallback_used"]=bool(attempts)
+                return result
             except Exception as exc:
                 errors.append(f"playwright-{attempt}: {exc}")
+                if isinstance(exc,BrowserFetchError):
+                    attempts.extend(exc.diagnostics.get("fetch_attempts",[]))
+                else:
+                    attempts.append({
+                        "method":"GET","request_url":_safe_diagnostic_url(url),"request_profile":f"playwright_{attempt}",
+                        "final_host":host.lower(),"error":_safe_error_text(exc),
+                    })
                 time.sleep(attempt)
-    raise RuntimeError(f"Browser-Abruf fehlgeschlagen für {host}; DNS={dns_result.method} " + " | ".join(errors[-5:]))
+    last=attempts[-1] if attempts else {}
+    raise BrowserFetchError(
+        f"Browser-Abruf fehlgeschlagen für {host}; DNS={dns_result.method} " + " | ".join(errors[-5:]),
+        {
+            "fetch_attempts":attempts,
+            "http_status":last.get("http_status"),
+            "response_headers":last.get("response_headers",{}),
+            "redirect_chain":last.get("redirect_chain",[]),
+            "final_host":last.get("final_host",host.lower()),
+            "block_reason":last.get("body_marker") or last.get("error") or "all_fetch_paths_failed",
+            "fallback_used":True,
+        },
+    )

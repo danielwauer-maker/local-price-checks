@@ -163,6 +163,7 @@ def _browser_result_diagnostics(fetched, html: str) -> tuple[list[dict], dict]:
         "failed_requests": list(getattr(fetched, "failed_requests", ()) or ()),
         "screenshot_png": getattr(fetched, "screenshot_png", None),
     }
+    diagnostics.update(dict(getattr(fetched, "diagnostics", {}) or {}))
     return payloads, diagnostics
 
 
@@ -191,7 +192,7 @@ class ReviewedDirectCollectMixin:
         except Exception as exc:
             low = str(exc).lower()
             kind = "blocked" if "403" in low or "access denied" in low else "timeout" if "timeout" in low else "browser_required"
-            raise WebAuditError(kind, str(exc)) from exc
+            raise WebAuditError(kind, str(exc), dict(getattr(exc, "diagnostics", {}) or {})) from exc
 
         html = fetched.content.decode("utf-8", errors="replace")
         _assert_official_url(store.retailer, fetched.final_url or source_url)

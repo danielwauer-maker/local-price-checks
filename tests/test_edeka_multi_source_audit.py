@@ -131,7 +131,17 @@ def test_incomplete_central_never_becomes_complete_combined_run():
 def test_legacy_central_fallback_is_always_diagnostic_partial(monkeypatch):
     monkeypatch.setattr(
         multi_source, "fetch_central_market_page",
-        lambda store: (_ for _ in ()).throw(WebAuditError("blocked", "CDN blocked")),
+        lambda store: (_ for _ in ()).throw(WebAuditError("blocked", "CDN blocked", {
+            "fetch_attempts": [{
+                "http_status": 403,
+                "http_version": "HTTP/1.1",
+                "final_host": "www.edeka.de",
+                "body_marker": "akamai_access_denied",
+                "response_headers": {"server": "AkamaiGHost", "content-type": "text/html"},
+                "redirect_chain": [],
+            }],
+            "block_reason": "akamai_access_denied",
+        })),
     )
     fallback = _result("legacy-api", [_row("central", f"Teilmenge {index}", 1.99, 500) for index in range(10)])
     monkeypatch.setattr(multi_source, "fetch_resolved_market_offers", lambda store: fallback)
@@ -142,3 +152,58 @@ def test_legacy_central_fallback_is_always_diagnostic_partial(monkeypatch):
     assert result.status == "partial"
     assert result.artifacts["central_completeness_status"] == "partial"
     assert result.artifacts["known_reference_visible_count"] == 224
+    assert result.artifacts["central_fetch_http_status"] == 403
+    assert result.artifacts["central_fetch_final_host"] == "www.edeka.de"
+    assert result.artifacts["central_fetch_block_reason"] == "akamai_access_denied"
+    assert result.artifacts["central_fetch_fallback_used"] is True
+    assert result.artifacts["central_dom_count"] == 0
+    assert result.artifacts["central_parsed_count"] == 10
+    assert result.artifacts["central_reference_count"] == 224
+
+
+def test_unproven_structured_224_still_cannot_bypass_dom_identity_gate(monkeypatch):
+    monkeypatch.setattr(
+        multi_source, "fetch_central_market_page",
+        lambda store: (_ for _ in ()).throw(WebAuditError("blocked", "market page blocked")),
+    )
+    structured = _result(
+        "edeka_marketsearch_resolved_offers",
+        [_row("central", f"Structured Artikel {index}", 1.99, 500) for index in range(224)],
+    )
+    structured.artifacts["collector_endpoint_url"] = "https://www.edeka.de/eh/service/eh/offers?marketId=1378"
+    monkeypatch.setattr(multi_source, "fetch_resolved_market_offers", lambda store: structured)
+
+    result = multi_source.fetch_central_edeka(type("StoreStub", (), {"external_id": "071378"})())
+
+    assert len(result.offers) == 224
+    assert result.status == "partial"
+    assert result.artifacts["central_completeness_status"] == "partial"
+    assert result.artifacts["central_fetch_fallback_used"] is True
+
+
+def test_total_central_failure_does_not_destroy_working_local_source(monkeypatch):
+    monkeypatch.setattr(
+        multi_source, "fetch_central_market_page",
+        lambda store: (_ for _ in ()).throw(WebAuditError("blocked", "market blocked")),
+    )
+    monkeypatch.setattr(
+        multi_source, "fetch_resolved_market_offers",
+        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "resolver unavailable")),
+    )
+    monkeypatch.setattr(
+        multi_source, "_fetch_all_categories",
+        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "categories unavailable")),
+    )
+    monkeypatch.setattr(
+        multi_source, "_fetch_edeka_api",
+        lambda store: (_ for _ in ()).throw(WebAuditError("endpoint_changed", "legacy unavailable")),
+    )
+    local = _result("local", [_row("local", "Lokaler Artikel", 1.49, 500)])
+    monkeypatch.setattr(multi_source, "fetch_local_edeka", lambda store: local)
+
+    combined = multi_source.fetch_combined_edeka(type("StoreStub", (), {"external_id": "071378"})())
+
+    assert [row.name for row in combined.offers] == ["Lokaler Artikel"]
+    assert combined.status == "partial"
+    assert combined.artifacts["source_breakdown"]["central_count"] == 0
+    assert combined.artifacts["source_breakdown"]["local_count"] == 1

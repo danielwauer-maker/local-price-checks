@@ -97,13 +97,56 @@ von diesem Attribut. Für `071378` dient 224 als ausdrücklich marktspezifische
 Regression-Referenz. Weniger Karten oder eine Abweichung zwischen eindeutigen
 DOM-IDs und Parser-Ergebnis führen zu `partial`, niemals zu `success`.
 
-Der direkte Headless-/HTTP-Abruf kann je nach Ausführungsnetz vom EDEKA-CDN mit
-`Access Denied` beziehungsweise `ERR_NETWORK_ACCESS_DENIED` blockiert werden,
-während dieselbe URL im interaktiven Browser erreichbar ist. Der Collector
-versucht deshalb HTTP und Browser kontrolliert; ein kleiner Legacy-API-Fallback
-bleibt reine Diagnose-Evidenz und wird immer als `partial` gekennzeichnet. Vor
-einer produktiven Aktivierung muss der vollständige 224er-Lauf in der
-tatsächlichen Zielumgebung als Canary reproduziert werden.
+#### Production-Fetch-Root-Cause (2. September 2026)
+
+Der erste Production-Canary nach PR #160 fiel auf 10/224 zentrale Angebote
+zurück. Der DOM-Parser war nicht die Ursache. Der HTTP-First-Pfad gab sich mit
+einem fest codierten Chrome-User-Agent als Browser aus. In der lokalen und der
+containerisierten Vergleichsumgebung lehnt Akamai genau diese Request-Variante
+reproduzierbar ab, während der transparente GET vollständig funktioniert. Ob
+die Zielumgebung zusätzlich IP-basiert eingeschränkt wird, kann erst der neue
+Production-Canary mit den unten beschriebenen Diagnosefeldern entscheiden.
+
+Die Diagnose wurde sowohl vom Host als auch aus dem Backend-Docker-Image gegen
+die öffentliche Marktseite durchgeführt:
+
+| Variante | Status | Body | Redirects / Finalhost | Ergebnis |
+|---|---:|---:|---|---|
+| Plain HTTPX GET | 200 | 1.276.824 Byte | 0 / `www.edeka.de` | vollständiges serverseitiges HTML |
+| Transparenter `Spareno-Audit/1.0` GET | 200 | 1.276.824 Byte | 0 / `www.edeka.de` | vollständiges serverseitiges HTML |
+| Übliche `Accept`-/`Accept-Language`-Header | 200 | 1.276.824 Byte | 0 / `www.edeka.de` | vollständig |
+| Fest codierter Chrome-127-User-Agent | 403 | 402 Byte | 0 / `www.edeka.de` | `AkamaiGHost`, `Access Denied` |
+| Plain HEAD | 404 | 0 Byte | 0 / `www.edeka.de` | nicht als Verfügbarkeitsprobe geeignet |
+| Plain GET über IPv4 / IPv6 | 200 / 200 | jeweils 1.276.824 Byte | 0 / `www.edeka.de` | IP-Familie nicht ursächlich |
+
+Die DNS-Kette war `www.edeka.de` → `www-v2.edeka.de.edgekey.net` →
+`*.akamaiedge.net`; beobachtet wurden öffentliche A- und AAAA-Adressen. HTTPX
+und das lokale Curl unterstützen in dieser Umgebung HTTP/1.1, über das der GET
+vollständig funktioniert. Der initiale erfolgreiche Request benötigt keine
+vorherigen Consent- oder Session-Cookies. `Set-Cookie` wird in der
+Produktionsdiagnostik ausdrücklich nicht gespeichert.
+
+HTML, JSON-LD, `application/json`, Preloads, DOM-Attribute und das öffentlich
+geladene EDEKA-App-JavaScript wurden nach Hydration-State, CMS-Fragmenten und
+Angebotsendpunkten untersucht. Die 224 Angebote liegen ausschließlich als
+serverseitig gerenderte HTML-Karten vor. Im App-JavaScript wurden nur die
+öffentlichen Suggestion-/Newsletter-Pfade gefunden; `offer-images.api.edeka`
+ist ein reiner Bildhost. Ein alternativer strukturierter Dienst, dessen IDs
+gegen alle 224 DOM-IDs verifiziert werden könnten, ist nicht nachgewiesen. Die
+bereits bekannte `/eh/service/eh/offers`-Quelle bleibt mit 10 Angeboten reine
+Diagnose-Evidenz und wird selbst bei einer größeren, aber nicht gegen DOM-IDs
+bewiesenen Teilmenge niemals automatisch auf `complete` hochgestuft.
+
+Der Collector verwendet deshalb für genau die zugelassenen öffentlichen
+EDEKA-Marktseiten einen transparenten HTTP-GET, validiert Redirects vor dem
+Folgerequest ausschließlich auf `https://edeka.de` beziehungsweise
+`https://www.edeka.de` und protokolliert nur sichere Diagnosefelder. Ein
+Browser bleibt kontrollierter Fallback; der Legacy-Feed bleibt immer
+`partial`. Vor einer produktiven Aktivierung muss der vollständige 224er-Lauf
+in der tatsächlichen Zielumgebung erneut als Canary reproduziert werden. Die
+technische Erreichbarkeit einer öffentlichen Händlerseite ersetzt außerdem
+keine rechtliche Prüfung der Nutzungsbedingungen und Datenrechte vor einem
+regelmäßigen oder skalierten Produktionsabruf.
 
 Interpretation: EDEKA ist klar regional und folgt zusätzlich den
 Regionalgesellschaften. Netto ist stark regional; City-Filialen können ein
