@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import combinations
 from math import inf
+
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .geo import haversine_km
 from .models import Offer, ShoppingItem, Store, UserProfile
+from .routing import RoutingStop, optimized_roundtrip
 from .services import offers_for_selected_stores
 
 
@@ -31,20 +32,36 @@ class PlanResult:
 
 
 def _route_km(user: UserProfile, stores: list[Store]) -> float:
+    """Return the shortest available driving roundtrip for the selected stores.
+
+    The routing adapter uses an OSRM road-distance matrix and evaluates every
+    store order (at most three stores in the optimizer). Provider/network
+    failures transparently fall back to the previous Haversine approximation.
+    """
     if not stores or None in (user.latitude, user.longitude):
         return 0.0
-    remaining = [s for s in stores if None not in (s.latitude, s.longitude)]
-    if not remaining:
+
+    stops = [
+        RoutingStop(
+            key=str(store.id),
+            latitude=float(store.latitude),
+            longitude=float(store.longitude),
+        )
+        for store in stores
+        if store.latitude is not None and store.longitude is not None
+    ]
+    if not stops:
         return 0.0
-    cur_lat, cur_lon = user.latitude, user.longitude
-    km = 0.0
-    while remaining:
-        nxt = min(remaining, key=lambda s: haversine_km(cur_lat, cur_lon, s.latitude, s.longitude))
-        km += haversine_km(cur_lat, cur_lon, nxt.latitude, nxt.longitude)
-        cur_lat, cur_lon = nxt.latitude, nxt.longitude
-        remaining.remove(nxt)
-    km += haversine_km(cur_lat, cur_lon, user.latitude, user.longitude)
-    return km * settings.route_distance_factor
+
+    result = optimized_roundtrip(
+        float(user.latitude),
+        float(user.longitude),
+        stops,
+        base_url=settings.routing_base_url,
+        timeout_seconds=settings.routing_timeout_seconds,
+        fallback_distance_factor=settings.route_distance_factor,
+    )
+    return result.distance_km
 
 
 def _evaluate_store_set(
