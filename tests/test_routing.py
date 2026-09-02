@@ -45,6 +45,39 @@ def test_osrm_matrix_chooses_shortest_two_store_roundtrip(monkeypatch):
     assert result.estimated is False
 
 
+def test_road_distances_from_origin_uses_one_way_matrix(monkeypatch):
+    matrix = [
+        [0, 3500, 12100],
+        [3600, 0, 8800],
+        [11900, 8700, 0],
+    ]
+    monkeypatch.setattr(routing, "urlopen", lambda *_args, **_kwargs: _Response({"code": "Ok", "distances": matrix}))
+
+    result = routing.road_distances_from_origin(
+        50.0,
+        7.0,
+        [RoutingStop("edeka", 50.01, 7.01), RoutingStop("rewe", 50.02, 7.02)],
+        base_url="https://router.invalid",
+        timeout_seconds=1,
+        fallback_distance_factor=1.25,
+    )
+
+    assert result == {"edeka": 3.5, "rewe": 12.1}
+
+
+def test_road_distances_from_origin_falls_back_per_store(monkeypatch):
+    monkeypatch.setattr(routing, "urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")))
+    result = routing.road_distances_from_origin(
+        50.0,
+        7.0,
+        [RoutingStop("A", 50.01, 7.01)],
+        base_url="https://router.invalid",
+        timeout_seconds=1,
+        fallback_distance_factor=1.25,
+    )
+    assert result["A"] > 0
+
+
 def test_osrm_matrix_checks_all_three_store_permutations(monkeypatch):
     # Explicitly make O->C->B->A->O the unique cheapest tour (4 km).
     matrix = [
