@@ -211,12 +211,11 @@ def _collect_edeka_from_official_prospect(
     source,
     benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
 ):
-    """Collect EDEKA from the immutable market PDF, not the landing-page cards.
+    """Legacy PDF collector retained as an explicit diagnostic/fallback helper.
 
-    The official market page remains discovery metadata. A still-current PDF
-    already registered in ``Prospect`` wins, which makes retries independent
-    from transient Akamai/landing-page failures. Fresh markets fall back to the
-    normal official-link discovery without any store-id-specific parser code.
+    Normal EDEKA collection is handled by ``edeka_live_collector`` so admin
+    test-scrapes, public refreshes and scheduler calls use the same proven
+    central+local source path.
     """
     from .prospects import current_prospect
 
@@ -265,8 +264,6 @@ def _collect_lidl_from_official_leaflet(
     def report(phase: str, **values):
         reporter = state.get("reporter")
         if reporter:
-            # The collector owns elapsed time; the reporter persists its own
-            # monotonic elapsed value and ignores the transport-only copy.
             values.pop("elapsed_seconds", None)
             reporter.update(phase, **values)
 
@@ -403,7 +400,8 @@ def collect_store_from_web(
     if store.retailer == "Lidl":
         return _collect_lidl_from_official_leaflet(db, store, source, benchmark_context)
     if store.retailer == "EDEKA":
-        return _collect_edeka_from_official_prospect(db, store, source, benchmark_context)
+        from .edeka_live_collector import collect_edeka_web_for_store
+        return collect_edeka_web_for_store(db, store, benchmark_context=benchmark_context)
 
     structured_error = None
     try:
@@ -413,9 +411,6 @@ def collect_store_from_web(
             benchmark_context=benchmark_context,
         )
         if summary.imported:
-            # Retailers with an explicit artifact adapter already archived the
-            # exact successful collector response. Other retailers retain the
-            # discovery fallback until their adapters migrate to this lifecycle.
             if not result.get("_artifact_managed"):
                 audit_status = _ensure_audit_artifact(db, store, source.url)
                 _append_run_diagnostic(db, run, audit_status)

@@ -23,10 +23,10 @@ def _store():
     )
 
 
-def _result(*, completeness="complete", local_status="success"):
+def _result(*, completeness="complete", local_status="success", market_page_id="071378", offer_store_id=20, valid_from=date(2026, 8, 31), valid_to=date(2026, 9, 5)):
     offer = WebOfferRecord(
         retailer="EDEKA",
-        store_id=20,
+        store_id=offer_store_id,
         source_url="https://www.edeka.de/maerkte/071378/angebote/",
         name="Himbeeren",
         price=1.79,
@@ -34,8 +34,8 @@ def _result(*, completeness="complete", local_status="success"):
         quantity_value=125,
         quantity_unit="g",
         packaging_text="125g",
-        valid_from=date(2026, 8, 31),
-        valid_to=date(2026, 9, 5),
+        valid_from=valid_from,
+        valid_to=valid_to,
         category="Obst & Gemüse",
         image_url="https://example.invalid/himbeeren.jpg",
         provenance={"sources": ["edeka_central"]},
@@ -48,6 +48,7 @@ def _result(*, completeness="complete", local_status="success"):
         raw_count=1,
         status="success",
         artifacts={
+            "market_page_id": market_page_id,
             "central_completeness_status": completeness,
             "source_breakdown": {
                 "central_completeness": completeness,
@@ -66,6 +67,8 @@ def test_live_collector_converts_complete_audit_to_normal_collected_offers(monke
     payload = edeka_live_collector._collect_result(_store())
 
     assert payload["fetch_mode"] == "edeka_central_plus_local"
+    assert payload["market_id"] == "071378"
+    assert payload["current_offer_count"] == 1
     assert len(payload["offers"]) == 1
     row = payload["offers"][0]
     assert row.store_name == "EDEKA Fellenzer"
@@ -97,4 +100,37 @@ def test_fellenzer_live_collector_rejects_missing_local_supplement(monkeypatch):
     )
 
     with pytest.raises(CollectionError, match="lokale Ergänzungsquelle"):
+        edeka_live_collector._collect_result(_store())
+
+
+def test_fellenzer_live_collector_rejects_wrong_market_page(monkeypatch):
+    monkeypatch.setattr(
+        edeka_live_collector,
+        "fetch_combined_edeka",
+        lambda store: _result(market_page_id="099999"),
+    )
+
+    with pytest.raises(CollectionError, match="Marktbindung falsch"):
+        edeka_live_collector._collect_result(_store())
+
+
+def test_fellenzer_live_collector_rejects_offer_bound_to_other_store(monkeypatch):
+    monkeypatch.setattr(
+        edeka_live_collector,
+        "fetch_combined_edeka",
+        lambda store: _result(offer_store_id=999),
+    )
+
+    with pytest.raises(CollectionError, match="falscher Markt-/Händlerbindung"):
+        edeka_live_collector._collect_result(_store())
+
+
+def test_fellenzer_live_collector_rejects_stale_offer_period(monkeypatch):
+    monkeypatch.setattr(
+        edeka_live_collector,
+        "fetch_combined_edeka",
+        lambda store: _result(valid_from=date(2026, 8, 24), valid_to=date(2026, 8, 29)),
+    )
+
+    with pytest.raises(CollectionError, match="nicht aktuell gebundene Angebote"):
         edeka_live_collector._collect_result(_store())

@@ -4,6 +4,7 @@ import json
 
 from sqlalchemy.orm import Session
 
+from .clock import app_today
 from .collection_quality import BenchmarkContext
 from .collection_service import CollectionError, collect_structured_for_store
 from .edeka_fellenzer_offer_audit import FELLENZER_MARKET_ID
@@ -54,6 +55,51 @@ def _to_collected_offer(store: Store, offer: WebOfferRecord) -> CollectedOffer:
     )
 
 
+def _validate_live_scope(store: Store, offers: list[WebOfferRecord], artifacts: dict) -> list[WebOfferRecord]:
+    market_id = _market_id(store)
+    mismatched = [
+        offer for offer in offers
+        if offer.store_id != store.id or offer.retailer != "EDEKA"
+    ]
+    if mismatched:
+        raise CollectionError(
+            f"EDEKA Live-Collector lieferte {len(mismatched)} Angebote mit falscher Markt-/Händlerbindung."
+        )
+
+    if market_id != FELLENZER_MARKET_ID:
+        return offers
+
+    source_market_id = str(artifacts.get("market_page_id") or "").strip()
+    if source_market_id != FELLENZER_MARKET_ID:
+        raise CollectionError(
+            f"EDEKA Fellenzer Marktbindung falsch: erwartet={FELLENZER_MARKET_ID} "
+            f"quelle={source_market_id or 'unknown'}"
+        )
+
+    today = app_today()
+    current: list[WebOfferRecord] = []
+    invalid_period = 0
+    for offer in offers:
+        if offer.valid_from is None or offer.valid_to is None:
+            invalid_period += 1
+            continue
+        if offer.valid_from <= today <= offer.valid_to:
+            current.append(offer)
+        else:
+            invalid_period += 1
+
+    if invalid_period:
+        raise CollectionError(
+            f"EDEKA Fellenzer enthält {invalid_period} nicht aktuell gebundene Angebote; "
+            f"Stichtag={today.isoformat()}."
+        )
+    if not current:
+        raise CollectionError(
+            f"EDEKA Fellenzer lieferte keine Angebote für {today.isoformat()}."
+        )
+    return current
+
+
 def _collect_result(store: Store) -> dict:
     if store.retailer != "EDEKA":
         raise CollectionError(f"Kein EDEKA-Markt: {store.name}")
@@ -86,6 +132,7 @@ def _collect_result(store: Store) -> dict:
     valid_offers = [offer for offer in audit.offers if offer.valid and offer.price is not None]
     if not valid_offers:
         raise CollectionError(f"EDEKA Web-Collector lieferte keine validen Angebote: {store.name}")
+    valid_offers = _validate_live_scope(store, valid_offers, artifacts)
 
     rows = [_to_collected_offer(store, offer) for offer in valid_offers]
     return {
@@ -95,6 +142,8 @@ def _collect_result(store: Store) -> dict:
         "source_breakdown": breakdown,
         "audit_raw_count": audit.raw_count,
         "audit_duplicate_count": audit.duplicate_count,
+        "market_id": _market_id(store),
+        "current_offer_count": len(rows),
         "technical_warning": "" if audit.status == "success" else (audit.message or audit.status),
     }
 

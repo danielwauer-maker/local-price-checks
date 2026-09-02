@@ -56,6 +56,8 @@ class Settings:
     smtp_from: str = os.getenv("SMTP_FROM", "").strip()
     smtp_starttls: bool = _bool_env("SMTP_STARTTLS", True)
     driving_cost_per_km: float = float(os.getenv("DRIVING_COST_PER_KM", "0.15"))
+    routing_base_url: str = os.getenv("ROUTING_BASE_URL", "https://router.project-osrm.org").strip().rstrip("/")
+    routing_timeout_seconds: float = float(os.getenv("ROUTING_TIMEOUT_SECONDS", "5"))
     route_distance_factor: float = float(os.getenv("ROUTE_DISTANCE_FACTOR", "1.25"))
     store_coordinate_tolerance_m: float = float(os.getenv("STORE_COORDINATE_TOLERANCE_M", "250"))
     store_quality_min_valid_offers: int = int(os.getenv("STORE_QUALITY_MIN_VALID_OFFERS", "10"))
