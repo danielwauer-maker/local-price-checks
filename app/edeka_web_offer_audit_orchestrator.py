@@ -108,7 +108,8 @@ def _same_source_variant_candidates(offers: list[WebOfferRecord]) -> list[dict]:
 
 
 def _attach_source_breakdown(db, run, result) -> None:
-    breakdown = (result.artifacts or {}).get("source_breakdown")
+    artifacts = getattr(result, "artifacts", None) or {}
+    breakdown = artifacts.get("source_breakdown")
     if not isinstance(breakdown, dict):
         return
     try:
@@ -132,15 +133,16 @@ def _attach_source_breakdown(db, run, result) -> None:
         "central_structured_endpoint", "central_dom_count", "central_parsed_count",
         "central_reference_count", "central_fetch_response_headers", "central_fetch_redirect_chain",
     ):
-        if key in (result.artifacts or {}):
-            comparison[key] = result.artifacts[key]
+        if key in artifacts:
+            comparison[key] = artifacts[key]
 
-    dedupe_candidates = (result.artifacts or {}).get("dedupe_candidates")
+    dedupe_candidates = artifacts.get("dedupe_candidates")
     source_candidates = list(dedupe_candidates) if isinstance(dedupe_candidates, list) else []
-    same_source_candidates = _same_source_variant_candidates(list(result.offers))
+    offers = list(getattr(result, "offers", None) or [])
+    same_source_candidates = _same_source_variant_candidates(offers)
     combined_candidates = (source_candidates + same_source_candidates)[:100]
     comparison["source_same_source_variant_count"] = len(same_source_candidates)
-    comparison["source_internal_duplicate_count"] = int(result.duplicate_count or 0)
+    comparison["source_internal_duplicate_count"] = int(getattr(result, "duplicate_count", 0) or 0)
     comparison["source_duplicate_candidate_count"] = len(combined_candidates)
     comparison["source_dedupe_candidates"] = combined_candidates
 
