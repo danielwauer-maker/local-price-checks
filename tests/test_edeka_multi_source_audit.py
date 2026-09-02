@@ -6,7 +6,16 @@ from app.web_offer_audit import WebAuditError
 from app.web_offer_audit import WebAuditResult, WebOfferRecord
 
 
-def _row(source: str, name: str, price: float, grams: float | None = None, image: str | None = None):
+def _row(
+    source: str,
+    name: str,
+    price: float,
+    grams: float | None = None,
+    image: str | None = None,
+    *,
+    ean: str | None = None,
+    product_id: str | None = None,
+):
     return WebOfferRecord(
         retailer="EDEKA",
         store_id=1,
@@ -18,6 +27,8 @@ def _row(source: str, name: str, price: float, grams: float | None = None, image
         quantity_unit="g" if grams is not None else None,
         packaging_text=f"{grams:g} g" if grams is not None else None,
         image_url=image,
+        ean=ean,
+        external_product_id=product_id,
         provenance={"source": "official_store_site" if source == "local" else "central_api"},
     ).validate()
 
@@ -44,36 +55,71 @@ def test_merge_keeps_central_primary_and_adds_only_missing_local_offers():
     ])
 
     merged = merge_edeka_sources(central, local)
+    breakdown = merged.artifacts["source_breakdown"]
 
     assert merged.collector_path == "edeka_central_plus_local"
     assert len(merged.offers) == 3
-    assert merged.artifacts["source_breakdown"] == {
-        "central_count": 2,
-        "local_count": 2,
-        "source_overlap": 1,
-        "central_only": 1,
-        "local_only": 1,
-        "price_conflicts": 0,
-        "unique_combined": 3,
-        "central_completeness": "unknown",
-        "local_status": "success",
-    }
+    assert breakdown["central_count"] == 2
+    assert breakdown["local_count"] == 2
+    assert breakdown["source_overlap"] == 1
+    assert breakdown["central_only"] == 1
+    assert breakdown["local_only"] == 1
+    assert breakdown["price_conflicts"] == 0
+    assert breakdown["unique_combined"] == 3
     bresso = next(row for row in merged.offers if row.name == "Bresso Frischkäse")
     assert bresso.price == 1.29
     assert bresso.provenance["sources"] == ["edeka_central", "edeka_local_fellenzer"]
+    assert bresso.provenance["dedupe_decision"]["reason"] == "same_normalized_name_quantity_and_price"
     assert any(row.name == "IKEA Gutschein" for row in merged.offers)
 
 
-def test_merge_marks_price_conflict_without_silently_overwriting_central_price():
-    central = _result("central", [_row("central", "Cola", 1.29, 1500)])
-    local = _result("local", [_row("local", "Cola", 1.19, 1500)])
+def test_weak_same_name_quantity_but_different_price_stays_separate_as_possible_variant():
+    central = _result("central", [
+        _row("central", "Himbeeren", 1.99, 125, "https://central.invalid/raspberry-a.jpg"),
+    ])
+    local = _result("local", [
+        _row("local", "Himbeeren", 1.79, 125, "https://media.smp-it-media.de/products/image/raspberry-b"),
+    ])
+
+    merged = merge_edeka_sources(central, local)
+    breakdown = merged.artifacts["source_breakdown"]
+
+    assert len(merged.offers) == 2
+    assert sorted(row.price for row in merged.offers) == [1.79, 1.99]
+    assert breakdown["source_overlap"] == 0
+    assert breakdown["local_only"] == 1
+    assert breakdown["weak_price_mismatch_count"] == 1
+    assert breakdown["price_conflicts"] == 0
+    candidate = merged.artifacts["dedupe_candidates"][0]
+    assert candidate["decision"] == "kept_separate"
+    assert candidate["reason"] == "weak_identity_price_mismatch"
+    assert candidate["central_price"] == 1.99
+    assert candidate["local_price"] == 1.79
+
+
+def test_strong_ean_identity_merges_and_marks_price_conflict_without_overwriting_central_price():
+    central = _result("central", [_row("central", "Cola", 1.29, 1500, ean="400000000001")])
+    local = _result("local", [_row("local", "Cola", 1.19, 1500, ean="400000000001")])
 
     merged = merge_edeka_sources(central, local)
 
     assert len(merged.offers) == 1
     assert merged.offers[0].price == 1.29
     assert merged.offers[0].provenance["price_conflict"] is True
+    assert merged.offers[0].provenance["dedupe_decision"]["reason"] == "same_ean"
     assert merged.artifacts["source_breakdown"]["price_conflicts"] == 1
+    assert merged.artifacts["dedupe_candidates"][0]["reason"] == "strong_identity_price_conflict"
+
+
+def test_same_product_id_merges_even_if_display_names_differ_slightly():
+    central = _result("central", [_row("central", "Bresso Frischkäse", 1.29, 150, product_id="p-42")])
+    local = _result("local", [_row("local", "Bresso Frischkäse versch. Sorten", 1.29, 150, product_id="p-42")])
+
+    merged = merge_edeka_sources(central, local)
+
+    assert len(merged.offers) == 1
+    assert merged.artifacts["source_breakdown"]["source_overlap"] == 1
+    assert merged.offers[0].provenance["dedupe_decision"]["reason"] == "same_product"
 
 
 def test_local_only_source_is_not_required():
@@ -92,19 +138,28 @@ def test_unavailable_local_source_is_visible_without_discarding_central_rows():
     local = WebAuditResult(
         offers=[], source_url="https://edeka-fellenzer.de/angebote/",
         final_url="https://edeka-fellenzer.de/angebote/", collector_path="local_unavailable",
-        raw_count=0, status="partial", artifacts={"local_error": "blocked"},
+        raw_count=0, status="partial", artifacts={
+            "local_error": "blocked",
+            "local_fetch_method": "plain_http",
+            "local_fetch_http_status": 403,
+            "local_fetch_final_host": "edeka-fellenzer.de",
+            "local_fetch_block_reason": "http_403",
+        },
     )
 
     merged = merge_edeka_sources(central, local)
+    breakdown = merged.artifacts["source_breakdown"]
 
     assert len(merged.offers) == 1
     assert merged.status == "partial"
-    assert merged.artifacts["source_breakdown"]["central_count"] == 1
-    assert merged.artifacts["source_breakdown"]["local_status"] == "partial"
+    assert breakdown["central_count"] == 1
+    assert breakdown["local_status"] == "partial"
+    assert breakdown["local_fetch_http_status"] == 403
+    assert breakdown["local_fetch_block_reason"] == "http_403"
     assert merged.artifacts["local_error"] == "blocked"
 
 
-def test_224_central_plus_74_local_with_50_overlaps_yields_248_unique():
+def test_224_central_plus_74_local_with_50_same_price_overlaps_yields_248_unique():
     central = _result("central", [_row("central", f"Zentral Artikel {index}", 1 + index / 100, 500) for index in range(224)])
     local_rows = [_row("local", f"Zentral Artikel {index}", 1 + index / 100, 500) for index in range(50)]
     local_rows.extend(_row("local", f"Lokaler Zusatz {index}", 2 + index / 100, 250) for index in range(24))

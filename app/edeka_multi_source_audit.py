@@ -21,16 +21,62 @@ def _central_market_page(store: Store) -> str:
     return central_market_page_url(_market_id(store))
 
 
-def _identity_key(offer: WebOfferRecord) -> tuple[str, str] | None:
-    if offer.ean:
-        return ("ean", offer.ean.strip())
-    if offer.external_product_id:
-        return ("product", offer.external_product_id.strip())
+def _strong_identity_keys(offer: WebOfferRecord) -> list[tuple[str, str]]:
+    keys: list[tuple[str, str]] = []
+    if offer.ean and offer.ean.strip():
+        keys.append(("ean", offer.ean.strip()))
+    if offer.external_product_id and offer.external_product_id.strip():
+        keys.append(("product", offer.external_product_id.strip()))
+    return keys
+
+
+def _weak_identity_key(offer: WebOfferRecord) -> str | None:
     key = normalize_master_key(offer.name, offer.quantity_value, offer.quantity_unit)
-    return ("normalized", key) if key else None
+    return key or None
 
 
-def _merge_pair(central: WebOfferRecord, local: WebOfferRecord) -> tuple[WebOfferRecord, bool]:
+def _prices_match(left: WebOfferRecord, right: WebOfferRecord) -> bool:
+    if left.price is None or right.price is None:
+        return False
+    return abs(left.price - right.price) < 0.005
+
+
+def _candidate_diagnostic(
+    central: WebOfferRecord,
+    local: WebOfferRecord,
+    *,
+    decision: str,
+    reason: str,
+    identity_strength: str,
+) -> dict:
+    return {
+        "decision": decision,
+        "reason": reason,
+        "identity_strength": identity_strength,
+        "central_offer_id": central.external_offer_id,
+        "local_offer_id": local.external_offer_id,
+        "central_product_id": central.external_product_id,
+        "local_product_id": local.external_product_id,
+        "central_ean": central.ean,
+        "local_ean": local.ean,
+        "central_name": central.name,
+        "local_name": local.name,
+        "central_price": central.price,
+        "local_price": local.price,
+        "central_quantity": central.packaging_text or central.quantity,
+        "local_quantity": local.packaging_text or local.quantity,
+        "central_image_url": central.image_url,
+        "local_image_url": local.image_url,
+    }
+
+
+def _merge_pair(
+    central: WebOfferRecord,
+    local: WebOfferRecord,
+    *,
+    match_reason: str,
+    identity_strength: str,
+) -> tuple[WebOfferRecord, bool]:
     merged = deepcopy(central)
     price_conflict = (
         central.price is not None
@@ -51,6 +97,11 @@ def _merge_pair(central: WebOfferRecord, local: WebOfferRecord) -> tuple[WebOffe
         "sources": ["edeka_central", "edeka_local_fellenzer"],
         "central": central.provenance,
         "local": local.provenance,
+        "dedupe_decision": {
+            "decision": "merged",
+            "reason": match_reason,
+            "identity_strength": identity_strength,
+        },
         "price_conflict": price_conflict,
         "central_price": central.price,
         "local_price": local.price,
@@ -62,36 +113,123 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
     central_rows, central_dupes = quality_deduplicate(list(central.offers))
     local_rows, local_dupes = quality_deduplicate(list(local.offers)) if local else ([], 0)
 
-    central_by_identity: dict[tuple[str, str], WebOfferRecord] = {}
     merged_rows: list[WebOfferRecord] = list(central_rows)
-    merged_index: dict[tuple[str, str], int] = {}
-    for index, row in enumerate(merged_rows):
-        key = _identity_key(row)
-        if key:
-            central_by_identity[key] = row
-            merged_index[key] = index
+    central_by_strong: dict[tuple[str, str], list[int]] = {}
+    central_by_weak: dict[str, list[int]] = {}
+    for index, row in enumerate(central_rows):
+        for key in _strong_identity_keys(row):
+            central_by_strong.setdefault(key, []).append(index)
+        weak_key = _weak_identity_key(row)
+        if weak_key:
+            central_by_weak.setdefault(weak_key, []).append(index)
 
     overlap = 0
     local_only = 0
     price_conflicts = 0
+    weak_price_mismatches = 0
+    ambiguous_candidates = 0
+    dedupe_candidates: list[dict] = []
+
     for local_row in local_rows:
-        key = _identity_key(local_row)
-        if key is not None and key in central_by_identity:
+        strong_indexes: set[int] = set()
+        strong_reason: str | None = None
+        for key in _strong_identity_keys(local_row):
+            matches = central_by_strong.get(key, [])
+            if matches:
+                strong_indexes.update(matches)
+                strong_reason = f"same_{key[0]}"
+
+        if len(strong_indexes) == 1:
+            index = next(iter(strong_indexes))
+            central_row = central_rows[index]
+            merged_row, conflict = _merge_pair(
+                central_row,
+                local_row,
+                match_reason=strong_reason or "strong_identity",
+                identity_strength="strong",
+            )
             overlap += 1
-            merged_row, conflict = _merge_pair(central_by_identity[key], local_row)
             price_conflicts += int(conflict)
-            merged_rows[merged_index[key]] = merged_row
+            merged_rows[index] = merged_row
+            if conflict:
+                dedupe_candidates.append(_candidate_diagnostic(
+                    central_row,
+                    local_row,
+                    decision="merged_with_price_conflict",
+                    reason="strong_identity_price_conflict",
+                    identity_strength="strong",
+                ))
+            continue
+
+        if len(strong_indexes) > 1:
+            ambiguous_candidates += 1
+            for index in sorted(strong_indexes)[:5]:
+                dedupe_candidates.append(_candidate_diagnostic(
+                    central_rows[index],
+                    local_row,
+                    decision="kept_separate",
+                    reason="ambiguous_strong_identity_multiple_central_rows",
+                    identity_strength="strong",
+                ))
         else:
-            local_only += 1
-            local_row.provenance = {
-                "sources": ["edeka_local_fellenzer"],
-                "local": local_row.provenance,
-            }
-            merged_rows.append(local_row)
+            weak_key = _weak_identity_key(local_row)
+            weak_indexes = central_by_weak.get(weak_key, []) if weak_key else []
+            same_price_indexes = [index for index in weak_indexes if _prices_match(central_rows[index], local_row)]
+
+            if len(same_price_indexes) == 1:
+                index = same_price_indexes[0]
+                central_row = central_rows[index]
+                merged_row, conflict = _merge_pair(
+                    central_row,
+                    local_row,
+                    match_reason="same_normalized_name_quantity_and_price",
+                    identity_strength="weak_confirmed_by_price",
+                )
+                overlap += 1
+                price_conflicts += int(conflict)
+                merged_rows[index] = merged_row
+                continue
+
+            if len(same_price_indexes) > 1:
+                ambiguous_candidates += 1
+                for index in same_price_indexes[:5]:
+                    dedupe_candidates.append(_candidate_diagnostic(
+                        central_rows[index],
+                        local_row,
+                        decision="kept_separate",
+                        reason="ambiguous_weak_identity_multiple_same_price_rows",
+                        identity_strength="weak",
+                    ))
+            elif weak_indexes:
+                weak_price_mismatches += 1
+                for index in weak_indexes[:5]:
+                    dedupe_candidates.append(_candidate_diagnostic(
+                        central_rows[index],
+                        local_row,
+                        decision="kept_separate",
+                        reason="weak_identity_price_mismatch",
+                        identity_strength="weak",
+                    ))
+
+        local_only += 1
+        local_row.provenance = {
+            "sources": ["edeka_local_fellenzer"],
+            "local": local_row.provenance,
+            "dedupe_decision": {
+                "decision": "kept_separate",
+                "reason": (
+                    "possible_variant_or_price_difference"
+                    if _weak_identity_key(local_row) in central_by_weak
+                    else "no_matching_central_identity"
+                ),
+            },
+        }
+        merged_rows.append(local_row)
 
     merged_rows, cross_dupes = quality_deduplicate(merged_rows)
     central_count = len(central_rows)
     local_count = len(local_rows)
+    local_artifacts = dict(local.artifacts or {}) if local else {}
     source_breakdown = {
         "central_count": central_count,
         "local_count": local_count,
@@ -102,17 +240,25 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         "unique_combined": len(merged_rows),
         "central_completeness": (central.artifacts or {}).get("central_completeness", "unknown"),
         "local_status": local.status if local else "not_applicable",
+        "duplicate_candidate_count": len(dedupe_candidates),
+        "weak_price_mismatch_count": weak_price_mismatches,
+        "ambiguous_candidate_count": ambiguous_candidates,
+        "local_fetch_method": local_artifacts.get("local_fetch_method"),
+        "local_fetch_http_status": local_artifacts.get("local_fetch_http_status"),
+        "local_fetch_final_host": local_artifacts.get("local_fetch_final_host"),
+        "local_fetch_block_reason": local_artifacts.get("local_fetch_block_reason"),
     }
 
     artifacts = dict(central.artifacts or {})
     artifacts.update({
         "source_breakdown": source_breakdown,
+        "dedupe_candidates": dedupe_candidates[:100],
         "central_collector_path": central.collector_path,
         "local_collector_path": local.collector_path if local else None,
         "central_source_url": central.source_url,
         "central_market_page_url": central.final_url,
         "local_source_url": local.source_url if local else None,
-        "local_error": (local.artifacts or {}).get("local_error") if local else None,
+        "local_error": local_artifacts.get("local_error") if local else None,
     })
 
     return WebAuditResult(
@@ -129,7 +275,7 @@ def merge_edeka_sources(central: WebAuditResult, local: WebAuditResult | None) -
         message=(
             f"EDEKA Quellen kombiniert: zentral {central_count}, lokal {local_count}, "
             f"Überschneidung {overlap}, lokal zusätzlich {local_only}, unique {len(merged_rows)}, "
-            f"Preis-Konflikte {price_conflicts}"
+            f"Preis-Konflikte {price_conflicts}, mögliche Varianten {weak_price_mismatches}"
         ),
         artifacts=artifacts,
     )
@@ -237,12 +383,18 @@ def fetch_local_edeka(store: Store) -> WebAuditResult | None:
     try:
         result = fetch_fellenzer_offers(store)
     except WebAuditError as exc:
+        artifacts = dict(exc.artifacts or {})
+        artifacts.update({
+            "local_error": exc.error_type,
+            "local_error_message": str(exc),
+            "local_fetch_block_reason": artifacts.get("local_fetch_block_reason") or exc.error_type,
+        })
         return WebAuditResult(
             offers=[], source_url="https://edeka-fellenzer.de/angebote/",
             final_url="https://edeka-fellenzer.de/angebote/",
             collector_path="edeka_local_fellenzer_unavailable", raw_count=0, status="partial",
             message=f"Lokale Fellenzer-Quelle nicht verfügbar: {exc.error_type}",
-            artifacts={"local_error": exc.error_type, "local_error_message": str(exc)},
+            artifacts=artifacts,
         )
     result.artifacts = dict(result.artifacts or {})
     result.artifacts["market_id"] = _market_id(store)

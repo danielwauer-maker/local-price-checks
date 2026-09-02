@@ -39,6 +39,9 @@ def _attach_source_breakdown(db, run, result) -> None:
     ):
         if key in (result.artifacts or {}):
             comparison[key] = result.artifacts[key]
+    dedupe_candidates = (result.artifacts or {}).get("dedupe_candidates")
+    if isinstance(dedupe_candidates, list):
+        comparison["source_dedupe_candidates"] = dedupe_candidates[:100]
     run.comparison_json = json.dumps(comparison, ensure_ascii=False)
     db.commit()
     db.refresh(run)
@@ -47,11 +50,12 @@ def _attach_source_breakdown(db, run, result) -> None:
 def run_web_offer_audit(db, store: Store, period_key: str = "current", source_url: str | None = None):
     """Run EDEKA audit as central-primary plus optional local supplement.
 
-    The central EDEKA market source is always collected first.  For verified
+    The central EDEKA market source is always collected first. For verified
     markets with an official local merchant source (currently Fellenzer
-    071378), local offers are added afterwards and conservative cross-source
-    deduplication keeps overlaps visible only once.  No path writes public
-    Offer rows.
+    071378), local offers are added afterwards. Strong product identities may
+    merge across sources even if the price differs (visible conflict); weak
+    name/quantity matches only merge when the price also agrees. No path writes
+    public Offer rows.
     """
     if store.retailer != "EDEKA":
         return run_legacy_edeka_audit(db, store, period_key=period_key, source_url=source_url)
