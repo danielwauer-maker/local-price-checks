@@ -65,3 +65,15 @@ def test_missing_product_last_offer_returns_null():
     response = client.get("/api/lokero/products/999999999/last-offer")
     assert response.status_code == 200
     assert response.json() is None
+
+
+def test_missing_list_product_alternatives_returns_404():
+    client = TestClient(app)
+    response = client.get("/api/lokero/list/products/999999999/alternatives")
+    assert response.status_code == 404
+
+
+def test_missing_retailer_logo_returns_404():
+    client = TestClient(app)
+    response = client.get("/api/lokero/retailer-logo/definitely-not-a-retailer")
+    assert response.status_code == 404
