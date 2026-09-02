@@ -25,7 +25,11 @@ def _store(external_id: str = "071378") -> Store:
 
 
 def _html() -> str:
-    return """
+    # The production fetch intentionally rejects tiny responses (< 3 KB) as
+    # possible CDN/interstitial pages. Keep the fixture realistically sized so
+    # fetch tests exercise the parser instead of tripping that safety guard.
+    padding = "x" * 3200
+    return f"""
     <html><body>
       <p>Die Angebote der Woche sind gültig vom 31.08. bis zum 05.09.2026.</p>
       <article class="offer-card">
@@ -40,6 +44,7 @@ def _html() -> str:
         <h3>Salatgurken</h3>
         <p>Klasse I, Stück</p>
       </article>
+      <!-- {padding} -->
     </body></html>
     """
 
