@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPBasicCredentials
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from .clock import app_today
 from .coverage_models import CoverageRegion
@@ -27,7 +27,7 @@ from .models import (
     ShoppingItem,
     Store,
 )
-from .normal_prices import add_normal_price_observation, reference_price_for_offer
+from .normal_prices import add_normal_price_observation, reference_price_for_offer, reference_prices_for_offers
 from .offer_review_routes import QuickReviewPayload, offer_review_metadata, quick_review_offer
 from .optimizer import optimize_shopping
 from .product_search import search_products
@@ -81,6 +81,22 @@ def _category_slug(db: Session, product: MasterProduct) -> str:
     if meta and meta.category and meta.category.active:
         return root_category_slug(meta.category.slug)
     return "sonstiges"
+
+
+def _category_slug_map(db: Session, product_ids: list[int] | set[int]) -> dict[int, str]:
+    if not product_ids:
+        return {}
+    rows = (
+        db.query(ProductAdminData)
+        .options(joinedload(ProductAdminData.category))
+        .filter(ProductAdminData.master_product_id.in_(product_ids))
+        .all()
+    )
+    return {
+        row.master_product_id: root_category_slug(row.category.slug)
+        for row in rows
+        if row.category is not None and row.category.active
+    }
 
 
 def _product_payload(db: Session, product: MasterProduct, *, category_slug: str | None = None) -> dict:
@@ -145,6 +161,10 @@ def _offer_payload(db: Session, offer: Offer, *, expose_normal_price: bool) -> d
         "status": "disabled",
         "isRealDiscount": None,
     }
+    return _offer_payload_from_parts(offer, occurrence=occurrence, normal=normal)
+
+
+def _offer_payload_from_parts(offer: Offer, *, occurrence: OfferOccurrence | None, normal: dict) -> dict:
     old_price = normal.get("regularPrice")
     discount = normal.get("discountPercent") if normal.get("isRealDiscount") else None
     base_price = None
@@ -167,12 +187,43 @@ def _offer_payload(db: Session, offer: Offer, *, expose_normal_price: bool) -> d
     }
 
 
+def _latest_occurrence_map(db: Session, offer_ids: list[int]) -> dict[int, OfferOccurrence]:
+    if not offer_ids:
+        return {}
+    result: dict[int, OfferOccurrence] = {}
+    for row in (
+        db.query(OfferOccurrence)
+        .filter(OfferOccurrence.offer_id.in_(offer_ids))
+        .order_by(OfferOccurrence.collected_at.desc(), OfferOccurrence.id.desc())
+        .all()
+    ):
+        result.setdefault(row.offer_id, row)
+    return result
+
+
+def _offer_serialization_maps(db: Session, offers: list[Offer], *, expose_normal_price: bool):
+    categories = _category_slug_map(db, {offer.master_product_id for offer in offers})
+    occurrences = _latest_occurrence_map(db, [offer.id for offer in offers])
+    if expose_normal_price:
+        normal_prices = reference_prices_for_offers(db, offers)
+    else:
+        disabled = {
+            "regularPrice": None,
+            "discountPercent": None,
+            "status": "disabled",
+            "isRealDiscount": None,
+        }
+        normal_prices = {offer.id: disabled for offer in offers}
+    return categories, occurrences, normal_prices
+
+
 def _current_offers(db: Session, store_ids: list[int]) -> list[Offer]:
     if not store_ids:
         return []
     today = app_today()
     return (
         db.query(Offer)
+        .options(joinedload(Offer.product), joinedload(Offer.store))
         .filter(
             Offer.store_id.in_(store_ids),
             Offer.local_store_offer.is_(True),
@@ -280,13 +331,16 @@ def offers(
             if needle in (row.product.name or "").lower()
             or needle in (row.product.brand or "").lower()
         ]
+    category_by_product = _category_slug_map(db, {row.master_product_id for row in rows})
     if category.strip():
-        rows = [row for row in rows if _category_slug(db, row.product) == category.strip()]
+        rows = [row for row in rows if category_by_product.get(row.master_product_id, "sonstiges") == category.strip()]
+    rows = rows[:limit]
+    _, occurrences, normal_prices = _offer_serialization_maps(db, rows, expose_normal_price=flags["normal_price_badges"])
     result = []
-    for offer in rows[:limit]:
+    for offer in rows:
         result.append({
-            **_offer_payload(db, offer, expose_normal_price=flags["normal_price_badges"]),
-            "product": _product_payload(db, offer.product),
+            **_offer_payload_from_parts(offer, occurrence=occurrences.get(offer.id), normal=normal_prices[offer.id]),
+            "product": _product_payload(db, offer.product, category_slug=category_by_product.get(offer.master_product_id, "sonstiges")),
             "market": _market_payload(db, user, offer.store, savings=flags["savings"]),
         })
     return result

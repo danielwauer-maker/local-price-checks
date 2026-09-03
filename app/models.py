@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -81,7 +81,10 @@ class ShoppingItem(Base):
 
 class Offer(Base):
     __tablename__ = "offers"
-    __table_args__ = (UniqueConstraint("store_id", "master_product_id", "valid_from", "price", name="uq_offer"),)
+    __table_args__ = (
+        UniqueConstraint("store_id", "master_product_id", "valid_from", "price", name="uq_offer"),
+        Index("ix_offers_public_store_validity", "store_id", "local_store_offer", "valid_from", "valid_to"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
@@ -106,7 +109,10 @@ class OfferOccurrence(Base):
     occurrence fingerprint is stable for offer/page/source text.
     """
     __tablename__ = "offer_occurrences"
-    __table_args__ = (UniqueConstraint("offer_id", "occurrence_fingerprint", name="uq_offer_occurrence"),)
+    __table_args__ = (
+        UniqueConstraint("offer_id", "occurrence_fingerprint", name="uq_offer_occurrence"),
+        Index("ix_offer_occurrences_offer_collected", "offer_id", "collected_at"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id"), index=True)
     prospect_page: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
@@ -214,6 +220,11 @@ class ProductAlias(Base):
 
 class MediaAsset(Base):
     __tablename__ = "media_assets"
+    __table_args__ = (
+        Index("ix_media_assets_product_lookup", "kind", "master_product_id", "active", "is_primary"),
+        Index("ix_media_assets_store_lookup", "kind", "store_id", "active", "is_primary"),
+        Index("ix_media_assets_retailer_lookup", "kind", "retailer", "active", "is_primary"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String(40), index=True)
     master_product_id: Mapped[int | None] = mapped_column(ForeignKey("master_products.id"), nullable=True, index=True)

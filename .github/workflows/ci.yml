@@ -66,6 +66,8 @@ jobs:
           test -f public/brand/favicon-32.png
       - name: Production frontend build
         run: bun run build
+      - name: Enforce client entry bundle budget
+        run: bun run check:bundle
       - name: Frontend lint
         run: bun run lint
   frontend-e2e:

@@ -21,6 +21,7 @@ from .services import current_user
 
 router = APIRouter(prefix="/api/lokero", tags=["lokero-media"])
 MEDIA_DIR = settings.data_dir / "admin_media"
+PRODUCT_MEDIA_CACHE = {"Cache-Control": "public, max-age=300, stale-while-revalidate=3600"}
 
 CATEGORY_ICONS = {
     "obst-gemuese": "apple",
@@ -179,10 +180,10 @@ def product_media(product_id: int, db: Session = Depends(get_db)):
         safe_name = Path(asset.file_path).name
         target = MEDIA_DIR / safe_name
         if target.exists() and target.is_file():
-            return FileResponse(target, media_type=asset.mime_type or None)
+            return FileResponse(target, media_type=asset.mime_type or None, headers=PRODUCT_MEDIA_CACHE)
 
     if asset.source_url and asset.source_url.lower().startswith(("http://", "https://")):
-        return RedirectResponse(asset.source_url, status_code=307)
+        return RedirectResponse(asset.source_url, status_code=307, headers=PRODUCT_MEDIA_CACHE)
 
     raise HTTPException(status_code=404, detail="Product image unavailable")
 

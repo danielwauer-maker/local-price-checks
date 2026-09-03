@@ -1,22 +1,12 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowRightLeft, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import type { AlternativeKind, Chain, Product } from "@/data/lokero";
 import { formatEuro } from "@/lib/format";
 import { fetchOffers } from "@/services/lokero-api";
+import type { ListAlternative } from "@/services/lokero-state-api";
 import { ProductImage } from "./ProductImage";
 import { MarketLogo } from "./MarketLogo";
-
-export type ListAlternative = {
-  product: Product;
-  price: number;
-  market: { id: string; name: string; chain: Chain };
-  kind: AlternativeKind;
-  reason?: string;
-  confidence?: number;
-};
 
 const DISMISSED_KEY = "spareno.list-alternative-dismissed.v1";
 
@@ -30,37 +20,21 @@ function readDismissed(): string[] {
   }
 }
 
-async function fetchListAlternatives(productId: string): Promise<ListAlternative[]> {
-  try {
-    const response = await fetch(`/api/lokero/list/products/${encodeURIComponent(productId)}/alternatives`, {
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    });
-    if (!response.ok) return [];
-    return (await response.json()) as ListAlternative[];
-  } catch {
-    return [];
-  }
-}
-
 export function ListAlternativeSuggestion({
   productId,
+  alternatives,
   onReplace,
 }: {
   productId: string;
+  alternatives: ListAlternative[];
   onReplace: (alternative: ListAlternative) => void;
 }) {
   const navigate = useNavigate();
   const [dismissed, setDismissed] = useState<string[]>(readDismissed);
   const [busyAction, setBusyAction] = useState<"details" | "replace" | null>(null);
-  const query = useQuery({
-    queryKey: ["list-product-alternatives", productId],
-    queryFn: () => fetchListAlternatives(productId),
-    staleTime: 5 * 60_000,
-  });
   const alternative = useMemo(
-    () => (query.data ?? []).find((row) => !dismissed.includes(`${productId}:${row.product.id}`)),
-    [query.data, dismissed, productId],
+    () => alternatives.find((row) => !dismissed.includes(`${productId}:${row.product.id}`)),
+    [alternatives, dismissed, productId],
   );
 
   if (!alternative) return null;

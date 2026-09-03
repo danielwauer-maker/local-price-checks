@@ -78,6 +78,9 @@ from .db import SessionLocal, begin_request_query_metrics, end_request_query_met
 _CLIENT_RE = re.compile(r"^[A-Za-z0-9_-]{16,80}$")
 _PERFORMANCE_PATHS = (
     "/api/bootstrap",
+    "/api/lokero/offers",
+    "/api/lokero/markets",
+    "/api/lokero/list/alternatives",
     "/api/account/",
     "/api/sharing/lists",
     "/api/push/",

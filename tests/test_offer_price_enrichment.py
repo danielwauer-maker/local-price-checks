@@ -1,9 +1,11 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from app.api_routes import _price_payload
 from app.clock import app_today
 from app.db import Base, SessionLocal, engine
+from app.lokero_models import NormalPriceObservation
 from app.models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, Store
+from app.normal_prices import reference_price_for_offer, reference_prices_for_offers
 
 
 def _setup_offer(*, price=0.49):
@@ -140,4 +142,49 @@ def test_price_payload_exposes_minimum_quantity_tier_separately():
     assert promotion["kind"] == "tier_price"
     assert promotion["specialPrice"] == 1.66
     assert promotion["minimumQuantity"] == 3
+    db.close()
+
+
+def test_bulk_reference_price_preserves_scalar_priority_and_payload():
+    db, offer = _setup_offer(price=1.49)
+    db.query(NormalPriceObservation).filter(
+        NormalPriceObservation.master_product_id == offer.master_product_id,
+    ).delete(synchronize_session=False)
+    db.add_all([
+        NormalPriceObservation(
+            master_product_id=offer.master_product_id,
+            store_id=offer.store_id,
+            retailer=offer.store.retailer,
+            price=2.09,
+            source="test_store_history",
+            confidence=1.0,
+            is_regular_price=True,
+            observed_at=datetime.utcnow(),
+        ),
+        NormalPriceObservation(
+            master_product_id=offer.master_product_id,
+            retailer=offer.store.retailer,
+            price=2.49,
+            source="test_retailer_history",
+            confidence=1.0,
+            is_regular_price=True,
+            observed_at=datetime.utcnow(),
+        ),
+    ])
+    db.commit()
+
+    scalar = reference_price_for_offer(db, offer)
+    assert reference_prices_for_offers(db, [offer])[offer.id] == scalar
+    assert scalar["source"] == "store_history"
+
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type="regular",
+        discount_percent=25.1,
+    ))
+    db.commit()
+    scalar = reference_price_for_offer(db, offer)
+    assert reference_prices_for_offers(db, [offer])[offer.id] == scalar
+    assert scalar["source"] == "regular"
     db.close()
