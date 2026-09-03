@@ -8,10 +8,11 @@ from .db import get_db
 from .feature_flags import feature_enabled, get_feature_flags
 from .geo import haversine_km
 from .lokero_routes import (
-    _category_slug,
+    _category_slug_map,
     _current_offers,
     _market_payload,
-    _offer_payload,
+    _latest_occurrence_map,
+    _offer_payload_from_parts,
     _product_payload,
 )
 from .models import FavoriteStore, Store
@@ -19,6 +20,7 @@ from .physical_market_identity import canonical_store_map, collapse_physical_sto
 from .reviewer_auth import reviewer_device
 from .routing import RoutingStop, road_distances_from_origin
 from .services import current_user
+from .normal_prices import reference_prices_for_offers
 
 router = APIRouter(prefix="/api/lokero", tags=["lokero-canonical-markets"])
 
@@ -120,14 +122,39 @@ def canonical_offers(
             if needle in (row.product.name or "").lower()
             or needle in (row.product.brand or "").lower()
         ]
+    category_by_product = _category_slug_map(db, {row.master_product_id for row in rows})
     if category.strip():
-        rows = [row for row in rows if _category_slug(db, row.product) == category.strip()]
+        rows = [
+            row for row in rows
+            if category_by_product.get(row.master_product_id, "sonstiges") == category.strip()
+        ]
+
+    rows = rows[:limit]
+    occurrences = _latest_occurrence_map(db, [row.id for row in rows])
+    if flags["normal_price_badges"]:
+        normal_prices = reference_prices_for_offers(db, rows)
+    else:
+        disabled_normal = {
+            "regularPrice": None,
+            "discountPercent": None,
+            "status": "disabled",
+            "isRealDiscount": None,
+        }
+        normal_prices = {row.id: disabled_normal for row in rows}
 
     result = []
-    for offer in rows[:limit]:
+    for offer in rows:
         result.append({
-            **_offer_payload(db, offer, expose_normal_price=flags["normal_price_badges"]),
-            "product": _product_payload(db, offer.product),
+            **_offer_payload_from_parts(
+                offer,
+                occurrence=occurrences.get(offer.id),
+                normal=normal_prices[offer.id],
+            ),
+            "product": _product_payload(
+                db,
+                offer.product,
+                category_slug=category_by_product.get(offer.master_product_id, "sonstiges"),
+            ),
             "market": _market_payload_with_road_distance(db, user, offer.store, road_distances, savings=flags["savings"]),
         })
     return result

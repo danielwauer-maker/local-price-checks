@@ -231,6 +231,20 @@ async function installApiFixture(page: Page, state: ApiState) {
       state.preferences.set(productId, body.allowAlternatives === true);
       return json(route, { ok: true });
     }
+    if (path === "/api/lokero/list/alternatives/batch" && method === "POST") {
+      const body = request.postDataJSON() as { productIds?: string[] };
+      return json(route, {
+        alternatives: Object.fromEntries((body.productIds ?? []).map((productId) => [productId, [
+          {
+            product: products["coca-cola-15"],
+            price: 0.99,
+            market: { id: "lidl-puderbach", name: "Lidl Puderbach", chain: "Lidl" },
+            kind: "aehnlich",
+            reason: "Günstigste passende Alternative",
+          },
+        ]])),
+      });
+    }
     if (path.endsWith("/alternatives")) {
       return json(route, [
         {
@@ -369,6 +383,16 @@ export const test = base.extend<{
       route.fulfill({ status: 200, contentType: "text/css", body: "" }),
     );
     await page.route("https://*.basemaps.cartocdn.com/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      }),
+    );
+    await page.route("https://*.tile.openstreetmap.org/**", (route) =>
       route.fulfill({
         status: 200,
         contentType: "image/png",

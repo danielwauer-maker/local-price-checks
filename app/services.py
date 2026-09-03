@@ -107,41 +107,35 @@ def _canonical_mapping(db: Session) -> dict[int, Store]:
 
 def favorite_store_ids(db: Session, user: UserProfile) -> list[int]:
     """Return public favorites as canonical physical market ids."""
+    return favorite_and_selected_store_ids(db, user)[0]
+
+
+def favorite_and_selected_store_ids(db: Session, user: UserProfile) -> tuple[list[int], list[int]]:
+    """Resolve canonical favorite and in-radius ids in one bounded pass."""
     from .market_activation import store_is_public
 
     mapping = _canonical_mapping(db)
     rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
-    ids: list[int] = []
+    favorite_ids: list[int] = []
+    selected_ids: list[int] = []
     seen: set[int] = set()
     for row in rows:
         store = mapping.get(row.store_id, row.store)
         if not store_is_public(store) or store.id in seen:
             continue
         seen.add(store.id)
-        ids.append(store.id)
-    return ids
+        favorite_ids.append(store.id)
+        in_radius = True
+        if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
+            in_radius = haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) <= user.radius_km
+        if in_radius:
+            selected_ids.append(store.id)
+    return favorite_ids, selected_ids
 
 
 def selected_store_ids(db: Session, user: UserProfile) -> list[int]:
     """Return canonical released favorite markets inside the search radius."""
-    favorite_ids = set(favorite_store_ids(db, user))
-    if not favorite_ids:
-        return []
-
-    mapping = _canonical_mapping(db)
-    rows = db.query(FavoriteStore).filter(FavoriteStore.user_id == user.id).all()
-    ids: list[int] = []
-    seen: set[int] = set()
-    for row in rows:
-        store = mapping.get(row.store_id, row.store)
-        if store.id not in favorite_ids or store.id in seen:
-            continue
-        if None not in (user.latitude, user.longitude, store.latitude, store.longitude):
-            if haversine_km(user.latitude, user.longitude, store.latitude, store.longitude) > user.radius_km:
-                continue
-        seen.add(store.id)
-        ids.append(store.id)
-    return ids
+    return favorite_and_selected_store_ids(db, user)[1]
 
 
 def offers_for_selected_stores(db: Session, user: UserProfile, view: str = "current"):

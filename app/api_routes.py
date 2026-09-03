@@ -92,7 +92,14 @@ def _retailer_logo(db: Session, retailer: str) -> str | None:
     return _media_url(legacy_logo)
 
 
-def _market(db: Session, store: Store) -> dict:
+def _market(
+    db: Session,
+    store: Store,
+    *,
+    image_url: str | None = None,
+    logo_url: str | None = None,
+    preloaded: bool = False,
+) -> dict:
     return {
         "id": str(store.id),
         "name": store.name,
@@ -104,9 +111,58 @@ def _market(db: Session, store: Store) -> dict:
         "openUntil": "",
         "rating": 0,
         "verified": bool(store.benchmark_verified),
-        "imageUrl": _primary_media(db, kind="store", store_id=store.id),
-        "logoUrl": _retailer_logo(db, store.retailer),
+        "imageUrl": image_url if preloaded else _primary_media(db, kind="store", store_id=store.id),
+        "logoUrl": logo_url if preloaded else _retailer_logo(db, store.retailer),
     }
+
+
+def _market_media_maps(db: Session, stores: list[Store]) -> tuple[dict[int, str | None], dict[str, str | None]]:
+    if not stores:
+        return {}, {}
+    store_ids = [store.id for store in stores]
+    retailers = {store.retailer for store in stores}
+    store_media: dict[int, str | None] = {}
+    for row in (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "store",
+            MediaAsset.store_id.in_(store_ids),
+            MediaAsset.active.is_(True),
+        )
+        .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
+        .all()
+    ):
+        if row.store_id is not None:
+            store_media.setdefault(row.store_id, _media_url(row))
+    logos: dict[str, str | None] = {}
+    for row in (
+        db.query(MediaAsset)
+        .filter(
+            MediaAsset.kind == "retailer_logo",
+            MediaAsset.retailer.in_(retailers),
+            MediaAsset.active.is_(True),
+        )
+        .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
+        .all()
+    ):
+        if row.retailer:
+            logos.setdefault(row.retailer, _media_url(row))
+    missing = retailers - logos.keys()
+    if missing:
+        for row in (
+            db.query(MediaAsset)
+            .filter(
+                MediaAsset.kind == "store",
+                MediaAsset.store_id.is_(None),
+                MediaAsset.retailer.in_(missing),
+                MediaAsset.active.is_(True),
+            )
+            .order_by(MediaAsset.is_primary.desc(), MediaAsset.created_at.desc())
+            .all()
+        ):
+            if row.retailer:
+                logos.setdefault(row.retailer, _media_url(row))
+    return store_media, logos
 
 
 def _product(
@@ -150,11 +206,11 @@ def _stores_in_radius(db: Session, user) -> list[Store]:
     return rows
 
 
-def _stores_for_bootstrap(db: Session, user) -> list[Store]:
+def _stores_for_bootstrap(db: Session, user, *, favorite_ids: list[int] | None = None) -> list[Store]:
     """Return nearby markets plus persistent favorites outside the current radius."""
     nearby = _stores_in_radius(db, user)
     by_id = {store.id: store for store in nearby}
-    favorite_ids = favorite_store_ids(db, user)
+    favorite_ids = favorite_store_ids(db, user) if favorite_ids is None else favorite_ids
     if favorite_ids:
         favorites = db.query(Store).filter(Store.id.in_(favorite_ids)).all()
         for store in favorites:

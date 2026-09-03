@@ -39,6 +39,9 @@ export function MarketLogo({
           src={`/api/lokero/retailer-logo/${encodeURIComponent(chain)}`}
           alt={`${chain} Logo`}
           loading="lazy"
+          decoding="async"
+          width={size === "xs" ? 36 : size === "sm" ? 44 : 48}
+          height={size === "xs" ? 20 : size === "sm" ? 28 : 40}
           className="h-full w-full object-contain p-0.5"
           onError={() => setFailed(true)}
         />

@@ -102,6 +102,85 @@ def reference_price_for_offer(db: Session, offer: Offer) -> dict:
     }
 
 
+def reference_prices_for_offers(db: Session, offers: list[Offer]) -> dict[int, dict]:
+    """Resolve normal-price badges for a page of offers with bounded queries.
+
+    This preserves ``reference_price_for_offer`` priority while avoiding up to
+    three SQL round trips per serialized offer.
+    """
+    if not offers:
+        return {}
+    offer_ids = [offer.id for offer in offers]
+    product_ids = {offer.master_product_id for offer in offers}
+    explicit_by_offer = {
+        row.offer_id: row
+        for row in db.query(OfferPriceReference)
+        .filter(OfferPriceReference.offer_id.in_(offer_ids))
+        .all()
+    }
+    cutoff = datetime.utcnow() - timedelta(days=120)
+    observations = (
+        db.query(NormalPriceObservation)
+        .filter(
+            NormalPriceObservation.master_product_id.in_(product_ids),
+            NormalPriceObservation.is_regular_price.is_(True),
+            NormalPriceObservation.observed_at >= cutoff,
+        )
+        .all()
+    )
+    by_store: dict[tuple[int, int], list[float]] = {}
+    by_retailer: dict[tuple[int, str], list[float]] = {}
+    for row in observations:
+        if not row.price or row.price <= 0:
+            continue
+        if row.store_id is not None:
+            by_store.setdefault((row.master_product_id, row.store_id), []).append(float(row.price))
+        if row.retailer:
+            by_retailer.setdefault((row.master_product_id, row.retailer), []).append(float(row.price))
+
+    result: dict[int, dict] = {}
+    for offer in offers:
+        explicit = explicit_by_offer.get(offer.id)
+        if explicit and explicit.reference_price > 0:
+            ref = float(explicit.reference_price)
+            discount = ((ref - float(offer.price)) / ref * 100.0) if ref > float(offer.price) else 0.0
+            result[offer.id] = {
+                "regularPrice": round(ref, 2),
+                "source": explicit.reference_type,
+                "estimated": explicit.reference_type not in EXPLICIT_REFERENCE_TYPES,
+                "discountPercent": round(max(0.0, discount), 1),
+                "isRealDiscount": ref > float(offer.price) + 0.004,
+                "status": "confirmed" if explicit.reference_type in EXPLICIT_REFERENCE_TYPES else "estimated",
+            }
+            continue
+        values = by_store.get((offer.master_product_id, offer.store_id), [])
+        source = "store_history"
+        if not values and offer.store is not None:
+            values = by_retailer.get((offer.master_product_id, offer.store.retailer), [])
+            source = "retailer_history"
+        if not values:
+            result[offer.id] = {
+                "regularPrice": None,
+                "source": None,
+                "estimated": False,
+                "discountPercent": None,
+                "isRealDiscount": None,
+                "status": "unknown",
+            }
+            continue
+        ref = float(median(values))
+        discount = ((ref - float(offer.price)) / ref * 100.0) if ref > float(offer.price) else 0.0
+        result[offer.id] = {
+            "regularPrice": round(ref, 2),
+            "source": source,
+            "estimated": True,
+            "discountPercent": round(max(0.0, discount), 1),
+            "isRealDiscount": ref > float(offer.price) + 0.004,
+            "status": "estimated",
+        }
+    return result
+
+
 def backfill_explicit_references(db: Session) -> int:
     """Persist explicit regular prices as reusable observations.
 

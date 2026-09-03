@@ -42,6 +42,9 @@ export function ProductImage({
         src={src}
         alt={product.name}
         loading={eager ? "eager" : "lazy"}
+        decoding="async"
+        width={size === "lg" ? 128 : size === "md" ? 64 : 48}
+        height={size === "lg" ? 128 : size === "md" ? 64 : 48}
         className="h-full w-full object-contain"
         onError={() => setFailed(true)}
       />

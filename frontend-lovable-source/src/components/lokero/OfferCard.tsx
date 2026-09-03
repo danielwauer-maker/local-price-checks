@@ -19,6 +19,9 @@ function ProductImage({ offer, size = "md" }: { offer: OfferView; size?: "sm" | 
         src={offer.product.imageUrl || `/api/lokero/product-media/${encodeURIComponent(offer.product.id)}`}
         alt={offer.product.name}
         loading="lazy"
+        decoding="async"
+        width={size === "sm" ? 48 : 64}
+        height={size === "sm" ? 48 : 64}
         className="h-full w-full object-contain"
         onError={() => setFailed(true)}
       />

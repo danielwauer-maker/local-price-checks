@@ -1,4 +1,4 @@
-import type { AlternativeKind, Product } from "@/data/lokero";
+import type { AlternativeKind, Chain, Product } from "@/data/lokero";
 
 export const ACCOUNT_MUTATION_START_EVENT = "spareno:account-mutation-start";
 export const ACCOUNT_MUTATION_END_EVENT = "spareno:account-mutation-end";
@@ -71,6 +71,24 @@ export type FavoriteAlternative = {
   kind: AlternativeKind;
   reason?: string;
 };
+
+export type ListAlternative = {
+  product: Product;
+  price: number;
+  market: { id: string; name: string; chain: Chain };
+  kind: AlternativeKind;
+  reason?: string;
+  confidence?: number;
+};
+
+export async function fetchListAlternativesBatch(productIds: string[]): Promise<Record<string, ListAlternative[]>> {
+  if (productIds.length === 0) return {};
+  const payload = await requestJson<{ alternatives?: Record<string, ListAlternative[]> }>(
+    "/api/lokero/list/alternatives/batch",
+    { method: "POST", body: JSON.stringify({ productIds, limit: 3 }) },
+  );
+  return payload?.alternatives ?? {};
+}
 
 export async function fetchFavoritePreferences(): Promise<FavoritePreference[]> {
   return (await requestJson<FavoritePreference[]>("/api/lokero/favorites/preferences")) ?? [];

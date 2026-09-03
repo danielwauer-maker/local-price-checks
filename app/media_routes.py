@@ -15,4 +15,7 @@ def public_media(filename: str):
     target = MEDIA_DIR / safe
     if not target.exists() or not target.is_file():
         raise HTTPException(404, "Datei nicht gefunden")
-    return FileResponse(target)
+    return FileResponse(
+        target,
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )

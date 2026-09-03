@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -25,6 +25,20 @@ class NormalPriceObservation(Base):
             "price",
             "source",
             name="uq_normal_price_observation",
+        ),
+        Index(
+            "ix_normal_prices_product_store_current",
+            "master_product_id",
+            "store_id",
+            "is_regular_price",
+            "observed_at",
+        ),
+        Index(
+            "ix_normal_prices_product_retailer_current",
+            "master_product_id",
+            "retailer",
+            "is_regular_price",
+            "observed_at",
         ),
     )
 

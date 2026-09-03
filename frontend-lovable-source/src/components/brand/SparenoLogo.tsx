@@ -9,6 +9,9 @@ export function SparenoMark({ className }: { className?: string }) {
       alt=""
       aria-hidden="true"
       draggable={false}
+      decoding="async"
+      width={512}
+      height={512}
       className={cn("h-8 w-8 object-contain", className)}
     />
   );
