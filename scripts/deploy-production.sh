@@ -196,6 +196,13 @@ if [[ $FRONTEND -eq 1 ]]; then
 fi
 
 if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
+  echo "Reclaiming unused Docker build cache and dangling images before migration space checks..."
+  docker builder prune -af || true
+  docker image prune -f || true
+  docker system df || true
+fi
+
+if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
   if [[ $APP -ne 1 ]]; then
     echo "ERROR: controlled schema release requires a freshly built app image."
     exit 1
@@ -216,6 +223,8 @@ if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
   DB_BYTES="$(stat -c %s "$DB_HOST_PATH")"
   AVAILABLE_BYTES="$(df -PB1 "$BACKUP_DIR" | awk 'NR==2 {print $4}')"
   REQUIRED_BYTES=$(( DB_BYTES * 2 + 268435456 ))
+  echo "Migration storage status:"
+  df -h "$BACKUP_DIR" "$APP_DIR/data" || true
   if (( AVAILABLE_BYTES < REQUIRED_BYTES )); then
     echo "ERROR: insufficient free space for verified external backup + migration staging."
     echo "required=$REQUIRED_BYTES available=$AVAILABLE_BYTES database=$DB_BYTES"
