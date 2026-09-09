@@ -46,3 +46,64 @@ def test_daily_scheduler_uses_only_public_physical_stores_keeps_edeka_path_and_c
     with Session() as check:
         assert check.query(DailyCollectionRun).count() == 1
 
+
+def _run_daily_outcomes(monkeypatch, statuses):
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True)
+    with Session() as db:
+        for index, status in enumerate(statuses):
+            db.add(Store(
+                retailer="EDEKA",
+                name=f"Daily {index} {status}",
+                postal_code=str(index),
+                city="Test",
+                address=f"Test {index}",
+                active=True,
+                benchmark_verified=True,
+                external_id=f"daily-{index}",
+            ))
+        db.commit()
+
+    monkeypatch.setattr(scheduler, "SessionLocal", Session)
+
+    def collect(session, store, **kwargs):
+        status = store.name.rsplit(" ", 1)[-1]
+        run = CollectionRun(
+            store_id=store.id,
+            source_key="test:daily-accounting",
+            status=status,
+            message=f"{status} detail" if status != "success" else None,
+            offers_received=1,
+            offers_imported=1 if status in {"success", "warning"} else 0,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return {}, ImportSummary(received=1, imported=run.offers_imported), run
+
+    monkeypatch.setattr(scheduler, "collect_edeka_web_for_store", collect)
+    scheduler.run_verified_market_collection()
+    with Session() as db:
+        return db.query(DailyCollectionRun).one()
+
+
+def test_daily_run_accounting_counts_warning_as_success_and_blocker_wins(monkeypatch):
+    daily = _run_daily_outcomes(monkeypatch, ["success", "warning", "blocked", "failed"])
+    assert daily.stores_planned == 4
+    assert daily.stores_succeeded == 2
+    assert daily.stores_blocked == 1
+    assert daily.stores_failed == 1
+    assert daily.stores_planned == daily.stores_succeeded + daily.stores_blocked + daily.stores_failed
+    assert daily.status == "blocked"
+    assert "warning detail" in daily.warnings_json
+
+
+def test_daily_run_warning_only_is_complete_and_sets_warning_status(monkeypatch):
+    daily = _run_daily_outcomes(monkeypatch, ["success", "warning"])
+    assert daily.stores_planned == 2
+    assert daily.stores_succeeded == 2
+    assert daily.stores_blocked == 0
+    assert daily.stores_failed == 0
+    assert daily.stores_planned == daily.stores_succeeded + daily.stores_blocked + daily.stores_failed
+    assert daily.status == "warning"

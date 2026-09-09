@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.api_routes import _price_payload
+from app.bootstrap_routes import _price_rows
 from app.clock import app_today
 from app.db import Base, SessionLocal, engine
 from app.lokero_models import NormalPriceObservation
@@ -52,20 +55,45 @@ def _setup_offer(*, price=0.49):
     return db, offer
 
 
-def test_price_payload_exposes_explicit_reference_and_discount():
+def test_price_payload_exposes_defensible_retailer_reference_and_discount():
     db, offer = _setup_offer(price=1.49)
     db.add(OfferPriceReference(
         offer_id=offer.id,
         reference_price=1.99,
-        reference_type="regular",
+        reference_type="retailer_regular",
         discount_percent=25.1,
     ))
     db.commit()
     payload = _price_payload(offer, db)
+    bootstrap_payload = _price_rows(db, [offer])[0]
     assert payload["referencePrice"] == 1.99
-    assert payload["referenceType"] == "regular"
+    assert payload["referenceType"] == "retailer_regular"
     assert payload["referencePriceEstimated"] is False
     assert payload["discountPercent"] == 25.1
+    assert bootstrap_payload["referencePriceEstimated"] is False
+    assert bootstrap_payload["discountPercent"] == 25.1
+    db.close()
+
+
+@pytest.mark.parametrize("reference_type", ["regular", "uvp", "rrp", "was_price"])
+def test_price_payload_does_not_claim_advertised_reference_as_real_saving(reference_type):
+    db, offer = _setup_offer(price=1.49)
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type=reference_type,
+        discount_percent=25.1,
+    ))
+    db.commit()
+
+    payload = _price_payload(offer, db)
+    bootstrap_payload = _price_rows(db, [offer])[0]
+    assert payload["referencePrice"] == 1.99
+    assert payload["referenceType"] == reference_type
+    assert payload["referencePriceEstimated"] is True
+    assert payload["discountPercent"] is None
+    assert bootstrap_payload["referencePriceEstimated"] is True
+    assert bootstrap_payload["discountPercent"] is None
     db.close()
 
 
@@ -180,11 +208,62 @@ def test_bulk_reference_price_preserves_scalar_priority_and_payload():
     db.add(OfferPriceReference(
         offer_id=offer.id,
         reference_price=1.99,
-        reference_type="regular",
+        reference_type="retailer_regular",
         discount_percent=25.1,
     ))
     db.commit()
     scalar = reference_price_for_offer(db, offer)
     assert reference_prices_for_offers(db, [offer])[offer.id] == scalar
-    assert scalar["source"] == "regular"
+    assert scalar["source"] == "retailer_regular"
+    db.close()
+
+
+def test_retailer_regular_is_confirmed_real_discount_in_single_and_batch():
+    db, offer = _setup_offer(price=1.49)
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type="retailer_regular",
+        discount_percent=25.1,
+    ))
+    db.commit()
+
+    scalar = reference_price_for_offer(db, offer)
+    assert reference_prices_for_offers(db, [offer])[offer.id] == scalar
+    assert scalar == {
+        "regularPrice": 1.99,
+        "source": "retailer_regular",
+        "estimated": False,
+        "discountPercent": 25.1,
+        "isRealDiscount": True,
+        "status": "confirmed",
+    }
+    db.close()
+
+
+@pytest.mark.parametrize("reference_type", ["uvp", "rrp", "was_price", "regular"])
+def test_advertised_reference_is_never_confirmed_in_single_or_batch(reference_type):
+    db, offer = _setup_offer(price=1.49)
+    db.query(NormalPriceObservation).filter(
+        NormalPriceObservation.master_product_id == offer.master_product_id,
+    ).delete(synchronize_session=False)
+    db.add(OfferPriceReference(
+        offer_id=offer.id,
+        reference_price=1.99,
+        reference_type=reference_type,
+        discount_percent=25.1,
+    ))
+    db.commit()
+
+    scalar = reference_price_for_offer(db, offer)
+    assert reference_prices_for_offers(db, [offer])[offer.id] == scalar
+    assert scalar["regularPrice"] == 1.99
+    assert scalar["source"] == reference_type
+    assert scalar["estimated"] is True
+    assert scalar["discountPercent"] is None
+    assert scalar["isRealDiscount"] is False
+    assert scalar["status"] == "advertised_reference"
+    assert db.query(NormalPriceObservation).filter(
+        NormalPriceObservation.master_product_id == offer.master_product_id,
+    ).count() == 0
     db.close()

@@ -8,11 +8,42 @@ from sqlalchemy.orm import Session
 from .lokero_models import NormalPriceObservation
 from .models import Offer, OfferPriceReference
 
-EXPLICIT_REFERENCE_TYPES = {"regular", "uvp", "rrp", "was_price", "retailer_regular"}
 # Only this explicit provenance asserts that the value was actually observed as
 # the retailer's non-promotional shelf price. UVP/RRP/"statt" remain advertised
 # comparison facts and must never seed normal-price history.
 DEFENSIBLE_NORMAL_REFERENCE_TYPES = {"retailer_regular"}
+ADVERTISED_REFERENCE_TYPES = {"regular", "uvp", "rrp", "was_price"}
+
+
+def reference_type_is_defensible(reference_type: str | None) -> bool:
+    """Whether an explicit reference proves an observed retailer normal price."""
+    return (reference_type or "").strip().lower() in DEFENSIBLE_NORMAL_REFERENCE_TYPES
+
+
+def _explicit_reference_payload(offer: Offer, explicit: OfferPriceReference) -> dict:
+    ref = float(explicit.reference_price)
+    reference_type = (explicit.reference_type or "").strip().lower()
+    if reference_type_is_defensible(reference_type):
+        discount = ((ref - float(offer.price)) / ref * 100.0) if ref > float(offer.price) else 0.0
+        return {
+            "regularPrice": round(ref, 2),
+            "source": reference_type,
+            "estimated": False,
+            "discountPercent": round(max(0.0, discount), 1),
+            "isRealDiscount": ref > float(offer.price) + 0.004,
+            "status": "confirmed",
+        }
+
+    # Preserve advertised comparison-price provenance for display without
+    # promoting it to an observed normal price or a defensible saving.
+    return {
+        "regularPrice": round(ref, 2),
+        "source": reference_type,
+        "estimated": True,
+        "discountPercent": None,
+        "isRealDiscount": False,
+        "status": "advertised_reference" if reference_type in ADVERTISED_REFERENCE_TYPES else "estimated",
+    }
 
 
 def _defensible_normal_rows(rows: list[NormalPriceObservation]) -> list[NormalPriceObservation]:
@@ -66,16 +97,7 @@ def reference_price_for_offer(db: Session, offer: Offer) -> dict:
         .first()
     )
     if explicit and explicit.reference_price > 0:
-        ref = float(explicit.reference_price)
-        discount = ((ref - float(offer.price)) / ref * 100.0) if ref > float(offer.price) else 0.0
-        return {
-            "regularPrice": round(ref, 2),
-            "source": explicit.reference_type,
-            "estimated": explicit.reference_type not in EXPLICIT_REFERENCE_TYPES,
-            "discountPercent": round(max(0.0, discount), 1),
-            "isRealDiscount": ref > float(offer.price) + 0.004,
-            "status": "confirmed" if explicit.reference_type in EXPLICIT_REFERENCE_TYPES else "estimated",
-        }
+        return _explicit_reference_payload(offer, explicit)
 
     cutoff = datetime.utcnow() - timedelta(days=120)
     q = db.query(NormalPriceObservation).filter(
@@ -158,16 +180,7 @@ def reference_prices_for_offers(db: Session, offers: list[Offer]) -> dict[int, d
     for offer in offers:
         explicit = explicit_by_offer.get(offer.id)
         if explicit and explicit.reference_price > 0:
-            ref = float(explicit.reference_price)
-            discount = ((ref - float(offer.price)) / ref * 100.0) if ref > float(offer.price) else 0.0
-            result[offer.id] = {
-                "regularPrice": round(ref, 2),
-                "source": explicit.reference_type,
-                "estimated": explicit.reference_type not in EXPLICIT_REFERENCE_TYPES,
-                "discountPercent": round(max(0.0, discount), 1),
-                "isRealDiscount": ref > float(offer.price) + 0.004,
-                "status": "confirmed" if explicit.reference_type in EXPLICIT_REFERENCE_TYPES else "estimated",
-            }
+            result[offer.id] = _explicit_reference_payload(offer, explicit)
             continue
         values = by_store.get((offer.master_product_id, offer.store_id), [])
         source = "store_history"

@@ -52,6 +52,8 @@ Collector-Offerpreise werden ausschließlich als `PROMOTION`, `MULTIBUY` oder `C
 
 Keiner dieser Werte erzeugt automatisch eine `NormalPriceObservation`. Der bestehende Backfill akzeptiert nur noch den expliziten Provenance-Typ `retailer_regular`; historische `offer_ref:uvp`, `offer_ref:rrp`, `offer_ref:regular` und `offer_ref:was_price` werden bei der Normalpreisauflösung nicht verwendet. Existiert keine belastbare Beobachtung, bleibt der Status `unknown`. Bestehende Offer-Reference-Payloads und Badges bleiben lesbar.
 
+Auch bei der Badge-/API-Auflösung gilt dieselbe Grenze: Nur `retailer_regular` darf als `confirmed` mit `isRealDiscount=true` ausgegeben werden. `uvp`, `rrp`, `was_price` und das nicht näher belegte `regular` bleiben sichtbare beworbene Referenzen mit `status=advertised_reference`, `estimated=true` und ohne belastbaren Discount-Prozentwert. Single- und Batch-Auflösung verwenden dafür dieselbe Klassifizierungsfunktion.
+
 ## Daily Run Flow und Collapse Guard
 
 1. Der Scheduler lädt nur aktive und `benchmark_verified` physische Märkte und kollabiert Aliase mit der bestehenden Identitätslogik.
@@ -61,6 +63,8 @@ Keiner dieser Werte erzeugt automatisch eine `NormalPriceObservation`. Der beste
 5. Der strengere Zustand aus historischem Guard und vorhandenem retailer-spezifischem Floor gewinnt.
 6. `blocked` beendet den Lauf vor Offer-/Produkt-/Preis-Persistenz. Vorhandene produktive Daten werden nicht ersetzt oder gelöscht. Die Diagnose ist deterministisch, z. B. `offer_count_collapse: 21 vs recent median 178`.
 7. Eine Markt-Exception wird protokolliert; weitere Märkte laufen weiter.
+
+Ein Markt-Run mit Status `warning` gilt im Daily Accounting als erfolgreich gesammelt und wird deshalb in `stores_succeeded` gezählt; die Warnung bleibt zusätzlich in `warnings_json` und setzt den Daily Status auf `warning`. Damit gilt nach einem vollständig beendeten Lauf `stores_planned = stores_succeeded + stores_failed + stores_blocked`. Unbekannte Collector-Endzustände werden sichtbar als fehlgeschlagen klassifiziert statt aus der Bilanz zu fallen.
 
 ## Admin Data Operations
 
@@ -80,4 +84,8 @@ Das Production Schema Gate wird absichtlich nicht pauschal gelockert. Vor einem 
 
 ## Bekannte Grenzen und BR-1B
 
-BR-1A sammelt belastbare Fakten, baut aber noch keine 30-/90-/180-Tage-Deal-Score-Engine. Match Rate verwendet die bestehende Import-/Match-Semantik; ein dedizierter probabilistischer Matcher bleibt Review-only. BR-1B sollte historische Quellen backfillen, Normalpreis-Beobachtungsquellen explizit zulassen, per-Run Detailseiten und persistente Review-Acknowledgements ergänzen und anschließend robuste Zeitfensterstatistiken vorbereiten.
+BR-1A sammelt belastbare Fakten, baut aber noch keine 30-/90-/180-Tage-Deal-Score-Engine. Match Rate verwendet die bestehende Import-/Match-Semantik; ein dedizierter probabilistischer Matcher bleibt Review-only.
+
+Die aktuelle `SourceProduct.identity_key`-Definition enthält `store_id`. Ob ein Händlerprodukt künftig retailerweit, sourceweit oder storegebunden identifiziert werden soll, ist eine bewusste Modellierungsentscheidung für **BR-1B Master Product Database V2**. BR-1A verändert diese Identität und die bestehende Migration ausdrücklich nicht.
+
+BR-1B sollte diese Identitätsentscheidung treffen, historische Quellen backfillen, Normalpreis-Beobachtungsquellen explizit zulassen, per-Run Detailseiten und persistente Review-Acknowledgements ergänzen und anschließend robuste Zeitfensterstatistiken vorbereiten.

@@ -13,6 +13,7 @@ from .models import (
     ProductBarcode,
     ShoppingItem,
 )
+from .normal_prices import reference_type_is_defensible
 from .product_media import preferred_product_media_map
 from .promotion_rules import parse_multibuy, promotion_payload
 from .services import current_user, favorite_and_selected_store_ids
@@ -76,6 +77,9 @@ def _price_rows(db: Session, offers) -> list[dict]:
     for offer in offers:
         reference = references.get(offer.id)
         occurrence = occurrences.get(offer.id)
+        reference_is_defensible = bool(
+            reference and reference_type_is_defensible(reference.reference_type)
+        )
         payload = {
             "productId": str(offer.master_product_id),
             "marketId": str(offer.store_id),
@@ -87,8 +91,12 @@ def _price_rows(db: Session, offers) -> list[dict]:
             "unitPriceUnit": offer.unit_price_unit,
             "referencePrice": float(reference.reference_price) if reference else None,
             "referenceType": reference.reference_type if reference else None,
-            "referencePriceEstimated": bool(reference and reference.reference_type == "inferred_discount"),
-            "discountPercent": float(reference.discount_percent) if reference and reference.discount_percent is not None else None,
+            "referencePriceEstimated": bool(reference and not reference_is_defensible),
+            "discountPercent": (
+                float(reference.discount_percent)
+                if reference_is_defensible and reference.discount_percent is not None
+                else None
+            ),
             "promotion": None,
         }
         promotion = parse_multibuy(

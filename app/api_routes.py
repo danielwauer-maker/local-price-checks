@@ -24,6 +24,7 @@ from .models import (
     Store,
 )
 from .market_activation import store_is_public
+from .normal_prices import reference_type_is_defensible
 from .optimizer import optimize_shopping
 from .product_media import preferred_product_media, preferred_product_media_map
 from .product_search import search_products
@@ -256,11 +257,14 @@ def _price_payload(offer: Offer, db: Session | None = None) -> dict:
 
     reference = db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).first()
     if reference:
+        reference_is_defensible = reference_type_is_defensible(reference.reference_type)
         payload["referencePrice"] = float(reference.reference_price)
         payload["referenceType"] = reference.reference_type
-        payload["referencePriceEstimated"] = reference.reference_type == "inferred_discount"
+        payload["referencePriceEstimated"] = not reference_is_defensible
         payload["discountPercent"] = (
-            float(reference.discount_percent) if reference.discount_percent is not None else None
+            float(reference.discount_percent)
+            if reference_is_defensible and reference.discount_percent is not None
+            else None
         )
 
     occurrence = (

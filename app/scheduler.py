@@ -45,6 +45,7 @@ def run_verified_market_collection() -> dict[str, str]:
         daily.stores_planned = len(stores)
         run_ids: list[int] = []
         summaries = []
+        store_outcomes: list[str] = []
         warnings: list[str] = []
         blockers: list[str] = []
         for store in stores:
@@ -65,11 +66,18 @@ def run_verified_market_collection() -> dict[str, str]:
                 summaries.append(summary)
                 results[store.name] = f"{run.status}:{summary.imported}"
                 if run.status == "blocked":
+                    store_outcomes.append("blocked")
                     blockers.append(f"{store.name}: {run.message or 'collector blocked'}")
-                elif run.status != "success":
+                elif run.status in {"success", "warning"}:
+                    store_outcomes.append("succeeded")
+                    if run.status == "warning":
+                        warnings.append(f"{store.name}: {run.status} {run.message or ''}".strip())
+                else:
+                    store_outcomes.append("failed")
                     warnings.append(f"{store.name}: {run.status} {run.message or ''}".strip())
             except Exception as exc:
                 results[store.name] = f"failed:{type(exc).__name__}"
+                store_outcomes.append("failed")
                 warnings.append(f"{store.name}: {type(exc).__name__}: {exc}")
 
         snapshots = (
@@ -84,9 +92,9 @@ def run_verified_market_collection() -> dict[str, str]:
             .group_by(PriceObservation.price_type).all()
         ) if run_ids else {}
         daily.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        daily.stores_succeeded = sum(1 for value in results.values() if value.startswith("success:"))
-        daily.stores_blocked = sum(1 for value in results.values() if value.startswith("blocked:"))
-        daily.stores_failed = sum(1 for value in results.values() if value.startswith("failed:"))
+        daily.stores_succeeded = store_outcomes.count("succeeded")
+        daily.stores_blocked = store_outcomes.count("blocked")
+        daily.stores_failed = store_outcomes.count("failed")
         daily.offers_observed = sum(summary.imported for summary in summaries)
         daily.products_created = sum(summary.created_products for summary in summaries)
         daily.price_observations = sum(observation_counts.values())
