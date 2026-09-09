@@ -126,6 +126,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^(migrations/versions/20260903_01_performance_indexes\.py|app/models\.py|app/lokero_models\.py)$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: performance read-path indexes."
+  elif grep -Fxq 'migrations/versions/20260909_01_br1a_data_steward.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(migrations/versions/20260909_01_br1a_data_steward\.py|app/data_operations_models\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled schema release recognized: BR-1A data steward + price observations."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
