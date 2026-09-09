@@ -59,3 +59,15 @@ jobs:
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd /opt/local-price-checks && git fetch --prune origin main && git show '${TARGET_SHA}:scripts/deploy-production.sh' > /tmp/local-price-checks-deploy.sh && chmod 700 /tmp/local-price-checks-deploy.sh && bash /tmp/local-price-checks-deploy.sh '$TARGET_SHA'"
+
+      - name: Report collection health details
+        if: steps.preflight.outputs.configured == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /opt/local-price-checks && docker compose exec -T app python -c 'from app.db import SessionLocal; from app.freshness import market_freshness; db=SessionLocal(); rows=market_freshness(db); problems=[r for r in rows if r[\"state\"] in {\"failed\", \"stale\"}]; print(\"COLLECTION_PROBLEM_COUNT\", len(problems)); [print(\"COLLECTION_PROBLEM\", \"store_id=\"+str(r[\"store\"].id), \"retailer=\"+str(r[\"store\"].retailer), \"name=\"+str(r[\"store\"].name), \"state=\"+str(r[\"state\"]), \"run_id=\"+str(r[\"run\"].id if r[\"run\"] else None), \"run_status=\"+str(r[\"run\"].status if r[\"run\"] else None), \"started_at=\"+str(r[\"run\"].started_at if r[\"run\"] else None), \"source_key=\"+str(r[\"run\"].source_key if r[\"run\"] else None)) for r in problems]; db.close()'"
