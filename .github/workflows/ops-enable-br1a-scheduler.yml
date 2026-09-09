@@ -1,0 +1,143 @@
+name: Ops enable BR-1A scheduler
+
+on:
+  push:
+    branches:
+      - ops/enable-br1a-scheduler
+    paths:
+      - .github/workflows/ops-enable-br1a-scheduler.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-ops
+  cancel-in-progress: false
+
+jobs:
+  enable-and-verify:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Enable scheduler, run once, and inspect production
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+          cd /opt/local-price-checks
+
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          cp .env ".env.pre-br1a-scheduler-${stamp}"
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.env')
+          lines = p.read_text().splitlines()
+          out = []
+          found = False
+          for line in lines:
+              if line.startswith('SCHEDULER_ENABLED='):
+                  out.append('SCHEDULER_ENABLED=true')
+                  found = True
+              else:
+                  out.append(line)
+          if not found:
+              out.append('SCHEDULER_ENABLED=true')
+          p.write_text('\n'.join(out) + '\n')
+          PY
+
+          echo 'Recreating backend with scheduler enabled...'
+          docker compose up -d --no-deps --force-recreate app
+
+          echo 'Waiting for scheduler-enabled health...'
+          for attempt in {1..30}; do
+            health="$(curl -fsS http://127.0.0.1:8083/health || true)"
+            if grep -q '"scheduler_enabled":true' <<<"$health"; then
+              echo "$health"
+              break
+            fi
+            if [[ "$attempt" == 30 ]]; then
+              echo "ERROR: scheduler did not become enabled"
+              echo "$health"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo 'Running verified market collection once...'
+          docker compose exec -T app python - <<'PY'
+          import json
+          from app.scheduler import run_verified_market_collection
+          result = run_verified_market_collection()
+          print('COLLECTION_RESULT=' + json.dumps(result, ensure_ascii=False, sort_keys=True))
+          PY
+
+          echo 'Reading BR-1A production diagnostics...'
+          docker compose exec -T app python - <<'PY'
+          from app.db import SessionLocal
+          from app.data_operations_models import DailyCollectionRun, PriceObservation, SourceProduct
+          from app.models import CollectionRun, Store
+
+          db = SessionLocal()
+          try:
+              daily = db.query(DailyCollectionRun).order_by(DailyCollectionRun.started_at.desc()).first()
+              print('PRICE_OBSERVATIONS_TOTAL=', db.query(PriceObservation).count())
+              print('SOURCE_PRODUCTS_TOTAL=', db.query(SourceProduct).count())
+              if daily is None:
+                  print('DAILY_RUN=None')
+              else:
+                  print('DAILY_RUN=', {
+                      'run_date': str(daily.run_date),
+                      'status': daily.status,
+                      'planned': daily.stores_planned,
+                      'succeeded': daily.stores_succeeded,
+                      'failed': daily.stores_failed,
+                      'blocked': daily.stores_blocked,
+                      'offers_observed': daily.offers_observed,
+                      'price_observations': daily.price_observations,
+                      'normal_price_observations': daily.normal_price_observations,
+                      'reference_prices': daily.reference_prices,
+                      'product_match_rate': daily.product_match_rate,
+                      'image_coverage': daily.image_coverage,
+                      'price_coverage': daily.price_coverage,
+                      'warnings': daily.warnings_json,
+                      'blockers': daily.blockers_json,
+                  })
+              recent = (
+                  db.query(CollectionRun, Store)
+                  .join(Store, Store.id == CollectionRun.store_id)
+                  .order_by(CollectionRun.started_at.desc())
+                  .limit(20)
+                  .all()
+              )
+              for run, store in recent:
+                  print('MARKET_RUN=', {
+                      'store': f'{store.retailer} | {store.name}',
+                      'status': run.status,
+                      'received': run.offers_received,
+                      'imported': run.offers_imported,
+                      'message': run.message,
+                  })
+          finally:
+              db.close()
+          PY
+
+          echo 'Final health:'
+          curl -fsS http://127.0.0.1:8083/health
+          echo
+          REMOTE
