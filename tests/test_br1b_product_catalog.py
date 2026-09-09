@@ -1,4 +1,6 @@
-from app.db import SessionLocal, engine
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from app.models import MasterProduct
 from app.product_catalog import (
     backfill_master_product_profiles,
@@ -10,15 +12,11 @@ from app.product_catalog import (
 from app.product_catalog_models import MasterProductProfile
 
 
-def _prepare_tables():
-    MasterProduct.__table__.create(bind=engine, checkfirst=True)
-    MasterProductProfile.__table__.create(bind=engine, checkfirst=True)
-
-
-def _clean(db):
-    db.query(MasterProductProfile).delete()
-    db.query(MasterProduct).delete()
-    db.commit()
+def _isolated_session():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    MasterProduct.__table__.create(bind=engine)
+    MasterProductProfile.__table__.create(bind=engine)
+    return sessionmaker(bind=engine, future=True)()
 
 
 def test_parse_simple_package_size_conservatively():
@@ -45,10 +43,8 @@ def test_parse_multipack_without_guessing_promotional_text():
 
 
 def test_profile_creation_is_idempotent_and_package_independent_family_key():
-    _prepare_tables()
-    db = SessionLocal()
+    db = _isolated_session()
     try:
-        _clean(db)
         product = MasterProduct(
             brand="Example",
             name="Haferdrink Natur",
@@ -76,10 +72,8 @@ def test_profile_creation_is_idempotent_and_package_independent_family_key():
 
 
 def test_verified_profile_is_not_overwritten_by_recurring_collection():
-    _prepare_tables()
-    db = SessionLocal()
+    db = _isolated_session()
     try:
-        _clean(db)
         product = MasterProduct(
             brand="Example",
             name="Joghurt Natur",
@@ -114,10 +108,8 @@ def test_verified_profile_is_not_overwritten_by_recurring_collection():
 
 
 def test_backfill_creates_only_missing_profiles_and_snapshot_is_stable():
-    _prepare_tables()
-    db = SessionLocal()
+    db = _isolated_session()
     try:
-        _clean(db)
         products = [
             MasterProduct(name="Milch 1,5%", package_size="1 l", normalized_key="milch 1 5|1l"),
             MasterProduct(name="Butter", package_size="250 g", normalized_key="butter|250g"),
