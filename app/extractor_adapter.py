@@ -18,6 +18,7 @@ from .engine_v140.offer_quality import evaluate_offer
 from .engine_v140.product_cleaning import clean_product_name
 from .engine_v140.lidl_semantics import has_strong_shop_signal
 from .engine_v140.services import classify_offer
+from .product_catalog import ensure_master_product_profile
 from .promotion_rules import (
     extract_discount_percent,
     has_multibuy_signal,
@@ -324,6 +325,12 @@ def import_collected_offers(
         if product and not product.brand and learned_brand:
             product.brand = learned_brand
         ensure_auto_category(db, product)
+        ensure_master_product_profile(
+            db,
+            product,
+            data_source="collector",
+            confidence=float(row.confidence or 0.0),
+        )
 
         offer = db.query(Offer).filter(
             Offer.store_id == store.id,
