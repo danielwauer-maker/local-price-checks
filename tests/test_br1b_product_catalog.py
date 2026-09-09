@@ -1,3 +1,8 @@
+import os
+import sqlite3
+import subprocess
+import sys
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -133,3 +138,39 @@ def test_backfill_creates_only_missing_profiles_and_snapshot_is_stable():
         assert 0.0 <= snapshot["completeness"] <= 1.0
     finally:
         db.close()
+
+
+def test_migration_backfills_existing_master_products(tmp_path):
+    target = tmp_path / "br1b-upgrade.sqlite3"
+    env = {**os.environ, "DATABASE_URL": f"sqlite:///{target.as_posix()}"}
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "20260909_01"],
+        check=True,
+        env=env,
+    )
+    with sqlite3.connect(target) as connection:
+        connection.execute(
+            """
+            INSERT INTO master_products (id, brand, name, package_size, normalized_key)
+            VALUES (77, 'Legacy', 'Legacy Butter', '250 g', 'legacy-butter|250g')
+            """
+        )
+        connection.commit()
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "20260909_02"],
+        check=True,
+        env=env,
+    )
+    with sqlite3.connect(target) as connection:
+        row = connection.execute(
+            """
+            SELECT master_product_id, canonical_name, verification_status,
+                   confidence, data_source, properties_json
+            FROM master_product_profiles
+            WHERE master_product_id = 77
+            """
+        ).fetchone()
+
+    assert row == (77, "Legacy Butter", "unverified", 0.0, "legacy_backfill", "{}")
