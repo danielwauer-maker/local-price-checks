@@ -9,18 +9,50 @@ from .db import Base
 from .models import CollectionRun, MasterProduct, Store
 
 
+class RetailerProduct(Base):
+    """Retailer-wide product identity backed only by strong identity evidence.
+
+    Store-specific source rows remain provenance. A RetailerProduct is created
+    only when the collector exposes evidence that is safe to reuse across a
+    retailer, such as a valid GTIN/EAN or an explicitly retailer-scoped ID.
+    """
+
+    __tablename__ = "retailer_products"
+    __table_args__ = (
+        UniqueConstraint("identity_key", name="uq_retailer_product_identity"),
+        Index("ix_retailer_products_master_retailer", "master_product_id", "retailer"),
+        Index("ix_retailer_products_identity", "retailer", "identity_type", "identity_value"),
+        Index("ix_retailer_products_status", "verification_status", "match_confidence"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), nullable=False, index=True)
+    retailer: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    identity_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    identity_value: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    identity_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(30), nullable=False, default="observed", index=True)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    master_product: Mapped[MasterProduct] = relationship()
+
+
 class SourceProduct(Base):
-    """Stable retailer/source identity mapped to Spareno's master catalogue."""
+    """Stable store/source provenance mapped to Spareno's master catalogue."""
 
     __tablename__ = "source_products"
     __table_args__ = (
         UniqueConstraint("identity_key", name="uq_source_product_identity"),
         Index("ix_source_products_master_retailer", "master_product_id", "retailer"),
         Index("ix_source_products_store_source", "store_id", "source_key"),
+        Index("ix_source_products_retailer_product", "retailer_product_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    retailer_product_id: Mapped[int | None] = mapped_column(ForeignKey("retailer_products.id"), nullable=True, index=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     retailer: Mapped[str] = mapped_column(String(80), index=True)
     source_key: Mapped[str] = mapped_column(String(160), index=True)
@@ -31,6 +63,7 @@ class SourceProduct(Base):
     last_observed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
     master_product: Mapped[MasterProduct] = relationship()
+    retailer_product: Mapped[RetailerProduct | None] = relationship()
     store: Mapped[Store] = relationship()
 
 
