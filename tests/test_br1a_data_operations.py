@@ -1,5 +1,6 @@
 import json
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -22,7 +23,8 @@ def test_data_operations_kpis_critical_first_and_bounded_queries():
     db.add_all([bad_run, good_run]); db.flush()
     product = MasterProduct(name="Produkt", normalized_key="br1a-dashboard")
     db.add(product); db.flush()
-    db.add(Offer(store_id=healthy.id, master_product_id=product.id, price=1.99, valid_from=date.today(), valid_to=date.today(), local_store_offer=True))
+    business_date = datetime.now(ZoneInfo("Europe/Berlin")).date()
+    db.add(Offer(store_id=healthy.id, master_product_id=product.id, price=1.99, valid_from=business_date, valid_to=business_date, local_store_offer=True))
     db.add_all([
         CollectionQualitySnapshot(run_id=bad_run.id, store_id=failed.id, retailer="REWE", run_status="blocked", quality_status="FAIL", benchmark_status="FAIL", benchmark_context="PRODUCTION", quality_score=0, metrics_json=json.dumps({"import_rate": 0})),
         CollectionQualitySnapshot(run_id=good_run.id, store_id=healthy.id, retailer="EDEKA", run_status="success", quality_status="PASS", benchmark_status="PASS", benchmark_context="PRODUCTION", quality_score=90, metrics_json=json.dumps({"import_rate": 100})),
