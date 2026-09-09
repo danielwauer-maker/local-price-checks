@@ -4,10 +4,10 @@ from dataclasses import dataclass
 import json
 import re
 from typing import Iterable
+import unicodedata
 
 from sqlalchemy.orm import Session
 
-from .extractor_adapter import normalize_master_key
 from .models import MasterProduct
 from .product_catalog_models import MasterProductProfile
 
@@ -57,8 +57,16 @@ def parse_package_size(value: str | None) -> PackageFacts:
     return PackageFacts(value=number, unit=unit, count=count, total_quantity=total, comparison_unit=comparison)
 
 
+def _fold_key(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value.casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = re.sub(r"[^a-z0-9äöüß+]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()[:320]
+
+
 def canonical_family_key(product: MasterProduct) -> str:
-    return normalize_master_key(" ".join(part for part in (product.brand, product.name) if part))
+    """Stable package-independent key used only for canonical family grouping."""
+    return _fold_key(" ".join(part for part in (product.brand, product.name) if part))
 
 
 def ensure_master_product_profile(
