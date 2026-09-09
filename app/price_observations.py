@@ -4,10 +4,11 @@ from datetime import datetime
 from enum import Enum
 import hashlib
 import json
+import re
 
 from sqlalchemy.orm import Session
 
-from .data_operations_models import PriceObservation, SourceProduct
+from .data_operations_models import PriceObservation, RetailerProduct, SourceProduct
 from .engine_v140.collectors import CollectedOffer
 from .models import MasterProduct, Offer, Store
 from .promotion_rules import has_multibuy_signal
@@ -36,6 +37,83 @@ def _external_product_id(row: CollectedOffer) -> str | None:
     return None
 
 
+def _valid_gtin(value: object) -> str | None:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) not in {8, 12, 13, 14}:
+        return None
+    body, expected = digits[:-1], int(digits[-1])
+    total = 0
+    for offset, digit in enumerate(reversed(body), start=1):
+        total += int(digit) * (3 if offset % 2 == 1 else 1)
+    check = (10 - (total % 10)) % 10
+    return digits if check == expected else None
+
+
+def _retailer_identity_evidence(row: CollectedOffer) -> tuple[str, str] | None:
+    """Return only evidence proven safe for retailer-wide identity.
+
+    Generic source IDs remain store/source provenance unless the collector
+    explicitly marks their scope as retailer-wide.
+    """
+    for name in ("gtin", "ean"):
+        gtin = _valid_gtin(getattr(row, name, None))
+        if gtin:
+            return "gtin", gtin
+
+    retailer_product_id = getattr(row, "retailer_product_id", None)
+    if retailer_product_id not in (None, ""):
+        return "retailer_product_id", str(retailer_product_id).strip()[:160]
+
+    scope = str(getattr(row, "external_product_scope", "") or "").casefold().strip()
+    external_id = getattr(row, "external_product_id", None)
+    if scope in {"retailer", "chain", "retailer_wide"} and external_id not in (None, ""):
+        return "retailer_product_id", str(external_id).strip()[:160]
+    return None
+
+
+def ensure_retailer_product(
+    db: Session,
+    *,
+    row: CollectedOffer,
+    store: Store,
+    product: MasterProduct,
+    observed_at: datetime,
+) -> RetailerProduct | None:
+    evidence = _retailer_identity_evidence(row)
+    if evidence is None:
+        return None
+    identity_type, identity_value = evidence
+    identity_key = _hash([str(store.retailer).casefold(), identity_type, identity_value])
+    retailer_product = db.query(RetailerProduct).filter_by(identity_key=identity_key).first()
+    confidence = max(0.0, min(float(row.confidence or 0.0), 1.0))
+    source_name = (row.product_name or product.name)[:240]
+    if retailer_product is None:
+        retailer_product = RetailerProduct(
+            master_product_id=product.id,
+            retailer=store.retailer,
+            identity_type=identity_type,
+            identity_value=identity_value,
+            identity_key=identity_key,
+            source_name=source_name,
+            verification_status="observed",
+            first_observed_at=observed_at,
+            last_observed_at=observed_at,
+            match_confidence=confidence,
+        )
+        db.add(retailer_product)
+        db.flush()
+        return retailer_product
+
+    # Strong identity pointing at a different canonical product is a conflict.
+    # Never silently remap historical or canonical identity in the collector.
+    if retailer_product.master_product_id != product.id:
+        return None
+    retailer_product.last_observed_at = observed_at
+    retailer_product.source_name = source_name
+    retailer_product.match_confidence = max(retailer_product.match_confidence or 0.0, confidence)
+    return retailer_product
+
+
 def ensure_source_product(
     db: Session, *, row: CollectedOffer, store: Store, product: MasterProduct, observed_at: datetime
 ) -> SourceProduct:
@@ -43,10 +121,14 @@ def ensure_source_product(
     identity_key = _hash([
         store.retailer, store.id, row.source_key, external_id or product.normalized_key,
     ])
+    retailer_product = ensure_retailer_product(
+        db, row=row, store=store, product=product, observed_at=observed_at
+    )
     source_product = db.query(SourceProduct).filter_by(identity_key=identity_key).first()
     if source_product is None:
         source_product = SourceProduct(
             master_product_id=product.id,
+            retailer_product_id=retailer_product.id if retailer_product else None,
             store_id=store.id,
             retailer=store.retailer,
             source_key=str(row.source_key)[:160],
@@ -63,6 +145,8 @@ def ensure_source_product(
         source_product.last_observed_at = observed_at
         source_product.source_name = (row.product_name or source_product.source_name)[:240]
         source_product.match_confidence = max(0.0, min(float(row.confidence or 0.0), 1.0))
+        if source_product.retailer_product_id is None and retailer_product is not None:
+            source_product.retailer_product_id = retailer_product.id
     return source_product
 
 
