@@ -9,6 +9,7 @@ from . import activity_models as activity_models
 from . import client_models as client_models
 from . import collection_quality as collection_quality
 from . import coverage_models as coverage_models
+from . import data_operations_models as data_operations_models
 from . import lokero_models as lokero_models
 from . import market_activation as market_activation
 from . import models as models

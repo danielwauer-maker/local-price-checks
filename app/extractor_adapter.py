@@ -37,6 +37,7 @@ class ImportSummary:
     rejected_quality: int = 0
     rejected_store: int = 0
     rejected_date: int = 0
+    price_observations: int = 0
 
 
 _LIDL_EXPLICIT_ONLINE_ONLY_PATTERNS = (
@@ -279,8 +280,13 @@ def assess_collected_offer(row: CollectedOffer) -> CollectedOfferAssessment:
     return CollectedOfferAssessment(True, None, details)
 
 
-def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSummary:
-    counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0}
+def import_collected_offers(
+    db: Session,
+    rows: list[CollectedOffer],
+    *,
+    collection_run_id: int | None = None,
+) -> ImportSummary:
+    counts = {"received": len(rows), "imported": 0, "created_products": 0, "created_offers": 0, "updated_offers": 0, "rejected_online": 0, "rejected_quality": 0, "rejected_store": 0, "rejected_date": 0, "price_observations": 0}
     brand_candidates = learned_brand_candidates(db)
     for row in rows:
         assessment = assess_collected_offer(row)
@@ -354,6 +360,16 @@ def import_collected_offers(db: Session, rows: list[CollectedOffer]) -> ImportSu
         _save_price_reference(db, offer, row)
         _save_offer_provenance(db, offer=offer, store=store, row=row, valid_from=valid_from, valid_to=valid_to)
         _save_offer_occurrence(db, offer, row, details)
+        from .price_observations import persist_offer_price_observations
+
+        counts["price_observations"] += persist_offer_price_observations(
+            db,
+            row=row,
+            offer=offer,
+            store=store,
+            product=product,
+            collection_run_id=collection_run_id,
+        )
         counts["imported"] += 1
 
     db.commit()

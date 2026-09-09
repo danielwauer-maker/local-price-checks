@@ -31,6 +31,12 @@ from app.web_offer_audit import (
 from app.web_offer_audit_models import WebOfferAuditItem, WebOfferAuditRun
 
 
+@pytest.fixture(autouse=True)
+def _freeze_fixture_week(monkeypatch):
+    """Keep the sanitized KW36 retailer fixtures independent of wall-clock time."""
+    monkeypatch.setattr(web_offer_audit, "app_today", lambda: date(2026, 9, 2))
+
+
 def _store(retailer="PENNY", external_id="4030882"):
     return Store(
         id=7,

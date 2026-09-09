@@ -9,6 +9,18 @@ from .lokero_models import NormalPriceObservation
 from .models import Offer, OfferPriceReference
 
 EXPLICIT_REFERENCE_TYPES = {"regular", "uvp", "rrp", "was_price", "retailer_regular"}
+# Only this explicit provenance asserts that the value was actually observed as
+# the retailer's non-promotional shelf price. UVP/RRP/"statt" remain advertised
+# comparison facts and must never seed normal-price history.
+DEFENSIBLE_NORMAL_REFERENCE_TYPES = {"retailer_regular"}
+
+
+def _defensible_normal_rows(rows: list[NormalPriceObservation]) -> list[NormalPriceObservation]:
+    return [
+        row for row in rows
+        if not (row.source or "").startswith("offer_ref:")
+        or (row.source or "").removeprefix("offer_ref:") in DEFENSIBLE_NORMAL_REFERENCE_TYPES
+    ]
 
 
 def add_normal_price_observation(
@@ -72,11 +84,15 @@ def reference_price_for_offer(db: Session, offer: Offer) -> dict:
         NormalPriceObservation.observed_at >= cutoff,
     )
 
-    store_rows = q.filter(NormalPriceObservation.store_id == offer.store_id).all()
+    store_rows = _defensible_normal_rows(
+        q.filter(NormalPriceObservation.store_id == offer.store_id).all()
+    )
     source = "store_history"
     rows = store_rows
     if not rows and offer.store is not None:
-        rows = q.filter(NormalPriceObservation.retailer == offer.store.retailer).all()
+        rows = _defensible_normal_rows(
+            q.filter(NormalPriceObservation.retailer == offer.store.retailer).all()
+        )
         source = "retailer_history"
 
     values = [float(row.price) for row in rows if row.price and row.price > 0]
@@ -130,7 +146,7 @@ def reference_prices_for_offers(db: Session, offers: list[Offer]) -> dict[int, d
     )
     by_store: dict[tuple[int, int], list[float]] = {}
     by_retailer: dict[tuple[int, str], list[float]] = {}
-    for row in observations:
+    for row in _defensible_normal_rows(observations):
         if not row.price or row.price <= 0:
             continue
         if row.store_id is not None:
@@ -191,7 +207,11 @@ def backfill_explicit_references(db: Session) -> int:
     rows = db.query(OfferPriceReference).all()
     for ref in rows:
         offer = ref.offer
-        if not offer or ref.reference_price <= 0 or ref.reference_type not in EXPLICIT_REFERENCE_TYPES:
+        if (
+            not offer
+            or ref.reference_price <= 0
+            or ref.reference_type not in DEFENSIBLE_NORMAL_REFERENCE_TYPES
+        ):
             continue
         exists = (
             db.query(NormalPriceObservation)
