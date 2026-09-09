@@ -294,7 +294,7 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
 @router.post("/admin/collector/run-all")
 def collector_run_all(actor: str = Depends(_admin)):
     results = run_verified_market_collection()
-    ok = sum(1 for value in results.values() if not value.startswith("failed:"))
+    ok = sum(1 for value in results.values() if value.startswith(("success:", "warning:")))
     return RedirectResponse(f"/admin/collector?collected=all:{ok}/{len(results)}", status_code=303)
 
 

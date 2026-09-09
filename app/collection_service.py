@@ -7,6 +7,7 @@ from typing import Callable, Protocol
 from sqlalchemy.orm import Session
 
 from .collection_quality import BenchmarkContext, persist_collection_quality
+from .collection_anomaly import CollapseAssessment, assess_offer_count
 from .extractor_adapter import ImportSummary, import_collected_offers
 from .models import CollectionRun, Store
 from .product_media import persist_collected_product_images
@@ -86,8 +87,25 @@ def _summary_message(summary: ImportSummary, images_saved: int = 0) -> str:
         f"markt={summary.rejected_store}, datum={summary.rejected_date}, "
         f"online={summary.rejected_online}, neuProdukte={summary.created_products}, "
         f"neuAngebote={summary.created_offers}, aktualisiert={summary.updated_offers}, "
-        f"bilder={images_saved}"
+        f"bilder={images_saved}, preisbeobachtungen={summary.price_observations}"
     )
+
+
+def _collapse_assessment(
+    db: Session,
+    *,
+    store: Store,
+    rows: list,
+    benchmark_context: BenchmarkContext | str,
+) -> CollapseAssessment:
+    context = BenchmarkContext.coerce(benchmark_context)
+    if context is not BenchmarkContext.PRODUCTION:
+        return CollapseAssessment("healthy", len(rows), None, None, None)
+    return assess_offer_count(db, store=store, candidate_count=len(rows))
+
+
+def _blocked_summary(rows: list) -> ImportSummary:
+    return ImportSummary(received=len(rows))
 
 
 def _persist_images_best_effort(db: Session, rows) -> int:
@@ -188,7 +206,19 @@ def collect_structured_for_store(
                 f"Collector-Lauf wurde extern beendet: run_status={run.status} {run.message or ''}"
             )
         rows = result.get("offers") or []
-        summary = import_collected_offers(db, rows)
+        collapse = _collapse_assessment(
+            db, store=store, rows=rows, benchmark_context=benchmark_context
+        )
+        if collapse.state == "blocked":
+            summary = _blocked_summary(rows)
+            quality_diagnostic = _record_collection_quality(
+                db, store=store, run=run, rows=rows, summary=summary,
+                images_saved=0, status="blocked", benchmark_context=benchmark_context,
+            )
+            message = " | ".join(part for part in (collapse.reason, quality_diagnostic) if part)
+            _finish_run(db, run, "blocked", len(rows), 0, message[:1800])
+            return result, summary, run
+        summary = import_collected_offers(db, rows, collection_run_id=run.id)
         images_saved = _persist_images_best_effort(db, rows)
         if artifact_handler and not artifact_failed:
             try:
@@ -202,6 +232,8 @@ def collect_structured_for_store(
                     f"artifact_status=FAIL archive_created=true error={type(exc).__name__}: {exc}"
                 )
         collector_warning = str(result.get("technical_warning") or "").strip()
+        if collapse.state == "warning" and collapse.reason:
+            collector_warning = " | ".join(part for part in (collector_warning, collapse.reason) if part)
         if artifact_failed or collector_warning:
             status = "warning" if summary.imported else "failed"
         else:
@@ -258,9 +290,27 @@ def collect_pdf_for_store(
                     if prospect.valid_to:
                         row.valid_to = prospect.valid_to.strftime("%d.%m.%Y")
                     row.source_url = prospect.source_url
-        summary: ImportSummary = import_collected_offers(db, parsed.rows)
+        rows = list(parsed.rows)
+        collapse = _collapse_assessment(
+            db, store=store, rows=rows, benchmark_context=benchmark_context
+        )
+        if collapse.state == "blocked":
+            summary = _blocked_summary(rows)
+            quality_diagnostic = _record_collection_quality(
+                db, store=store, run=run, rows=rows, summary=summary,
+                images_saved=0, status="blocked", benchmark_context=benchmark_context,
+            )
+            _finish_run(
+                db, run, "blocked", len(rows), 0,
+                " | ".join(part for part in (collapse.reason, quality_diagnostic) if part)[:1800],
+            )
+            return parsed, summary, run
+        summary: ImportSummary = import_collected_offers(
+            db, rows, collection_run_id=run.id
+        )
         images_saved = _persist_images_best_effort(db, parsed.rows)
-        if parsed.technical_warning:
+        collapse_warning = collapse.reason if collapse.state == "warning" else ""
+        if parsed.technical_warning or collapse_warning:
             status = "warning" if summary.imported else "failed"
         else:
             status = "success" if summary.imported else "no_offers"
@@ -287,6 +337,7 @@ def collect_pdf_for_store(
             part for part in (
                 notes,
                 parsed.technical_warning or "",
+                collapse_warning or "",
                 parser_diagnostic,
                 quality_diagnostic,
                 _summary_message(summary, images_saved),

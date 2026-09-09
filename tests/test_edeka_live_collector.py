@@ -8,6 +8,12 @@ from app.models import Store
 from app.web_offer_audit import WebAuditResult, WebOfferRecord
 
 
+@pytest.fixture(autouse=True)
+def _freeze_fixture_week(monkeypatch):
+    """Keep the controlled Fellenzer KW36 fixture independent of wall-clock time."""
+    monkeypatch.setattr(edeka_live_collector, "app_today", lambda: date(2026, 9, 2))
+
+
 def _store():
     return Store(
         id=20,

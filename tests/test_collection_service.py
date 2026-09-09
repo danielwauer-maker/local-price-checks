@@ -100,3 +100,31 @@ def test_partial_collector_timeout_with_imports_is_warning():
     assert "error_type=timeout phase=ocr_fallback" in run.message
     snapshot = db.query(CollectionQualitySnapshot).one()
     assert snapshot.run_status == "warning"
+
+
+def test_production_collapse_is_blocked_before_offer_persistence(monkeypatch):
+    db = _db(); store = _store(db)
+    for count in (178, 184, 172):
+        db.add(CollectionRun(store_id=store.id, source_key="history", status="success", offers_received=count, offers_imported=count))
+    db.commit()
+    rows = [
+        CollectedOffer(
+            source_key="rewe_dierdorf", store_name=store.name, retailer="REWE",
+            product_name=f"Collapse Produkt {index} 500 g", category="Sonstiges", price=1.99,
+            quantity=500, unit="g", valid_from="07.09.2026", valid_to="12.09.2026",
+            source_text="Prospektkarte", source_url="https://example.test/rewe", confidence=.99,
+        ) for index in range(21)
+    ]
+
+    class NoopArtifacts:
+        def archive_before_import(self, db, store, result): return None
+        def finalize_after_import(self, db, store, result, summary): return None
+
+    _, summary, run = service.collect_structured_for_store(
+        db, store.name, collector_fn=lambda source: {"offers": rows},
+        artifact_handler=NoopArtifacts(), benchmark_context="PRODUCTION",
+    )
+    assert run.status == "blocked"
+    assert summary.imported == 0
+    assert "offer_count_collapse: 21 vs recent median 178" in run.message
+    assert db.query(Offer).count() == 0
