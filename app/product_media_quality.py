@@ -30,8 +30,11 @@ _PLACEHOLDER_TOKENS = (
 def inspect_image(payload: bytes, source_hint: str | None, media_source: str) -> dict[str, object]:
     result: dict[str, object] = {
         "content_sha256": hashlib.sha256(payload).hexdigest(),
-        "width": None, "height": None, "image_format": None,
-        "aspect_ratio": None, "perceptual_hash": None,
+        "width": None,
+        "height": None,
+        "image_format": None,
+        "aspect_ratio": None,
+        "perceptual_hash": None,
     }
     path = "" if not source_hint or source_hint.startswith("prospect-crop:") else urlparse(source_hint).path.lower()
     filename = Path(path).stem
@@ -43,7 +46,8 @@ def inspect_image(payload: bytes, source_hint: str | None, media_source: str) ->
         with Image.open(BytesIO(payload)) as image:
             width, height = image.size
             result.update(
-                width=int(width), height=int(height),
+                width=int(width),
+                height=int(height),
                 image_format=(image.format or "").lower() or None,
                 aspect_ratio=round(width / height, 4) if height else None,
             )
@@ -56,8 +60,6 @@ def inspect_image(payload: bytes, source_hint: str | None, media_source: str) ->
                     value = (value << 1) | int(pixels[offset + col] > pixels[offset + col + 1])
             result["perceptual_hash"] = f"{value:016x}"
     except (UnidentifiedImageError, OSError, ValueError):
-        # Legacy fixtures can carry image MIME with minimal payloads. Review,
-        # not a decoder failure alone, owns the durable broken-image decision.
         pass
 
     score = SOURCE_QUALITY_BASE.get(media_source, 40)
@@ -72,6 +74,18 @@ def inspect_image(payload: bytes, source_hint: str | None, media_source: str) ->
         score = 0
     result["quality_score"] = max(0, min(100, int(score)))
     return result
+
+
+def _sync_asset_state(asset: MediaAsset, row: ProductMediaLibraryMetadata) -> None:
+    unusable = (
+        row.verification_status == "rejected"
+        or bool(row.is_broken)
+        or bool(row.is_placeholder)
+        or bool(row.is_logo)
+    )
+    asset.active = not unusable
+    if unusable:
+        asset.is_primary = False
 
 
 def upsert_library_metadata(
@@ -122,6 +136,7 @@ def upsert_library_metadata(
         if row.verification_status != "verified":
             row.is_placeholder = bool(quality["is_placeholder"])
             row.is_logo = bool(quality["is_logo"])
+    _sync_asset_state(asset, row)
     db.flush()
     return row
 
@@ -139,7 +154,9 @@ def library_metadata_map(db: Session, media_ids: list[int]) -> dict[int, Product
 def public_media_usable(row: ProductMediaLibraryMetadata | None) -> bool:
     return row is None or not (
         row.verification_status == "rejected"
-        or bool(row.is_broken) or bool(row.is_placeholder) or bool(row.is_logo)
+        or bool(row.is_broken)
+        or bool(row.is_placeholder)
+        or bool(row.is_logo)
     )
 
 
@@ -171,5 +188,6 @@ def review_library_metadata(
     row.reviewed_at = datetime.utcnow()
     if normalized == "rejected" or row.is_broken or row.is_placeholder or row.is_logo:
         row.manual_preferred = False
+    _sync_asset_state(asset, row)
     db.flush()
     return row
