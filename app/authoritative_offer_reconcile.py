@@ -29,17 +29,16 @@ def _physical_store_ids(db: Session, store: Store) -> list[int]:
     return [row.id for row in rows if mapping.get(row.id, row).id == canonical.id]
 
 
-def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list) -> int:
+def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list) -> int | None:
     """Deactivate stale current REWE offers after one complete authoritative snapshot.
 
-    This is deliberately conservative: callers must only invoke it after a
-    technically clean production collection whose rows were all admitted.  No
-    offer, occurrence or provenance row is deleted.  Offers absent from the
-    fresh snapshot are merely marked ``local_store_offer=False`` and are
-    automatically reactivated by the normal importer if they reappear later.
+    ``None`` means reconciliation could not be proven safe and was therefore
+    aborted.  No offer, occurrence or provenance row is deleted.  Offers absent
+    from a proven fresh snapshot are only marked ``local_store_offer=False``;
+    the normal importer reactivates them if they appear again later.
     """
     if store.retailer != "REWE" or not rows:
-        return 0
+        return None
 
     store_ids = _physical_store_ids(db, store)
     active_offer_ids: set[int] = set()
@@ -51,7 +50,7 @@ def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list)
         price = getattr(row, "price", None)
         name = clean_product_name(getattr(row, "product_name", "") or "")
         if not valid_from or not valid_to or valid_to < valid_from or price is None or not name:
-            return 0
+            return None
 
         periods.add((valid_from, valid_to))
         key = normalize_master_key(name, getattr(row, "quantity", None), getattr(row, "unit", None))
@@ -59,10 +58,7 @@ def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list)
         if not product:
             product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         if not product:
-            # The import immediately preceding reconciliation should have
-            # created/resolved every admitted product.  Missing identity means
-            # we cannot prove snapshot completeness, so fail closed.
-            return 0
+            return None
 
         matches = (
             db.query(Offer)
@@ -76,11 +72,11 @@ def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list)
             .all()
         )
         if not matches:
-            return 0
+            return None
         active_offer_ids.update(offer.id for offer in matches)
 
     if not active_offer_ids or not periods:
-        return 0
+        return None
 
     stale: list[Offer] = []
     for valid_from, valid_to in periods:
@@ -102,3 +98,38 @@ def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list)
     if unique:
         db.commit()
     return len(unique)
+
+
+def reconcile_completed_rewe_collection(db: Session, store: Store, result: dict, summary, run) -> int | None:
+    """Reconcile only a fully admitted, technically successful REWE collection.
+
+    Any rejection, warning, empty/partial source, or unresolved identity leaves
+    production untouched.  A reconciliation safety failure downgrades the run
+    to warning so it cannot silently masquerade as an authoritative success.
+    """
+    if store.retailer != "REWE" or run.status != "success":
+        return None
+    rows = list(result.get("offers") or [])
+    rejected = (
+        int(summary.rejected_online)
+        + int(summary.rejected_quality)
+        + int(summary.rejected_store)
+        + int(summary.rejected_date)
+    )
+    if not rows or summary.imported != len(rows) or rejected:
+        return None
+
+    reconciled = reconcile_rewe_authoritative_snapshot(db, store, rows)
+    if reconciled is None:
+        run.status = "warning"
+        run.message = " | ".join(
+            part for part in (run.message or "", "authoritative_reconcile=ABORTED_FAIL_CLOSED") if part
+        )[:1800]
+        db.commit()
+        return None
+
+    run.message = " | ".join(
+        part for part in (run.message or "", f"authoritative_reconciled_inactive={reconciled}") if part
+    )[:1800]
+    db.commit()
+    return reconciled
