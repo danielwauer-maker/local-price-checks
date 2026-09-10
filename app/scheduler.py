@@ -57,11 +57,15 @@ def run_verified_market_collection() -> dict[str, str]:
                         benchmark_context=BenchmarkContext.PRODUCTION,
                     )
                 else:
-                    _, summary, run = collect_store_from_web(
+                    result, summary, run = collect_store_from_web(
                         db,
                         store.name,
                         benchmark_context=BenchmarkContext.PRODUCTION,
                     )
+                    if store.retailer == "REWE":
+                        from .authoritative_offer_reconcile import reconcile_completed_rewe_collection
+
+                        reconcile_completed_rewe_collection(db, store, result, summary, run)
                 run_ids.append(run.id)
                 summaries.append(summary)
                 results[store.name] = f"{run.status}:{summary.imported}"
