@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Produktbilder prüfen · Spareno Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#a33b2c;--warn:#9a5a00}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1800px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:850}.sub,.small{color:var(--muted)}
+    .stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:16px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 6px 22px rgba(20,40,28,.04)}.stat{padding:13px}.stat b{display:block;font-size:22px}.filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr)) auto;gap:8px;align-items:end;padding:14px;margin-top:14px}.filters input,.filters select,.review-form input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fff}.btn{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff;color:var(--text);font-weight:750;cursor:pointer;text-decoration:none}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.btn.good{background:#e5f4e9;color:#0c6640}.btn.bad{background:#fae9e6;color:var(--danger)}
+    .queue{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.item{padding:14px;display:grid;grid-template-columns:180px minmax(0,1fr);gap:14px}.preview{width:180px;height:180px;object-fit:contain;background:#f3f4ef;border:1px solid var(--line);border-radius:12px}.title{font-size:16px;font-weight:800}.meta{display:flex;gap:6px;flex-wrap:wrap;margin:7px 0}.pill{padding:3px 7px;border-radius:999px;background:#edf1ed;font-size:11px}.pill.good{background:#def5e6;color:#086b43}.pill.bad{background:#fae9e6;color:var(--danger)}.pill.warn{background:#fff0cf;color:var(--warn)}.source{word-break:break-word}.review-form{margin-top:9px;padding-top:9px;border-top:1px solid var(--line)}.checks{display:flex;gap:10px;flex-wrap:wrap;margin:7px 0}.checks label{display:flex;gap:4px;align-items:center}.checks input{width:auto}.actions{display:flex;gap:6px;flex-wrap:wrap}.empty{padding:30px;text-align:center;margin-top:14px}
+    @media(max-width:1100px){.queue{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.item{grid-template-columns:1fr}.preview{width:100%;height:240px}.filters,.stats{grid-template-columns:1fr 1fr}.top{flex-direction:column}}
+  </style>
+</head>
+<body>{% include 'admin_sidebar.html' %}<div class="wrap">
+  <div class="top"><div><div class="brand">Produktbilder prüfen</div><div class="sub">Qualitäts-Queue für Produktbilder · falsches Bild ist kritischer als fehlendes Bild</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+
+  <div class="stats">
+    <a class="stat" href="/admin/product-media-review?status=all"><span class="small">Gesamt</span><b>{{ counts.total }}</b></a>
+    <a class="stat" href="/admin/product-media-review?status=unreviewed"><span class="small">Ungeprüft</span><b>{{ counts.unreviewed }}</b></a>
+    <a class="stat" href="/admin/product-media-review?status=verified"><span class="small">Verifiziert</span><b>{{ counts.verified }}</b></a>
+    <a class="stat" href="/admin/product-media-review?status=rejected"><span class="small">Abgelehnt</span><b>{{ counts.rejected }}</b></a>
+    <a class="stat" href="/admin/product-media-review?status=all&issue=flagged"><span class="small">Technisch auffällig</span><b>{{ counts.flagged }}</b></a>
+  </div>
+
+  <form class="card filters" method="get">
+    <label>Artikel suchen<input name="q" value="{{ q }}" placeholder="Name oder Teil des Namens"></label>
+    <label>Review<select name="status"><option value="all" {% if status=='all' %}selected{% endif %}>Alle</option><option value="unreviewed" {% if status=='unreviewed' %}selected{% endif %}>Ungeprüft</option><option value="verified" {% if status=='verified' %}selected{% endif %}>Verifiziert</option><option value="rejected" {% if status=='rejected' %}selected{% endif %}>Abgelehnt</option></select></label>
+    <label>Qualität<select name="issue"><option value="all" {% if issue=='all' %}selected{% endif %}>Alle</option><option value="flagged" {% if issue=='flagged' %}selected{% endif %}>Broken / Placeholder / Logo</option><option value="low_quality" {% if issue=='low_quality' %}selected{% endif %}>Quality Score &lt; 55</option></select></label>
+    <label>Max. Treffer<select name="limit">{% for n in [50,100,200,500] %}<option value="{{ n }}" {% if limit==n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
+    <button class="btn primary">Filtern</button>
+  </form>
+
+  {% set return_to = '/admin/product-media-review?q=' ~ (q|urlencode) ~ '&status=' ~ status ~ '&issue=' ~ issue ~ '&limit=' ~ limit %}
+  <div class="queue">
+  {% for item in items %}{% set a=item.asset %}{% set p=item.product %}{% set m=item.meta %}
+    <article class="card item">
+      <div><img class="preview" loading="lazy" src="/admin/product-media/{{ p.id }}/{{ a.id }}/preview" alt="Produktbild für {{ p.name }}"></div>
+      <div>
+        <div class="title">#{{ p.id }} · {{ p.name }}</div>
+        <div class="small">Media #{{ a.id }} · {{ a.retailer or (m.retailer if m else '') or 'ohne Händler' }}</div>
+        <div class="meta">
+          <span class="pill {% if (m.verification_status if m else 'unreviewed')=='verified' %}good{% elif (m.verification_status if m else 'unreviewed')=='rejected' %}bad{% else %}warn{% endif %}">{{ m.verification_status if m else 'unreviewed' }}</span>
+          {% if a.is_primary %}<span class="pill good">Primärbild</span>{% endif %}{% if m and m.manual_preferred %}<span class="pill good">Manuell bevorzugt</span>{% endif %}
+          {% if m and m.quality_score is not none %}<span class="pill {% if m.quality_score < 55 %}warn{% endif %}">Score {{ m.quality_score }}</span>{% endif %}
+          {% if m and m.width %}<span class="pill">{{ m.width }}×{{ m.height }}</span>{% endif %}
+          {% if m and m.is_broken %}<span class="pill bad">Broken</span>{% endif %}{% if m and m.is_placeholder %}<span class="pill bad">Placeholder</span>{% endif %}{% if m and m.is_logo %}<span class="pill bad">Logo</span>{% endif %}
+        </div>
+        <div class="small source">Quelle: {{ (m.source_name if m else none) or a.source_url or a.file_path or '–' }}</div>
+        {% if m and m.review_reason %}<div class="small">Review: {{ m.review_reason }}</div>{% endif %}
+
+        <form class="review-form" method="post" action="/admin/product-media-review/{{ p.id }}/{{ a.id }}/review">
+          <input type="hidden" name="return_to" value="{{ return_to }}">
+          <input name="reason" value="{{ m.review_reason if m and m.review_reason else '' }}" placeholder="Grund / Notiz, z. B. falsches Produkt">
+          <div class="checks"><label><input type="checkbox" name="is_broken" value="1" {% if m and m.is_broken %}checked{% endif %}> defekt</label><label><input type="checkbox" name="is_placeholder" value="1" {% if m and m.is_placeholder %}checked{% endif %}> Placeholder</label><label><input type="checkbox" name="is_logo" value="1" {% if m and m.is_logo %}checked{% endif %}> Logo</label></div>
+          <div class="actions"><button class="btn good" name="verification_status" value="verified">✓ Bild korrekt</button><button class="btn bad" name="verification_status" value="rejected">✕ Ablehnen</button><button class="btn" name="verification_status" value="unreviewed">Zurück auf ungeprüft</button></div>
+        </form>
+        {% if not (m and (m.verification_status=='rejected' or m.is_broken or m.is_placeholder or m.is_logo)) %}<form method="post" action="/admin/product-media-review/{{ p.id }}/{{ a.id }}/preferred" style="margin-top:7px"><input type="hidden" name="return_to" value="{{ return_to }}"><button class="btn primary">Als bevorzugtes Produktbild setzen</button></form>{% endif %}
+      </div>
+    </article>
+  {% else %}
+    <div class="card empty">Keine Produktbilder für diesen Filter gefunden.</div>
+  {% endfor %}
+  </div>
+</div></body></html>
