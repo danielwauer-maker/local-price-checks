@@ -54,6 +54,16 @@ def _physical_store_ids(db: Session, run: WebOfferAuditRun) -> tuple[int, ...]:
     return related or (run.store_id,)
 
 
+def _source_example(row: WebOfferAuditItem) -> str:
+    package = row.packaging_text or row.quantity or "ohne Packung"
+    return f"source#{row.id} {row.name} · {row.price:.2f} € · {package}" if row.price is not None else f"source#{row.id} {row.name} · {package}"
+
+
+def _production_example(offer: Offer, product: MasterProduct) -> str:
+    package = product.package_size or "ohne Packung"
+    return f"offer#{offer.id}/product#{product.id} {product.name} · {offer.price:.2f} € · {package}"
+
+
 def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[str, Any]:
     """Compare isolated retailer evidence with persisted production offers.
 
@@ -104,6 +114,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
     ]
 
     used_source_ids: set[int] = set()
+    used_production_offer_ids: set[int] = set()
     matched = 0
     exact_matches = 0
     price_match = 0
@@ -158,6 +169,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
             continue
 
         used_source_ids.add(match.id)
+        used_production_offer_ids.add(offer.id)
         matched += 1
         price_ok = match.price is not None and abs(match.price - offer.price) < 0.005
         if price_ok:
@@ -180,8 +192,10 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
 
     source_count = len(eligible_source)
     production_count = len(production_rows)
-    source_only = max(source_count - matched, 0)
-    production_only = max(production_count - matched, 0)
+    source_only_rows = [row for row in eligible_source if row.id not in used_source_ids]
+    production_only_rows = [(offer, product) for offer, product in production_rows if offer.id not in used_production_offer_ids]
+    source_only = len(source_only_rows)
+    production_only = len(production_only_rows)
     comparison_count = max(source_count, production_count)
     completeness_pct = _pct(matched, comparison_count)
     source_capture_pct = _pct(matched, source_count)
@@ -191,8 +205,15 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
     validity_accuracy_pct = _pct(validity_match, validity_verifiable)
     exact_accuracy_pct = _pct(exact_matches, comparison_count)
 
-    product_key_counts = Counter(_product_keys(product)[0] for _, product in production_rows)
-    production_duplicate_products = sum(count - 1 for count in product_key_counts.values() if count > 1)
+    products_by_key: dict[str, list[tuple[Offer, MasterProduct]]] = {}
+    for offer, product in production_rows:
+        products_by_key.setdefault(_product_keys(product)[0], []).append((offer, product))
+    production_duplicate_products = sum(len(rows) - 1 for rows in products_by_key.values() if len(rows) > 1)
+    duplicate_examples = [
+        " / ".join(_production_example(offer, product) for offer, product in rows[:3])
+        for rows in products_by_key.values()
+        if len(rows) > 1
+    ]
 
     beta_ready = bool(
         source_count > 0
@@ -215,6 +236,8 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_matched": matched,
         "accuracy_source_only": source_only,
         "accuracy_production_only": production_only,
+        "accuracy_source_only_examples": " | ".join(_source_example(row) for row in source_only_rows[:10]) or "–",
+        "accuracy_production_only_examples": " | ".join(_production_example(offer, product) for offer, product in production_only_rows[:10]) or "–",
         "accuracy_price_match": price_match,
         "accuracy_price_mismatch": price_mismatch,
         "accuracy_validity_match": validity_match,
@@ -223,6 +246,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_market_context_mismatch": source_context_mismatch,
         "accuracy_ambiguous_identity": ambiguous_identity,
         "accuracy_production_duplicate_products": production_duplicate_products,
+        "accuracy_production_duplicate_examples": " | ".join(duplicate_examples[:10]) or "–",
         "accuracy_completeness_pct": completeness_pct,
         "accuracy_source_capture_pct": source_capture_pct,
         "accuracy_production_capture_pct": production_capture_pct,
