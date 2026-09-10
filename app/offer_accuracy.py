@@ -61,6 +61,11 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
     merges offers/products. Production rows are evaluated across every Store
     alias that represents the audited physical market, so legacy duplicate
     Store ids cannot create false source-only findings.
+
+    Completeness is deliberately bidirectional: matching every row from a
+    truncated retailer audit is not enough when production contains many more
+    offers. This prevents a small/incomplete audit surface from reporting a
+    misleading 100% beta-readiness completeness score.
     """
     period_start, period_end = period_bounds(run.period_key)
     source_rows = [row for row in run.offers if row.valid]
@@ -177,11 +182,14 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
     production_count = len(production_rows)
     source_only = max(source_count - matched, 0)
     production_only = max(production_count - matched, 0)
-    completeness_pct = _pct(matched, source_count)
+    comparison_count = max(source_count, production_count)
+    completeness_pct = _pct(matched, comparison_count)
+    source_capture_pct = _pct(matched, source_count)
+    production_capture_pct = _pct(matched, production_count)
     price_accuracy_pct = _pct(price_match, matched)
     validity_verifiable = validity_match + validity_mismatch
     validity_accuracy_pct = _pct(validity_match, validity_verifiable)
-    exact_accuracy_pct = _pct(exact_matches, source_count)
+    exact_accuracy_pct = _pct(exact_matches, comparison_count)
 
     product_key_counts = Counter(_product_keys(product)[0] for _, product in production_rows)
     production_duplicate_products = sum(count - 1 for count in product_key_counts.values() if count > 1)
@@ -190,6 +198,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         source_count > 0
         and completeness_pct is not None
         and completeness_pct >= BETA_COMPLETENESS_THRESHOLD
+        and production_only == 0
         and price_accuracy_pct is not None
         and price_accuracy_pct >= BETA_PRICE_ACCURACY_THRESHOLD
         and validity_accuracy_pct is not None
@@ -215,6 +224,8 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_ambiguous_identity": ambiguous_identity,
         "accuracy_production_duplicate_products": production_duplicate_products,
         "accuracy_completeness_pct": completeness_pct,
+        "accuracy_source_capture_pct": source_capture_pct,
+        "accuracy_production_capture_pct": production_capture_pct,
         "accuracy_price_accuracy_pct": price_accuracy_pct,
         "accuracy_validity_accuracy_pct": validity_accuracy_pct,
         "accuracy_exact_pct": exact_accuracy_pct,
