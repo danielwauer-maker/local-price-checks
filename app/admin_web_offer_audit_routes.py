@@ -13,6 +13,7 @@ from .admin_routes import _admin
 from .db import get_db
 from .edeka_web_offer_audit_orchestrator import run_web_offer_audit
 from .models import Store
+from .offer_accuracy import build_offer_accuracy_scorecard
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
 from .web_offer_audit_models import WebOfferAuditRun
 
@@ -79,6 +80,8 @@ def web_offer_audit_page(
             comparison = json.loads(selected_run.comparison_json)
         except json.JSONDecodeError:
             comparison = {}
+    if selected_run and selected_run.status == "success":
+        comparison.update(build_offer_accuracy_scorecard(db, selected_run))
     return templates.TemplateResponse("admin_web_offer_audit.html", {
         "request": request,
         "actor": actor,
