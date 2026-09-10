@@ -19,6 +19,131 @@ exec(compile(_source, str(_here / "collectors_v140.py"), "exec"), globals(), glo
 
 
 # ---------------------------------------------------------------------------
+# REWE live-site compatibility
+# ---------------------------------------------------------------------------
+_base_parse_rewe_text = parse_rewe_text
+
+
+def _parse_rewe_text_card_bounded(source, text, imgs=None):
+    """Parse REWE offer cards without borrowing fields from a previous card.
+
+    The live offer page renders each card as product copy/package/unit price,
+    then ``Aktion``/``Knaller`` and the price.  The legacy parser deliberately
+    searched several lines backwards to recover package sizes, but that can
+    cross the previous action marker and attach an old package to a new card.
+    Keep both package and title lookup strictly after the previous marker.
+    """
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    imgs = imgs or []
+    out = []
+    valid_from, valid_to, _, _ = infer_validity(text)
+    vf = valid_from.strftime("%d.%m.%Y") if valid_from else None
+    vt = valid_to.strftime("%d.%m.%Y") if valid_to else None
+    markers = {"aktion", "knaller"}
+    noise = {
+        "aktion", "knaller", "angebote im markt", "top-angebote in deinem markt",
+        "unsere angebots-highlights", "die aktuellen angebote findest du direkt im markt.",
+        "zu allen angeboten", "zu den angeboten", "angebots-highlights",
+    }
+    generic_copy = {"extra", "original", "classic", "klassik", "natur", "mild", "fein", "frisch"}
+
+    previous_marker = -1
+    for i, line in enumerate(lines):
+        marker = line.lower().strip()
+        if marker not in markers:
+            continue
+
+        card_start = previous_marker + 1
+        previous_marker = i
+
+        price = None
+        price_idx = None
+        for j in range(i + 1, min(len(lines), i + 4)):
+            values = _price_without_unit_prices(lines[j])
+            if values:
+                price = values[0]
+                price_idx = j
+                break
+        if price is None:
+            continue
+
+        package_idx = None
+        package_q = package_u = None
+        for j in range(i - 1, max(card_start - 1, i - 8), -1):
+            q_candidate, u_candidate = size(lines[j])
+            if q_candidate is not None and u_candidate:
+                package_idx = j
+                package_q = q_candidate
+                package_u = u_candidate
+                break
+        if package_idx is None:
+            continue
+
+        product = None
+        product_idx = None
+        product_image = None
+        fallback = None
+        for j in range(package_idx - 1, max(card_start - 1, package_idx - 7), -1):
+            candidate = lines[j].strip()
+            low = candidate.lower()
+            if (
+                low in noise
+                or PRICE.search(candidate)
+                or SIZE.search(candidate)
+                or low.startswith(("versch.", "je ", "image", "rewe bonus", "gültig ", "diese woche"))
+            ):
+                continue
+            if len(candidate) < 3 or len(candidate) > 180:
+                continue
+            cleaned = clean_product_name(candidate)
+            if not cleaned or product_name_issue(cleaned):
+                continue
+            exact_image = _exact_rewe_image(imgs, cleaned)
+            if exact_image:
+                product = cleaned
+                product_idx = j
+                product_image = exact_image
+                break
+
+            # Descriptive copy such as "extra" is commonly placed directly
+            # above the package line.  Do not prefer that over a real title.
+            first_alpha = next((char for char in cleaned if char.isalpha()), "")
+            if low in generic_copy or (first_alpha and first_alpha.islower()):
+                continue
+            if fallback is None:
+                fallback = (j, cleaned)
+
+        if product is None and fallback is not None:
+            product_idx, product = fallback
+        if not product or product_idx is None:
+            continue
+
+        block = " ".join(lines[product_idx : min(len(lines), (price_idx or i) + 1)])
+        image = product_image or _exact_rewe_image(imgs, product)
+        out.append(CollectedOffer(
+            source.key, source.store_name, source.retailer, product, cat(product), price,
+            unit_price=upr(block), unit_price_unit=upr_unit(block),
+            quantity=package_q, unit=package_u, valid_from=vf, valid_to=vt,
+            source_text=block, source_url=source.url,
+            image_url=image["url"] if image else None,
+            image_alt=image["alt"] if image else None,
+            confidence=.97,
+        ))
+
+    seen = set()
+    result = []
+    for offer in out:
+        key = (offer.product_name.lower(), offer.price, offer.quantity, offer.unit)
+        if key not in seen:
+            seen.add(key)
+            result.append(offer)
+    return result
+
+
+parse_rewe_text = _parse_rewe_text_card_bounded
+
+
+# ---------------------------------------------------------------------------
 # Netto live-site compatibility
 # ---------------------------------------------------------------------------
 _base_parse_netto_text = parse_netto_text
