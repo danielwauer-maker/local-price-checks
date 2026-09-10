@@ -26,6 +26,23 @@ def test_edeka_audit_preserves_leading_zero_when_id_contains_prefix():
     assert _audit_source_url(store) == "https://www.edeka.de/maerkte/071378/angebote/"
 
 
+def test_rewe_audit_uses_market_specific_full_offer_route():
+    store = _store(
+        "REWE",
+        "321019",
+        "https://www.rewe.de/marktseite/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
+    )
+    assert _audit_source_url(store) == (
+        "https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/"
+    )
+
+
+def test_rewe_audit_keeps_already_normalized_offer_route():
+    url = "https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/"
+    store = _store("REWE", "321019", url)
+    assert _audit_source_url(store) == url
+
+
 def test_other_retailers_keep_persisted_reviewed_source_url():
     store = _store("PENNY", "4030882", "https://www.penny.de/angebote")
     assert _audit_source_url(store) == "https://www.penny.de/angebote"

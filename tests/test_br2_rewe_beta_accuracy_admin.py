@@ -157,11 +157,13 @@ def test_same_official_rewe_id_is_one_beta_market_and_alias_without_source_resol
 
     statuses = _rewe_beta_market_statuses(db)
     supported = _supported_active_stores(db)
+    resolved_url = _resolved_audit_source_url(db, old)
 
     assert len(statuses) == 1
     assert statuses[0]["store"].id == 14
     assert statuses[0]["alias_store_ids"] == (1, 14)
     assert [row.id for row in supported] == [14]
     assert _canonical_active_store(db, old).id == 14
-    assert _resolved_audit_source_url(db, old) == canonical.source_url
+    assert resolved_url == "https://www.rewe.de/angebote/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/"
+    assert "/321019/" in resolved_url
     db.close()

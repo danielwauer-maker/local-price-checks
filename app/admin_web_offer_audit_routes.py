@@ -12,6 +12,7 @@ from .admin_learning import audit
 from .admin_routes import _admin
 from .db import get_db
 from .edeka_web_offer_audit_orchestrator import run_web_offer_audit
+from .engine_v140.source_registry import _normalize_rewe_collection_url
 from .models import Store
 from .offer_accuracy import build_offer_accuracy_scorecard
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
@@ -38,6 +39,8 @@ def _audit_source_url(store: Store) -> str | None:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
         if market_id:
             return f"https://www.edeka.de/maerkte/{market_id}/angebote/"
+    if store.retailer == "REWE" and store.source_url:
+        return _normalize_rewe_collection_url(store.source_url)
     return store.source_url
 
 
