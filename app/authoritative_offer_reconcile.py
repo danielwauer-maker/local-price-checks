@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 
 from sqlalchemy.orm import Session
 
 from .admin_learning import resolve_product_alias
+from .engine_v140.offer_quality import evaluate_offer
 from .engine_v140.product_cleaning import clean_product_name
-from .extractor_adapter import normalize_master_key
+from .extractor_adapter import assess_collected_offer, normalize_master_key
 from .models import MasterProduct, Offer, Store
 from .physical_market_identity import canonical_store_map
 
@@ -27,6 +29,66 @@ def _physical_store_ids(db: Session, store: Store) -> list[int]:
     mapping = canonical_store_map(rows)
     canonical = mapping.get(store.id, store)
     return [row.id for row in rows if mapping.get(row.id, row).id == canonical.id]
+
+
+def _compact(value: object, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _quality_rejection_examples(rows: list, limit: int = 3) -> list[str]:
+    """Return concrete, read-only diagnostics for rows rejected by offer QA."""
+    examples: list[str] = []
+    for row in rows:
+        assessment = assess_collected_offer(row)
+        if assessment.rejection != "quality":
+            continue
+
+        quality = evaluate_offer(row)
+        if quality.accepted:
+            reasons = ("Komplexe Promotion nicht eindeutig auflösbar",)
+        else:
+            reasons = quality.reasons or ("Qualitätsprüfung abgelehnt",)
+
+        quantity = getattr(row, "quantity", None)
+        unit = getattr(row, "unit", None) or ""
+        package = f"{quantity:g} {unit}" if isinstance(quantity, (int, float)) else str(unit or "-")
+        examples.append(
+            "quality_reject["
+            f"name={_compact(getattr(row, 'product_name', ''), 90)}; "
+            f"price={getattr(row, 'price', None)}; "
+            f"pack={_compact(package, 45)}; "
+            f"reason={_compact(' / '.join(reasons), 180)}; "
+            f"raw={_compact(getattr(row, 'source_text', ''), 260)}"
+            "]"
+        )
+        if len(examples) >= limit:
+            break
+    return examples
+
+
+def _record_skipped_reconcile_diagnostic(run, summary, rows: list) -> None:
+    rejected = (
+        int(summary.rejected_online)
+        + int(summary.rejected_quality)
+        + int(summary.rejected_store)
+        + int(summary.rejected_date)
+    )
+    diagnostic = (
+        "authoritative_reconcile=SKIPPED_REJECTIONS "
+        f"imported={summary.imported}/{len(rows)} "
+        f"rejected_online={summary.rejected_online} "
+        f"rejected_quality={summary.rejected_quality} "
+        f"rejected_store={summary.rejected_store} "
+        f"rejected_date={summary.rejected_date}"
+    )
+    if summary.rejected_quality:
+        examples = _quality_rejection_examples(rows)
+        if examples:
+            diagnostic += " | " + " | ".join(examples)
+    # Put the diagnostic first so the concrete rejected row survives the
+    # CollectionRun.message size cap even when the collector message is long.
+    run.message = " | ".join(part for part in (diagnostic, run.message or "") if part)[:1800]
 
 
 def reconcile_rewe_authoritative_snapshot(db: Session, store: Store, rows: list) -> int | None:
@@ -104,8 +166,10 @@ def reconcile_completed_rewe_collection(db: Session, store: Store, result: dict,
     """Reconcile only a fully admitted, technically successful REWE collection.
 
     Any rejection, warning, empty/partial source, or unresolved identity leaves
-    production untouched.  A reconciliation safety failure downgrades the run
-    to warning so it cannot silently masquerade as an authoritative success.
+    production untouched. Rejections are persisted diagnostically on the run so
+    an operator can see the exact rejected row and QA reason without weakening
+    the fail-closed gate. A reconciliation safety failure downgrades the run to
+    warning so it cannot silently masquerade as an authoritative success.
     """
     if store.retailer != "REWE" or run.status != "success":
         return None
@@ -116,7 +180,11 @@ def reconcile_completed_rewe_collection(db: Session, store: Store, result: dict,
         + int(summary.rejected_store)
         + int(summary.rejected_date)
     )
-    if not rows or summary.imported != len(rows) or rejected:
+    if not rows:
+        return None
+    if summary.imported != len(rows) or rejected:
+        _record_skipped_reconcile_diagnostic(run, summary, rows)
+        db.commit()
         return None
 
     reconciled = reconcile_rewe_authoritative_snapshot(db, store, rows)
