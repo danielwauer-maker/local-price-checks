@@ -142,6 +142,15 @@ def test_rejected_primary_falls_back_without_deleting_history(monkeypatch, tmp_p
     rejected = db.query(ProductMediaLibraryMetadata).filter_by(media_asset_id=official.id).one()
     assert rejected.review_reason == "wrong product"
 
+    reviewed_again = persist_product_image(
+        db, product, "https://img.example.test/official.png",
+        media_dir=tmp_path, media_source="official_product",
+    )
+    db.commit()
+    assert reviewed_again.id == official.id
+    assert reviewed_again.active is False
+    assert preferred_product_media(db, product.id).id == fallback.id
+
     review_product_media(
         db, product.id, official.id,
         verification_status="verified", actor="test",
