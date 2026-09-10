@@ -19,6 +19,7 @@ def admin_product_media(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
+    """Serve the existing audit-preferred product image."""
     row = preferred_product_media(db, product_id, purpose="audit")
     if not row:
         raise HTTPException(404, "Kein Produktbild hinterlegt")
