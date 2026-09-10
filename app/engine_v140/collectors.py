@@ -98,18 +98,20 @@ def _parse_rewe_text_card_bounded(source, text, imgs=None):
             cleaned = clean_product_name(candidate)
             if not cleaned or product_name_issue(cleaned):
                 continue
+
+            # Reject generic descriptive copy before image matching.  REWE can
+            # expose broad image alt text containing words such as "extra";
+            # allowing that to win first would still turn copy into a product.
+            first_alpha = next((char for char in cleaned if char.isalpha()), "")
+            if low in generic_copy or (first_alpha and first_alpha.islower()):
+                continue
+
             exact_image = _exact_rewe_image(imgs, cleaned)
             if exact_image:
                 product = cleaned
                 product_idx = j
                 product_image = exact_image
                 break
-
-            # Descriptive copy such as "extra" is commonly placed directly
-            # above the package line.  Do not prefer that over a real title.
-            first_alpha = next((char for char in cleaned if char.isalpha()), "")
-            if low in generic_copy or (first_alpha and first_alpha.islower()):
-                continue
             if fallback is None:
                 fallback = (j, cleaned)
 

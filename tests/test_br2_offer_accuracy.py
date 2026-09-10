@@ -110,6 +110,8 @@ def test_perfect_rewe_store_is_beta_ready():
     assert score["accuracy_price_accuracy_pct"] == 100.0
     assert score["accuracy_validity_accuracy_pct"] == 100.0
     assert score["accuracy_exact_pct"] == 100.0
+    assert score["accuracy_production_only_provenance"] == "–"
+    assert score["accuracy_production_duplicate_provenance"] == "–"
     assert score["accuracy_beta_ready"] is True
     db.close()
 
@@ -238,5 +240,7 @@ def test_truncated_retailer_audit_cannot_report_full_completeness():
     assert score["accuracy_production_capture_pct"] == 50.0
     assert score["accuracy_completeness_pct"] == 50.0
     assert score["accuracy_exact_pct"] == 50.0
+    assert "Production only" in score["accuracy_production_only_provenance"]
+    assert "ohne Prospekt-Provenienz" in score["accuracy_production_only_provenance"]
     assert score["accuracy_beta_ready"] is False
     db.close()
