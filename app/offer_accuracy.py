@@ -5,7 +5,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .models import MasterProduct, Offer, ProductBarcode
+from .models import MasterProduct, Offer, ProductBarcode, Store
+from .physical_market_identity import canonical_store_map
 from .web_offer_audit import _fold, _quantity, normalize_master_key
 from .web_offer_audit_models import WebOfferAuditItem, WebOfferAuditRun
 from .web_offer_audit_runtime import period_bounds
@@ -39,20 +40,36 @@ def _source_keys(row: WebOfferAuditItem) -> tuple[str, str]:
     )
 
 
+def _physical_store_ids(db: Session, run: WebOfferAuditRun) -> tuple[int, ...]:
+    """Resolve legacy/duplicate Store rows to one physical-market comparison scope."""
+    rows = db.query(Store).filter(Store.retailer == run.retailer).all()
+    if not rows:
+        return (run.store_id,)
+    mapping = canonical_store_map(rows)
+    run_store = next((row for row in rows if row.id == run.store_id), None)
+    if run_store is None:
+        return (run.store_id,)
+    canonical = mapping.get(run.store_id, run_store)
+    related = tuple(row.id for row in rows if mapping.get(row.id, row).id == canonical.id)
+    return related or (run.store_id,)
+
+
 def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[str, Any]:
     """Compare isolated retailer evidence with persisted production offers.
 
-    This is deliberately read-only.  It never imports, deletes, rewrites or
-    merges offers/products.  The scorecard is intended to make beta readiness
-    measurable while keeping ambiguous identity cases visible for review.
+    This is deliberately read-only. It never imports, deletes, rewrites or
+    merges offers/products. Production rows are evaluated across every Store
+    alias that represents the audited physical market, so legacy duplicate
+    Store ids cannot create false source-only findings.
     """
     period_start, period_end = period_bounds(run.period_key)
     source_rows = [row for row in run.offers if row.valid]
+    physical_store_ids = _physical_store_ids(db, run)
     production_rows = (
         db.query(Offer, MasterProduct)
         .join(MasterProduct, MasterProduct.id == Offer.master_product_id)
         .filter(
-            Offer.store_id == run.store_id,
+            Offer.store_id.in_(physical_store_ids),
             Offer.valid_from <= period_end,
             Offer.valid_to >= period_start,
         )
