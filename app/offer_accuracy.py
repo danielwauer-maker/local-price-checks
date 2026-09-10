@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .models import MasterProduct, Offer, ProductBarcode, Store
 from .physical_market_identity import canonical_store_map
+from .prospect_models import OfferProvenance
 from .web_offer_audit import _fold, _quantity, normalize_master_key
 from .web_offer_audit_models import WebOfferAuditItem, WebOfferAuditRun
 from .web_offer_audit_runtime import period_bounds
@@ -62,6 +63,14 @@ def _source_example(row: WebOfferAuditItem) -> str:
 def _production_example(offer: Offer, product: MasterProduct) -> str:
     package = product.package_size or "ohne Packung"
     return f"offer#{offer.id}/product#{product.id} {product.name} · {offer.price:.2f} € · {package}"
+
+
+def _provenance_example(row: OfferProvenance) -> str:
+    source_text = " ".join((row.source_text or "").split())
+    if len(source_text) > 220:
+        source_text = source_text[:217] + "..."
+    details = f"prov#{row.id}/archive#{row.prospect_archive_id}/page#{row.prospect_page}"
+    return f"{details} {source_text}" if source_text else details
 
 
 def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[str, Any]:
@@ -215,6 +224,41 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         if len(rows) > 1
     ]
 
+    diagnostic_offer_ids = {offer.id for offer, _ in production_only_rows}
+    for rows in products_by_key.values():
+        if len(rows) > 1:
+            diagnostic_offer_ids.update(offer.id for offer, _ in rows)
+    provenance_by_offer: dict[int, list[OfferProvenance]] = {}
+    if diagnostic_offer_ids:
+        for provenance in (
+            db.query(OfferProvenance)
+            .filter(OfferProvenance.offer_id.in_(diagnostic_offer_ids))
+            .order_by(OfferProvenance.offer_id, OfferProvenance.id)
+            .all()
+        ):
+            provenance_by_offer.setdefault(provenance.offer_id, []).append(provenance)
+
+    production_only_provenance = []
+    for offer, product in production_only_rows:
+        rows = provenance_by_offer.get(offer.id, [])
+        if rows:
+            production_only_provenance.append(
+                f"{_production_example(offer, product)} => " + " ; ".join(_provenance_example(row) for row in rows[:2])
+            )
+        else:
+            production_only_provenance.append(f"{_production_example(offer, product)} => ohne Prospekt-Provenienz")
+
+    duplicate_provenance = []
+    for rows in products_by_key.values():
+        if len(rows) <= 1:
+            continue
+        parts = []
+        for offer, product in rows[:3]:
+            provenance_rows = provenance_by_offer.get(offer.id, [])
+            prov = " ; ".join(_provenance_example(row) for row in provenance_rows[:2]) or "ohne Prospekt-Provenienz"
+            parts.append(f"{_production_example(offer, product)} => {prov}")
+        duplicate_provenance.append(" / ".join(parts))
+
     beta_ready = bool(
         source_count > 0
         and completeness_pct is not None
@@ -238,6 +282,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_production_only": production_only,
         "accuracy_source_only_examples": " | ".join(_source_example(row) for row in source_only_rows[:10]) or "–",
         "accuracy_production_only_examples": " | ".join(_production_example(offer, product) for offer, product in production_only_rows[:10]) or "–",
+        "accuracy_production_only_provenance": " | ".join(production_only_provenance[:10]) or "–",
         "accuracy_price_match": price_match,
         "accuracy_price_mismatch": price_mismatch,
         "accuracy_validity_match": validity_match,
@@ -247,6 +292,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_ambiguous_identity": ambiguous_identity,
         "accuracy_production_duplicate_products": production_duplicate_products,
         "accuracy_production_duplicate_examples": " | ".join(duplicate_examples[:10]) or "–",
+        "accuracy_production_duplicate_provenance": " | ".join(duplicate_provenance[:10]) or "–",
         "accuracy_completeness_pct": completeness_pct,
         "accuracy_source_capture_pct": source_capture_pct,
         "accuracy_production_capture_pct": production_capture_pct,
