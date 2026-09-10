@@ -111,7 +111,7 @@ def test_manual_preference_cannot_be_degraded_by_new_collector_image(monkeypatch
     assert new_asset.is_primary is False
 
 
-def test_rejected_or_broken_primary_falls_back_without_deleting_history(monkeypatch, tmp_path: Path):
+def test_rejected_primary_falls_back_without_deleting_history(monkeypatch, tmp_path: Path):
     db, product = _db()
     urls = iter([
         "https://img.example.test/official.png",
@@ -137,10 +137,19 @@ def test_rejected_or_broken_primary_falls_back_without_deleting_history(monkeypa
     db.commit()
 
     assert db.get(MediaAsset, official.id) is not None
-    assert db.get(MediaAsset, official.id).active is True
+    assert db.get(MediaAsset, official.id).active is False
     assert preferred_product_media(db, product.id).id == fallback.id
     rejected = db.query(ProductMediaLibraryMetadata).filter_by(media_asset_id=official.id).one()
     assert rejected.review_reason == "wrong product"
+
+    review_product_media(
+        db, product.id, official.id,
+        verification_status="verified", actor="test",
+        is_broken=False, is_placeholder=False, is_logo=False,
+    )
+    db.commit()
+    assert db.get(MediaAsset, official.id).active is True
+    assert preferred_product_media(db, product.id).id == official.id
 
 
 def test_duplicate_content_is_reported_but_assets_are_not_merged(monkeypatch, tmp_path: Path):
