@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>REWE Beta Accuracy · Spareno Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--red:#a33b2c;--amber:#8a5200}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1500px;margin:auto;padding:20px}.brand{font-size:24px;font-weight:850}.small{color:var(--muted);font-size:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:14px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.summary{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef1ed;font-size:12px;font-weight:750}.pill.ok{background:#def5e6;color:#086b43}.pill.bad{background:#fae9e6;color:var(--red)}.pill.warn{background:#fff0cf;color:var(--amber)}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;vertical-align:top;padding:10px 8px;border-bottom:1px solid var(--line)}th{background:#f7f9f6}.btn{display:inline-block;border:0;border-radius:10px;padding:8px 11px;font-weight:750;background:var(--green);color:#fff;text-decoration:none}.muted-btn{background:#eef1ed;color:var(--text)}.metric{font-weight:800}.table-wrap{overflow:auto}
+  </style>
+</head>
+<body>{% set admin_section = 'web_offer_audit' %}{% include 'admin_sidebar.html' %}<div class="wrap">
+  <div class="brand">REWE Beta Accuracy</div>
+  <div class="small">Aktuelle Woche · nur aktive, benchmark-verifizierte REWE-Märkte · read-only Vergleich gegen gespeicherte Produktionsangebote.</div>
+
+  <div class="card summary">
+    <b>{{ ready_count }} / {{ total_count }} Märkte beta-ready</b>
+    <span class="pill {{ 'ok' if total_count and ready_count == total_count else 'warn' }}">{{ 'GO' if total_count and ready_count == total_count else 'Prüfung offen' }}</span>
+    <a class="btn muted-btn" href="/admin/web-offer-audit">Zum Web-Angebots-Audit</a>
+  </div>
+
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Markt</th><th>Status</th><th>Letzter Audit</th><th>Quelle / Produktion</th><th>Vollständigkeit</th><th>Preis</th><th>Gültigkeit</th><th>Diagnose</th><th>Aktion</th></tr></thead>
+      <tbody>
+      {% for row in statuses %}
+        {% set s = row.store %}{% set r = row.run %}{% set c = row.scorecard %}
+        <tr>
+          <td><b>{{ s.name }}</b><br>{{ s.postal_code }} {{ s.city }}<br><span class="small">Store #{{ s.id }} · {{ s.external_id or 'keine externe ID' }}</span></td>
+          <td>
+            {% if row.state == 'beta_ready' %}<span class="pill ok">beta-ready</span>
+            {% elif row.state == 'not_audited' %}<span class="pill warn">noch nicht geprüft</span>
+            {% elif row.state == 'audit_failed' %}<span class="pill bad">Audit fehlgeschlagen</span>
+            {% else %}<span class="pill warn">Review nötig</span>{% endif %}
+          </td>
+          <td>{% if r %}#{{ r.id }}<br>{{ r.started_at.strftime('%d.%m.%Y %H:%M') }}<br><span class="small">{{ r.status }}{% if r.error_type %} · {{ r.error_type }}{% endif %}</span>{% else %}–{% endif %}</td>
+          <td>{% if c %}<span class="metric">{{ c.get('accuracy_source_count', 0) }}</span> / {{ c.get('accuracy_production_count', 0) }}<br><span class="small">Quelle / Produktion</span>{% else %}–{% endif %}</td>
+          <td>{% if c %}<span class="metric">{{ c.get('accuracy_completeness_pct') if c.get('accuracy_completeness_pct') is not none else '–' }}%</span><br><span class="small">fehlend: {{ c.get('accuracy_source_only', 0) }}</span>{% else %}–{% endif %}</td>
+          <td>{% if c %}<span class="metric">{{ c.get('accuracy_price_accuracy_pct') if c.get('accuracy_price_accuracy_pct') is not none else '–' }}%</span><br><span class="small">Abweichungen: {{ c.get('accuracy_price_mismatch', 0) }}</span>{% else %}–{% endif %}</td>
+          <td>{% if c %}<span class="metric">{{ c.get('accuracy_validity_accuracy_pct') if c.get('accuracy_validity_accuracy_pct') is not none else '–' }}%</span><br><span class="small">falsch/unprüfbar: {{ c.get('accuracy_validity_mismatch', 0) + c.get('accuracy_validity_unverifiable', 0) }}</span>{% else %}–{% endif %}</td>
+          <td>{% if c %}mehrdeutig {{ c.get('accuracy_ambiguous_identity', 0) }}<br>Dubletten {{ c.get('accuracy_production_duplicate_products', 0) }}<br>Marktkontext {{ c.get('accuracy_market_context_mismatch', 0) }}{% elif r and r.message %}<span class="small">{{ r.message }}</span>{% else %}–{% endif %}</td>
+          <td>
+            {% if r %}<a class="btn muted-btn" href="/admin/web-offer-audit?store_id={{ s.id }}&run_id={{ r.id }}">Details</a>{% else %}<a class="btn muted-btn" href="/admin/web-offer-audit?store_id={{ s.id }}">Öffnen</a>{% endif %}
+            <form method="post" action="/admin/web-offer-audit/run" style="margin-top:6px"><input type="hidden" name="store_id" value="{{ s.id }}"><input type="hidden" name="period_key" value="current"><button class="btn" type="submit">Jetzt prüfen</button></form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9">Keine aktiven benchmark-verifizierten REWE-Märkte gefunden.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div></body></html>

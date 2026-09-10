@@ -13,6 +13,7 @@ from .admin_routes import _admin
 from .db import get_db
 from .edeka_web_offer_audit_orchestrator import run_web_offer_audit
 from .models import Store
+from .offer_accuracy import build_offer_accuracy_scorecard
 from .web_offer_audit import SUPPORTED_RETAILERS, collector_enabled
 from .web_offer_audit_models import WebOfferAuditRun
 
@@ -34,7 +35,7 @@ def _audit_source_url(store: Store) -> str | None:
     """Resolve the admin audit URL without changing the persisted Store source.
 
     EDEKA has dedicated structured and local-official audit sources in the
-    execution layer.  The central market-selected offers URL remains useful as
+    execution layer. The central market-selected offers URL remains useful as
     human-readable source context. Other retailers continue to use their
     persisted reviewed source URL.
     """
@@ -43,6 +44,43 @@ def _audit_source_url(store: Store) -> str | None:
         if market_id:
             return f"https://www.edeka.de/maerkte/{market_id}/angebote/"
     return store.source_url
+
+
+def _rewe_beta_market_statuses(db: Session) -> list[dict]:
+    """Return read-only current-week accuracy status for verified REWE stores."""
+    stores = (
+        db.query(Store)
+        .filter(
+            Store.active.is_(True),
+            Store.benchmark_verified.is_(True),
+            Store.retailer == "REWE",
+        )
+        .order_by(Store.postal_code, Store.city, Store.name)
+        .all()
+    )
+    statuses: list[dict] = []
+    for store in stores:
+        run = (
+            db.query(WebOfferAuditRun)
+            .filter(
+                WebOfferAuditRun.store_id == store.id,
+                WebOfferAuditRun.retailer == "REWE",
+                WebOfferAuditRun.period_key == "current",
+            )
+            .order_by(WebOfferAuditRun.started_at.desc(), WebOfferAuditRun.id.desc())
+            .first()
+        )
+        scorecard = build_offer_accuracy_scorecard(db, run) if run and run.status == "success" else {}
+        if not run:
+            state = "not_audited"
+        elif run.status != "success":
+            state = "audit_failed"
+        elif scorecard.get("accuracy_beta_ready"):
+            state = "beta_ready"
+        else:
+            state = "needs_review"
+        statuses.append({"store": store, "run": run, "scorecard": scorecard, "state": state})
+    return statuses
 
 
 @router.get("/admin/web-offer-audit")
@@ -79,6 +117,8 @@ def web_offer_audit_page(
             comparison = json.loads(selected_run.comparison_json)
         except json.JSONDecodeError:
             comparison = {}
+    if selected_run and selected_run.status == "success":
+        comparison.update(build_offer_accuracy_scorecard(db, selected_run))
     return templates.TemplateResponse("admin_web_offer_audit.html", {
         "request": request,
         "actor": actor,
@@ -88,6 +128,22 @@ def web_offer_audit_page(
         "selected_run": selected_run,
         "comparison": comparison,
         "production_enabled": collector_enabled(selected_store.retailer) if selected_store else False,
+    })
+
+
+@router.get("/admin/rewe-beta-accuracy")
+def rewe_beta_accuracy_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    statuses = _rewe_beta_market_statuses(db)
+    return templates.TemplateResponse("admin_rewe_beta_accuracy.html", {
+        "request": request,
+        "actor": actor,
+        "statuses": statuses,
+        "ready_count": sum(row["state"] == "beta_ready" for row in statuses),
+        "total_count": len(statuses),
     })
 
 
