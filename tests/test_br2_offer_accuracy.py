@@ -105,6 +105,8 @@ def test_perfect_rewe_store_is_beta_ready():
     assert score["accuracy_production_count"] == 1
     assert score["accuracy_matched"] == 1
     assert score["accuracy_completeness_pct"] == 100.0
+    assert score["accuracy_source_capture_pct"] == 100.0
+    assert score["accuracy_production_capture_pct"] == 100.0
     assert score["accuracy_price_accuracy_pct"] == 100.0
     assert score["accuracy_validity_accuracy_pct"] == 100.0
     assert score["accuracy_exact_pct"] == 100.0
@@ -212,4 +214,29 @@ def test_production_offer_on_same_official_store_alias_matches_canonical_audit()
     assert score["accuracy_matched"] == 1
     assert score["accuracy_source_only"] == 0
     assert score["accuracy_beta_ready"] is True
+    db.close()
+
+
+def test_truncated_retailer_audit_cannot_report_full_completeness():
+    db = _db()
+    store = _store(db, "REWE Truncated Audit")
+    run = _run(db, store)
+    _product_offer(db, store, name="Matched", barcode="4000000000101")
+    _source_item(db, run, store, name="Matched", barcode="4000000000101")
+    _product_offer(db, store, name="Production only", barcode="4000000000102")
+    db.commit()
+    db.refresh(run)
+
+    score = build_offer_accuracy_scorecard(db, run)
+
+    assert score["accuracy_source_count"] == 1
+    assert score["accuracy_production_count"] == 2
+    assert score["accuracy_matched"] == 1
+    assert score["accuracy_source_only"] == 0
+    assert score["accuracy_production_only"] == 1
+    assert score["accuracy_source_capture_pct"] == 100.0
+    assert score["accuracy_production_capture_pct"] == 50.0
+    assert score["accuracy_completeness_pct"] == 50.0
+    assert score["accuracy_exact_pct"] == 50.0
+    assert score["accuracy_beta_ready"] is False
     db.close()
