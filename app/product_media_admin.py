@@ -91,6 +91,17 @@ def review_product_media(
         is_placeholder=is_placeholder,
         is_logo=is_logo,
     )
+    unusable = (
+        row.verification_status == "rejected"
+        or bool(row.is_broken)
+        or bool(row.is_placeholder)
+        or bool(row.is_logo)
+    )
+    # Keep the row/file for provenance but remove unusable media from public
+    # coverage. A later explicit clean review can reactivate the same media ID.
+    asset.active = not unusable
+    if unusable:
+        asset.is_primary = False
     _refresh_product_primary(db, product_id)
     return row
 
