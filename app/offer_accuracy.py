@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .models import MasterProduct, Offer, ProductBarcode, Store
+from .models import MasterProduct, Offer, OfferOccurrence, ProductBarcode, Store
 from .physical_market_identity import canonical_store_map
 from .prospect_models import OfferProvenance
 from .web_offer_audit import _fold, _quantity, normalize_master_key
@@ -71,6 +71,23 @@ def _provenance_example(row: OfferProvenance) -> str:
         source_text = source_text[:217] + "..."
     details = f"prov#{row.id}/archive#{row.prospect_archive_id}/page#{row.prospect_page}"
     return f"{details} {source_text}" if source_text else details
+
+
+def _occurrence_example(row: OfferOccurrence) -> str:
+    raw = " ".join((row.source_text or "").split())
+    detail = " ".join((row.detail_text or "").split())
+    if len(raw) > 320:
+        raw = raw[:317] + "..."
+    if len(detail) > 160:
+        detail = detail[:157] + "..."
+    parts = [f"occ#{row.id}/page#{row.prospect_page or '?'}"]
+    if row.package_size:
+        parts.append(f"pack={row.package_size}")
+    if detail:
+        parts.append(f"detail={detail}")
+    if raw:
+        parts.append(f"raw={raw}")
+    return " · ".join(parts)
 
 
 def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[str, Any]:
@@ -228,7 +245,9 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
     for rows in products_by_key.values():
         if len(rows) > 1:
             diagnostic_offer_ids.update(offer.id for offer, _ in rows)
+
     provenance_by_offer: dict[int, list[OfferProvenance]] = {}
+    occurrence_by_offer: dict[int, list[OfferOccurrence]] = {}
     if diagnostic_offer_ids:
         for provenance in (
             db.query(OfferProvenance)
@@ -237,8 +256,16 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
             .all()
         ):
             provenance_by_offer.setdefault(provenance.offer_id, []).append(provenance)
+        for occurrence in (
+            db.query(OfferOccurrence)
+            .filter(OfferOccurrence.offer_id.in_(diagnostic_offer_ids))
+            .order_by(OfferOccurrence.offer_id, OfferOccurrence.collected_at.desc(), OfferOccurrence.id.desc())
+            .all()
+        ):
+            occurrence_by_offer.setdefault(occurrence.offer_id, []).append(occurrence)
 
     production_only_provenance = []
+    production_only_occurrences = []
     for offer, product in production_only_rows:
         rows = provenance_by_offer.get(offer.id, [])
         if rows:
@@ -247,17 +274,30 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
             )
         else:
             production_only_provenance.append(f"{_production_example(offer, product)} => ohne Prospekt-Provenienz")
+        occurrence_rows = occurrence_by_offer.get(offer.id, [])
+        if occurrence_rows:
+            production_only_occurrences.append(
+                f"{_production_example(offer, product)} => " + " ; ".join(_occurrence_example(row) for row in occurrence_rows[:3])
+            )
+        else:
+            production_only_occurrences.append(f"{_production_example(offer, product)} => ohne OfferOccurrence")
 
     duplicate_provenance = []
+    duplicate_occurrences = []
     for rows in products_by_key.values():
         if len(rows) <= 1:
             continue
-        parts = []
+        provenance_parts = []
+        occurrence_parts = []
         for offer, product in rows[:3]:
             provenance_rows = provenance_by_offer.get(offer.id, [])
             prov = " ; ".join(_provenance_example(row) for row in provenance_rows[:2]) or "ohne Prospekt-Provenienz"
-            parts.append(f"{_production_example(offer, product)} => {prov}")
-        duplicate_provenance.append(" / ".join(parts))
+            provenance_parts.append(f"{_production_example(offer, product)} => {prov}")
+            occurrence_rows = occurrence_by_offer.get(offer.id, [])
+            occ = " ; ".join(_occurrence_example(row) for row in occurrence_rows[:3]) or "ohne OfferOccurrence"
+            occurrence_parts.append(f"{_production_example(offer, product)} => {occ}")
+        duplicate_provenance.append(" / ".join(provenance_parts))
+        duplicate_occurrences.append(" / ".join(occurrence_parts))
 
     beta_ready = bool(
         source_count > 0
@@ -283,6 +323,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_source_only_examples": " | ".join(_source_example(row) for row in source_only_rows[:10]) or "–",
         "accuracy_production_only_examples": " | ".join(_production_example(offer, product) for offer, product in production_only_rows[:10]) or "–",
         "accuracy_production_only_provenance": " | ".join(production_only_provenance[:10]) or "–",
+        "accuracy_production_only_occurrences": " | ".join(production_only_occurrences[:10]) or "–",
         "accuracy_price_match": price_match,
         "accuracy_price_mismatch": price_mismatch,
         "accuracy_validity_match": validity_match,
@@ -293,6 +334,7 @@ def build_offer_accuracy_scorecard(db: Session, run: WebOfferAuditRun) -> dict[s
         "accuracy_production_duplicate_products": production_duplicate_products,
         "accuracy_production_duplicate_examples": " | ".join(duplicate_examples[:10]) or "–",
         "accuracy_production_duplicate_provenance": " | ".join(duplicate_provenance[:10]) or "–",
+        "accuracy_production_duplicate_occurrences": " | ".join(duplicate_occurrences[:10]) or "–",
         "accuracy_completeness_pct": completeness_pct,
         "accuracy_source_capture_pct": source_capture_pct,
         "accuracy_production_capture_pct": production_capture_pct,
