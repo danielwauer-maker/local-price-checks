@@ -53,6 +53,28 @@ Aktion
     assert offers[0].unit == "g"
 
 
+def test_rewe_generic_copy_cannot_win_via_image_alt_match():
+    text = """
+Jacobs Auslese oder Meisterröstung
+extra
+500 g
+Aktion
+5,49 €
+"""
+    images = [
+        {"url": "https://example.invalid/extra.webp", "alt": "extra"},
+        {"url": "https://example.invalid/jacobs.webp", "alt": "Jacobs Auslese oder Meisterröstung"},
+    ]
+
+    offers = parse_rewe_text(_source(), text, images)
+
+    assert len(offers) == 1
+    assert offers[0].product_name == "Jacobs Auslese oder Meisterröstung"
+    assert offers[0].price == 5.49
+    assert offers[0].quantity == 500.0
+    assert offers[0].unit == "g"
+
+
 def test_rewe_keeps_single_word_capitalized_product_titles():
     text = """
 Bananen
