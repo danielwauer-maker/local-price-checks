@@ -172,3 +172,44 @@ def test_wrong_store_source_evidence_is_explicitly_rejected_from_accuracy_denomi
     assert score["accuracy_source_count"] == 0
     assert score["accuracy_beta_ready"] is False
     db.close()
+
+
+def test_production_offer_on_same_official_store_alias_matches_canonical_audit():
+    db = _db()
+    legacy = Store(
+        retailer="REWE",
+        name="REWE Dierdorf",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Str. 20-22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+        source_url=None,
+    )
+    canonical = Store(
+        retailer="REWE",
+        name="REWE:XL Hundertmark",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Straße 20 - 22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+        source_url="https://www.rewe.de/marktseite/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
+    )
+    db.add_all([legacy, canonical])
+    db.flush()
+    run = _run(db, canonical)
+    _product_offer(db, legacy)
+    _source_item(db, run, canonical)
+    db.commit()
+    db.refresh(run)
+
+    score = build_offer_accuracy_scorecard(db, run)
+
+    assert score["accuracy_production_count"] == 1
+    assert score["accuracy_matched"] == 1
+    assert score["accuracy_source_only"] == 0
+    assert score["accuracy_beta_ready"] is True
+    db.close()

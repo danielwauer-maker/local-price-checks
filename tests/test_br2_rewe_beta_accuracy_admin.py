@@ -1,7 +1,12 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.admin_web_offer_audit_routes import _rewe_beta_market_statuses
+from app.admin_web_offer_audit_routes import (
+    _canonical_active_store,
+    _resolved_audit_source_url,
+    _rewe_beta_market_statuses,
+    _supported_active_stores,
+)
 from app.db import Base
 from app.models import MasterProduct, Offer, Store
 from app.web_offer_audit_models import WebOfferAuditItem, WebOfferAuditRun
@@ -118,4 +123,45 @@ def test_rewe_beta_status_uses_latest_current_run_and_surfaces_failure():
     assert row["run"].id == failed.id
     assert row["state"] == "audit_failed"
     assert row["scorecard"] == {}
+    db.close()
+
+
+def test_same_official_rewe_id_is_one_beta_market_and_alias_without_source_resolves_to_canonical():
+    db = _db()
+    old = Store(
+        id=1,
+        retailer="REWE",
+        name="REWE Dierdorf",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Str. 20-22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+        source_url=None,
+    )
+    canonical = Store(
+        id=14,
+        retailer="REWE",
+        name="REWE:XL Hundertmark",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Straße 20 - 22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+        source_url="https://www.rewe.de/marktseite/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
+    )
+    db.add_all([old, canonical])
+    db.commit()
+
+    statuses = _rewe_beta_market_statuses(db)
+    supported = _supported_active_stores(db)
+
+    assert len(statuses) == 1
+    assert statuses[0]["store"].id == 14
+    assert statuses[0]["alias_store_ids"] == (1, 14)
+    assert [row.id for row in supported] == [14]
+    assert _canonical_active_store(db, old).id == 14
+    assert _resolved_audit_source_url(db, old) == canonical.source_url
     db.close()
