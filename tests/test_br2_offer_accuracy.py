@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db import Base
-from app.models import MasterProduct, Offer, ProductBarcode, Store
+from app.models import MasterProduct, Offer, OfferOccurrence, ProductBarcode, Store
 from app.offer_accuracy import build_offer_accuracy_scorecard
 from app.web_offer_audit_models import WebOfferAuditItem, WebOfferAuditRun
 from app.web_offer_audit_runtime import period_bounds
@@ -52,7 +52,7 @@ def _product_offer(db, store, *, name="Coca-Cola", package_size="1,5 l", price=1
     db.add(product)
     db.flush()
     db.add(ProductBarcode(barcode=barcode, master_product_id=product.id, source="test"))
-    db.add(Offer(
+    offer = Offer(
         store_id=store.id,
         master_product_id=product.id,
         price=price,
@@ -60,7 +60,8 @@ def _product_offer(db, store, *, name="Coca-Cola", package_size="1,5 l", price=1
         valid_to=end,
         local_store_offer=True,
         source_url=store.source_url,
-    ))
+    )
+    db.add(offer)
     db.flush()
     return product
 
@@ -111,7 +112,9 @@ def test_perfect_rewe_store_is_beta_ready():
     assert score["accuracy_validity_accuracy_pct"] == 100.0
     assert score["accuracy_exact_pct"] == 100.0
     assert score["accuracy_production_only_provenance"] == "–"
+    assert score["accuracy_production_only_occurrences"] == "–"
     assert score["accuracy_production_duplicate_provenance"] == "–"
+    assert score["accuracy_production_duplicate_occurrences"] == "–"
     assert score["accuracy_beta_ready"] is True
     db.close()
 
@@ -242,5 +245,40 @@ def test_truncated_retailer_audit_cannot_report_full_completeness():
     assert score["accuracy_exact_pct"] == 50.0
     assert "Production only" in score["accuracy_production_only_provenance"]
     assert "ohne Prospekt-Provenienz" in score["accuracy_production_only_provenance"]
+    assert "ohne OfferOccurrence" in score["accuracy_production_only_occurrences"]
     assert score["accuracy_beta_ready"] is False
+    db.close()
+
+
+def test_production_delta_diagnostics_include_concrete_offer_occurrence_without_mutation():
+    db = _db()
+    store = _store(db, "REWE Occurrence Diagnostic")
+    run = _run(db, store)
+    product = _product_offer(db, store, name="alkoholfrei", package_size="6 x 98 ml", price=4.99, barcode="4000000000201")
+    offer = db.query(Offer).filter(Offer.master_product_id == product.id).one()
+    occurrence = OfferOccurrence(
+        offer_id=offer.id,
+        prospect_page=2,
+        occurrence_fingerprint="occurrence-diagnostic",
+        detail_text="alkoholfrei, je 6 x 98-ml-Fl.",
+        package_size="6 x 98 ml",
+        source_text="PDF Seite 2 Crodino Biondo alkoholfrei je 6 x 98-ml-Fl. Aktion 4,99 €",
+        source_url="https://www.rewe.de/angebote/test",
+    )
+    db.add(occurrence)
+    db.commit()
+    before_name = product.name
+    before_price = offer.price
+
+    score = build_offer_accuracy_scorecard(db, run)
+
+    assert score["accuracy_production_only"] == 1
+    diagnostic = score["accuracy_production_only_occurrences"]
+    assert "occ#" in diagnostic
+    assert "page#2" in diagnostic
+    assert "Crodino Biondo" in diagnostic
+    assert "alkoholfrei" in diagnostic
+    assert "6 x 98 ml" in diagnostic
+    assert db.get(MasterProduct, product.id).name == before_name
+    assert db.get(Offer, offer.id).price == before_price
     db.close()
