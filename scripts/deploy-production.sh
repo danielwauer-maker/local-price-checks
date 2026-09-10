@@ -135,6 +135,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^(migrations/versions/20260909_02_br1b_master_product_catalog\.py|migrations/versions/20260909_03_br1c_retailer_product_identity\.py|app/product_catalog_models\.py|app/data_operations_models\.py)$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: BR-1B master product catalog + BR-1C retailer product identity."
+  elif grep -Fxq 'migrations/versions/20260910_01_br1d_product_media_library.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^migrations/versions/20260910_01_br1d_product_media_library\.py$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled schema release recognized: BR-1D product media library metadata."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
