@@ -58,8 +58,9 @@ def test_model_registry_contains_additive_models():
         "price_observations",
         "daily_collection_runs",
         "master_product_profiles",
+        "product_media_library_metadata",
     } <= names
-    assert len(names) == 64
+    assert len(names) == 65
 
 
 def test_alembic_baseline_creates_complete_sqlite_schema(tmp_path: Path):
