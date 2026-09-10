@@ -179,6 +179,11 @@ def _insert_observation(
         round(float(row.unit_price), 4) if row.unit_price is not None else None,
         row.unit_price_unit, offer.valid_from, offer.valid_to, suffix,
     ])
+    if any(
+        isinstance(pending, PriceObservation) and pending.dedupe_key == dedupe_key
+        for pending in db.new
+    ):
+        return False
     if db.query(PriceObservation.id).filter_by(dedupe_key=dedupe_key).first():
         return False
     db.add(PriceObservation(
