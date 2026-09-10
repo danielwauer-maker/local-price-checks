@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .models import MasterProduct, MediaAsset, MediaAssetMetadata
+from .product_media_quality import library_metadata_map, public_media_usable, upsert_library_metadata
 
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _CONTENT_EXTENSIONS = {
@@ -21,9 +23,11 @@ _CONTENT_EXTENSIONS = {
 MEDIA_SOURCE_PRIORITY = {
     "prospect_crop": 100,
     "pdf_embedded": 150,
-    "retailer_cdn": 200,
-    "official_product": 300,
-    "admin_curated": 400,
+    "retailer_cdn": 250,
+    "official_retailer": 300,
+    "official_product": 350,
+    "manufacturer_official": 400,
+    "admin_curated": 450,
 }
 
 
@@ -67,8 +71,10 @@ def _set_media_metadata(
     row.media_source = source
     row.priority = MEDIA_SOURCE_PRIORITY[source]
     row.audit_relevant = audit_relevant
-    row.external_product_id = (external_product_id or "")[:160] or None
-    row.canonical_url = canonical_url or None
+    if external_product_id:
+        row.external_product_id = external_product_id[:160]
+    if canonical_url:
+        row.canonical_url = canonical_url
     db.flush()
     return row
 
@@ -83,8 +89,7 @@ def preferred_product_media_map(
     *,
     purpose: str = "public",
 ) -> dict[int, MediaAsset]:
-    """Resolve preferred media for many products with two bounded queries."""
-
+    """Resolve preferred media with review-aware, non-degrading ranking."""
     if not product_ids:
         return {}
     assets = (
@@ -96,31 +101,47 @@ def preferred_product_media_map(
         )
         .all()
     )
-    metadata = (
-        {
-            row.media_asset_id: row
-            for row in db.query(MediaAssetMetadata)
-            .filter(MediaAssetMetadata.media_asset_id.in_([asset.id for asset in assets]))
-            .all()
-        }
-        if assets
-        else {}
-    )
+    ids = [asset.id for asset in assets]
+    metadata = {
+        row.media_asset_id: row
+        for row in db.query(MediaAssetMetadata)
+        .filter(MediaAssetMetadata.media_asset_id.in_(ids)).all()
+    } if ids else {}
+    library = library_metadata_map(db, ids)
 
-    def rank(asset: MediaAsset) -> tuple[int, int, int, int]:
+    def rank(asset: MediaAsset):
         meta = metadata.get(asset.id)
+        lib = library.get(asset.id)
         source = meta.media_source if meta else _inferred_media_source(asset)
-        priority = meta.priority if meta else MEDIA_SOURCE_PRIORITY[source]
+        priority = meta.priority if meta else MEDIA_SOURCE_PRIORITY.get(source, 0)
         audit = bool(meta.audit_relevant) if meta else source == "prospect_crop"
         if purpose == "audit":
-            return (int(audit), int(source == "prospect_crop"), priority, asset.id)
-        return (priority, int(asset.is_primary), int(not audit), asset.id)
+            return (
+                int(audit),
+                int(source == "prospect_crop"),
+                int(lib is None or lib.verification_status != "rejected"),
+                priority,
+                int(asset.is_primary),
+                asset.id,
+            )
+        return (
+            int(bool(lib.manual_preferred)) if lib else 0,
+            int(lib.verification_status == "verified") if lib else 0,
+            priority,
+            int(asset.is_primary),
+            int(lib.quality_score or 0) if lib else 0,
+            int(not audit),
+            asset.id,
+        )
 
     grouped: dict[int, list[MediaAsset]] = {}
     for asset in assets:
-        if asset.master_product_id is not None:
-            grouped.setdefault(asset.master_product_id, []).append(asset)
-    return {product_id: max(rows, key=rank) for product_id, rows in grouped.items()}
+        if asset.master_product_id is None:
+            continue
+        if purpose != "audit" and not public_media_usable(library.get(asset.id)):
+            continue
+        grouped.setdefault(asset.master_product_id, []).append(asset)
+    return {product_id: max(rows, key=rank) for product_id, rows in grouped.items() if rows}
 
 
 def _refresh_product_primary(db: Session, product_id: int) -> None:
@@ -149,6 +170,12 @@ def _retire_rejected_prospect_crop(db: Session, product_id: int, source_url: str
             continue
         asset.active = False
         asset.is_primary = False
+        lib = library_metadata_map(db, [asset.id]).get(asset.id)
+        if lib:
+            lib.verification_status = "rejected"
+            lib.manual_preferred = False
+            lib.review_reason = lib.review_reason or "collector_crop_identity_rejected"
+            lib.reviewed_at = datetime.utcnow()
         retired += 1
     if retired:
         _refresh_product_primary(db, product_id)
@@ -165,6 +192,17 @@ def _image_extension(content_type: str, url: str) -> str | None:
     return None
 
 
+def _existing_payload(asset: MediaAsset, media_dir: Path | None = None) -> bytes | None:
+    if not asset.file_path:
+        return None
+    path = (media_dir or (settings.data_dir / "admin_media")) / Path(asset.file_path).name
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return None
+    return payload if 0 < len(payload) <= _MAX_IMAGE_BYTES else None
+
+
 def persist_product_image(
     db: Session,
     product: MasterProduct,
@@ -175,12 +213,12 @@ def persist_product_image(
     media_source: str = "retailer_cdn",
     external_product_id: str | None = None,
     canonical_url: str | None = None,
+    retailer: str | None = None,
+    source_name: str | None = None,
+    license_note: str | None = None,
+    confidence: float | None = None,
 ) -> MediaAsset | None:
-    """Persist one retailer product image locally and attach it to a product.
-
-    Failures are non-fatal: an unavailable retailer CDN must never make an
-    otherwise valid offer import fail. Existing primary media is preserved.
-    """
+    """Persist product media while preserving explicit review/preference state."""
     url = (image_url or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         return None
@@ -198,23 +236,24 @@ def persist_product_image(
     if existing:
         if alt_text and not existing.alt_text:
             existing.alt_text = alt_text[:240]
+        if retailer and not existing.retailer:
+            existing.retailer = retailer[:80]
         existing.active = True
         _set_media_metadata(
-            db,
-            existing,
-            media_source=media_source,
-            external_product_id=external_product_id,
-            canonical_url=canonical_url,
+            db, existing, media_source=media_source,
+            external_product_id=external_product_id, canonical_url=canonical_url,
+        )
+        upsert_library_metadata(
+            db, existing, media_source=media_source,
+            payload=_existing_payload(existing, media_dir), source_name=source_name,
+            retailer=retailer, license_note=license_note, confidence=confidence,
         )
         _refresh_product_primary(db, product.id)
         return existing
 
     try:
         with httpx.stream(
-            "GET",
-            url,
-            timeout=20.0,
-            follow_redirects=True,
+            "GET", url, timeout=20.0, follow_redirects=True,
             headers={"User-Agent": "LocalPriceChecks/1.0 product-media"},
         ) as response:
             response.raise_for_status()
@@ -238,7 +277,6 @@ def persist_product_image(
 
     if not payload:
         return None
-
     target_dir = media_dir or (settings.data_dir / "admin_media")
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -250,35 +288,30 @@ def persist_product_image(
     except OSError:
         return None
 
-    has_primary = (
-        db.query(MediaAsset)
-        .filter(
-            MediaAsset.kind == "product",
-            MediaAsset.master_product_id == product.id,
-            MediaAsset.active.is_(True),
-            MediaAsset.is_primary.is_(True),
-        )
-        .first()
-        is not None
-    )
+    has_primary = db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product.id,
+        MediaAsset.active.is_(True),
+        MediaAsset.is_primary.is_(True),
+    ).first() is not None
     asset = MediaAsset(
-        kind="product",
-        master_product_id=product.id,
-        file_path=filename,
-        source_url=url,
+        kind="product", master_product_id=product.id,
+        retailer=(retailer or "")[:80] or None,
+        file_path=filename, source_url=url,
         alt_text=(alt_text or product.name)[:240],
         mime_type=(content_type or "").split(";", 1)[0].strip().lower() or None,
-        is_primary=not has_primary,
-        active=True,
+        is_primary=not has_primary, active=True,
     )
     db.add(asset)
     db.flush()
     _set_media_metadata(
-        db,
-        asset,
-        media_source=media_source,
-        external_product_id=external_product_id,
-        canonical_url=canonical_url,
+        db, asset, media_source=media_source,
+        external_product_id=external_product_id, canonical_url=canonical_url,
+    )
+    upsert_library_metadata(
+        db, asset, media_source=media_source, payload=payload,
+        source_name=source_name, retailer=retailer,
+        license_note=license_note, confidence=confidence,
     )
     _refresh_product_primary(db, product.id)
     return asset
@@ -292,8 +325,12 @@ def persist_product_image_file(
     alt_text: str | None = None,
     media_dir: Path | None = None,
     media_source: str = "prospect_crop",
+    retailer: str | None = None,
+    source_name: str | None = None,
+    license_note: str | None = None,
+    confidence: float | None = None,
 ) -> MediaAsset | None:
-    """Persist a collector-generated crop from inside the configured data dir."""
+    """Persist a collector crop without forcing it over a better primary image."""
     if not image_path:
         return None
     try:
@@ -306,10 +343,8 @@ def persist_product_image_file(
             return None
         extension = source.suffix.lower()
         mime_type = {
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".png": "image/png",
-            ".webp": "image/webp",
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".png": "image/png", ".webp": "image/webp",
         }.get(extension)
         if mime_type is None:
             return None
@@ -319,20 +354,21 @@ def persist_product_image_file(
 
     content_digest = hashlib.sha256(payload).hexdigest()
     source_url = f"prospect-crop:{content_digest}"
-    existing = (
-        db.query(MediaAsset)
-        .filter(
-            MediaAsset.kind == "product",
-            MediaAsset.master_product_id == product.id,
-            MediaAsset.source_url == source_url,
-        )
-        .first()
-    )
+    existing = db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product.id,
+        MediaAsset.source_url == source_url,
+    ).first()
     if existing:
         existing.active = True
-        if media_source == "prospect_crop":
-            existing.is_primary = True
+        if retailer and not existing.retailer:
+            existing.retailer = retailer[:80]
         _set_media_metadata(db, existing, media_source=media_source, audit_relevant=True)
+        upsert_library_metadata(
+            db, existing, media_source=media_source, payload=payload,
+            source_name=source_name, retailer=retailer,
+            license_note=license_note, confidence=confidence,
+        )
         _refresh_product_primary(db, product.id)
         return existing
 
@@ -346,36 +382,33 @@ def persist_product_image_file(
     except OSError:
         return None
 
-    has_primary = (
-        db.query(MediaAsset)
-        .filter(
-            MediaAsset.kind == "product",
-            MediaAsset.master_product_id == product.id,
-            MediaAsset.active.is_(True),
-            MediaAsset.is_primary.is_(True),
-        )
-        .first()
-        is not None
-    )
+    has_primary = db.query(MediaAsset).filter(
+        MediaAsset.kind == "product",
+        MediaAsset.master_product_id == product.id,
+        MediaAsset.active.is_(True),
+        MediaAsset.is_primary.is_(True),
+    ).first() is not None
     asset = MediaAsset(
-        kind="product",
-        master_product_id=product.id,
-        file_path=filename,
-        source_url=source_url,
-        alt_text=(alt_text or product.name)[:240],
-        mime_type=mime_type,
-        is_primary=True if media_source == "prospect_crop" else not has_primary,
-        active=True,
+        kind="product", master_product_id=product.id,
+        retailer=(retailer or "")[:80] or None,
+        file_path=filename, source_url=source_url,
+        alt_text=(alt_text or product.name)[:240], mime_type=mime_type,
+        is_primary=not has_primary, active=True,
     )
     db.add(asset)
     db.flush()
     _set_media_metadata(db, asset, media_source=media_source, audit_relevant=True)
+    upsert_library_metadata(
+        db, asset, media_source=media_source, payload=payload,
+        source_name=source_name, retailer=retailer,
+        license_note=license_note, confidence=confidence,
+    )
     _refresh_product_primary(db, product.id)
     return asset
 
 
 def persist_collected_product_images(db: Session, rows) -> int:
-    """Attach collector media and retire only the exact crop rejected by QA."""
+    """Attach collector media and preserve source/review provenance."""
     from .extractor_adapter import normalize_master_key
 
     saved = 0
@@ -406,18 +439,27 @@ def persist_collected_product_images(db: Session, rows) -> int:
         if crop_rejected:
             _retire_rejected_prospect_crop(db, product.id, rejected_crop_source_url)
 
+        retailer = getattr(row, "retailer", None)
+        source_name = (
+            getattr(row, "collector_source", None)
+            or getattr(row, "source_key", None)
+            or getattr(row, "source", None)
+        )
+        confidence = getattr(row, "image_confidence", None)
         if image_url:
             marker = (product.id, image_url)
             if marker not in handled:
                 handled.add(marker)
                 asset = persist_product_image(
-                    db,
-                    product,
-                    image_url,
+                    db, product, image_url,
                     alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
                     media_source=getattr(row, "image_media_source", None) or "retailer_cdn",
-                    external_product_id=getattr(row, "lidl_product_id", None),
+                    external_product_id=(
+                        getattr(row, "retailer_product_id", None)
+                        or getattr(row, "lidl_product_id", None)
+                    ),
                     canonical_url=getattr(row, "canonical_url", None),
+                    retailer=retailer, source_name=source_name, confidence=confidence,
                 )
                 if asset:
                     saved += 1
@@ -427,11 +469,10 @@ def persist_collected_product_images(db: Session, rows) -> int:
                 continue
             handled.add(marker)
             asset = persist_product_image_file(
-                db,
-                product,
-                image_path,
+                db, product, image_path,
                 alt_text=getattr(row, "image_alt", None) or getattr(row, "product_name", None),
-                media_source="prospect_crop",
+                media_source="prospect_crop", retailer=retailer,
+                source_name=source_name, confidence=confidence,
             )
             if asset:
                 saved += 1
