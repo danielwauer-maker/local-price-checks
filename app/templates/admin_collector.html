@@ -30,7 +30,7 @@
       (s.retailer == 'EDEKA' and s.city == 'Puderbach' and 'Fellenzer' in s.name) or
       (s.retailer == 'ALDI SÜD' and s.city == 'Dierdorf' and 'ALDI' in s.name) or
       (s.retailer == 'Netto Marken-Discount' and s.city == 'Dierdorf' and 'Netto' in s.name) or
-      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and (s.external_id|string) == '321019') or
+      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and s.external_id == '321019') or
       (s.retailer == 'ALDI SÜD' and s.city == 'Oberhonnefeld-Gierend' and 'ALDI' in s.name) or
       (s.retailer == 'Netto Marken-Discount' and s.city == 'Oberhonnefeld-Gierend' and 'Netto' in s.name)
     %}
@@ -68,7 +68,7 @@
       (s.retailer == 'EDEKA' and s.city == 'Puderbach' and 'Fellenzer' in s.name) or
       (s.retailer == 'ALDI SÜD' and s.city == 'Dierdorf' and 'ALDI' in s.name) or
       (s.retailer == 'Netto Marken-Discount' and s.city == 'Dierdorf' and 'Netto' in s.name) or
-      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and (s.external_id|string) == '321019') or
+      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and s.external_id == '321019') or
       (s.retailer == 'ALDI SÜD' and s.city == 'Oberhonnefeld-Gierend' and 'ALDI' in s.name) or
       (s.retailer == 'Netto Marken-Discount' and s.city == 'Oberhonnefeld-Gierend' and 'Netto' in s.name)
     %}{% if r and r.status == 'running' %}{% set ns.has_running = true %}{% endif %}<tr>
