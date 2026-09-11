@@ -124,7 +124,10 @@ def _harden_aldi_row(row, imgs):
             getattr(updated, "unit", None),
         )
         if unit_price is not None:
-            updated = replace(updated, unit_price=unit_price, unit_price_unit=unit_price_unit)
+            # Unit prices are consumer-facing monetary values. Keep the shared
+            # helper's internal precision, but persist ALDI output at cent
+            # precision so 3.99 / 0.4 kg becomes 9.98 €/kg, not 9.975.
+            updated = replace(updated, unit_price=round(unit_price, 2), unit_price_unit=unit_price_unit)
     return updated
 
 
