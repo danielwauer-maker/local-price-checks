@@ -58,6 +58,8 @@ def test_readiness_admin_context_shows_na_for_non_applicable_diagnostics(monkeyp
             "price_anchors_ignored": 0,
             "price_anchors_unmatched": 0,
             "pages_with_unmatched_prices": [],
+            "external_validation_status": "PASS",
+            "external_validation_checked": 10,
         }),
     ))
     product = MasterProduct(name="Test", normalized_key="test")
@@ -81,6 +83,8 @@ def test_readiness_admin_context_shows_na_for_non_applicable_diagnostics(monkeyp
     )
 
     assert rewe["source_strategy"] == "collector_primary"
+    assert rewe["external_validation_status"] == "PASS"
+    assert rewe["external_validation_checked"] == 10
     assert rewe["price_anchor_match_rate"] is None
     assert rewe["page_offer_recall"] is None
     assert rewe["next_week_offers"] == 1
