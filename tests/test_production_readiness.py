@@ -1,5 +1,5 @@
+import json
 from datetime import date
-from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -13,6 +13,7 @@ from app.production_readiness import (
     assess_store_readiness,
     build_multi_market_readiness,
     next_week_window,
+    persist_external_validation_result,
     quality_metric_for_display,
     validate_external_samples,
 )
@@ -24,7 +25,16 @@ def _session():
     return sessionmaker(bind=engine, future=True)()
 
 
-def _ready_store(db, *, retailer="REWE", name="REWE Dierdorf", city="Dierdorf", external_id="321019"):
+def _ready_store(
+    db,
+    *,
+    retailer="REWE",
+    name="REWE Dierdorf",
+    city="Dierdorf",
+    external_id="321019",
+    benchmark_context="PRODUCTION",
+    external_validation=True,
+):
     store = Store(
         retailer=retailer,
         name=name,
@@ -46,6 +56,16 @@ def _ready_store(db, *, retailer="REWE", name="REWE Dierdorf", city="Dierdorf", 
     )
     db.add(run)
     db.flush()
+    metrics = {}
+    if external_validation:
+        metrics = {
+            "external_validation_status": "PASS",
+            "external_validation_score": 100.0,
+            "external_validation_checked": 10,
+            "external_validation_matched": 10,
+            "external_validation_missing": 0,
+            "external_validation_online_only_leaks": 0,
+        }
     db.add(
         CollectionQualitySnapshot(
             run_id=run.id,
@@ -54,9 +74,9 @@ def _ready_store(db, *, retailer="REWE", name="REWE Dierdorf", city="Dierdorf", 
             run_status="success",
             quality_status="PASS",
             benchmark_status="PASS",
-            benchmark_context="PRODUCTION",
+            benchmark_context=benchmark_context,
             quality_score=99.6,
-            metrics_json="{}",
+            metrics_json=json.dumps(metrics),
         )
     )
     db.commit()
@@ -74,6 +94,9 @@ def test_rewe_pass_becomes_collector_primary():
     assert result.source_strategy == "collector_primary"
     assert result.quality_status == "PASS"
     assert result.benchmark_status == "PASS"
+    assert result.benchmark_context == "PRODUCTION"
+    assert result.external_validation_status == "PASS"
+    assert result.external_validation_checked == 10
     assert result.quality_score == 99.6
     assert result.offers_imported == 206
     assert result.reasons == ()
@@ -92,6 +115,57 @@ def test_quality_pass_without_production_benchmark_keeps_external_primary():
     assert result.status == "VALIDATION_REQUIRED"
     assert result.source_strategy == "external_primary"
     assert "benchmark_not_pass" in result.reasons
+
+
+def test_golden_benchmark_pass_does_not_unlock_production():
+    db = _session()
+    store = _ready_store(db, benchmark_context="GOLDEN")
+    target = next(row for row in TARGET_MARKETS if row.key == "rewe-hundertmark-dierdorf")
+
+    result = assess_store_readiness(db, target, store)
+
+    assert result.source_strategy == "external_primary"
+    assert "benchmark_context_not_production" in result.reasons
+
+
+def test_missing_external_validation_keeps_external_primary():
+    db = _session()
+    store = _ready_store(db, external_validation=False)
+    target = next(row for row in TARGET_MARKETS if row.key == "rewe-hundertmark-dierdorf")
+
+    result = assess_store_readiness(db, target, store)
+
+    assert result.source_strategy == "external_primary"
+    assert "external_validation_not_pass" in result.reasons
+    assert "external_validation_insufficient_samples" in result.reasons
+
+
+def test_external_validation_requires_at_least_ten_samples():
+    db = _session()
+    store = _ready_store(db)
+    snapshot = db.query(CollectionQualitySnapshot).one()
+    metrics = json.loads(snapshot.metrics_json)
+    metrics["external_validation_checked"] = 9
+    snapshot.metrics_json = json.dumps(metrics)
+    db.commit()
+    target = next(row for row in TARGET_MARKETS if row.key == "rewe-hundertmark-dierdorf")
+
+    result = assess_store_readiness(db, target, store)
+
+    assert result.source_strategy == "external_primary"
+    assert "external_validation_insufficient_samples" in result.reasons
+
+
+def test_rewe_external_id_must_match_exactly():
+    db = _session()
+    _ready_store(db, external_id="wrong-market-id")
+
+    report = build_multi_market_readiness(db)
+    rewe = next(row for row in report["stores"] if row["target_key"] == "rewe-hundertmark-dierdorf")
+
+    assert rewe["store_id"] is None
+    assert rewe["status"] == "MISSING_STORE"
+    assert rewe["source_strategy"] == "external_primary"
 
 
 def test_readiness_report_always_covers_all_seven_target_markets():
@@ -174,6 +248,22 @@ def test_external_validation_scores_local_offer_fields_and_detects_missing_offer
     assert result.status == "FAIL"
     assert result.samples[0].score == 100.0
     assert result.samples[1].mismatches == ("offer_missing",)
+
+
+def test_external_validation_result_is_persisted_on_exact_run_snapshot():
+    db = _session()
+    _ready_store(db, external_validation=False)
+    run = db.query(CollectionRun).one()
+    references = [ExternalOfferSample(product_name=f"Produkt {idx}") for idx in range(10)]
+    offers = [{"id": idx, "product_name": f"Produkt {idx}", "local_store_offer": True} for idx in range(10)]
+    result = validate_external_samples(references, offers)
+
+    persist_external_validation_result(db, run=run, result=result)
+
+    metrics = json.loads(db.query(CollectionQualitySnapshot).one().metrics_json)
+    assert metrics["external_validation_status"] == "PASS"
+    assert metrics["external_validation_checked"] == 10
+    assert metrics["external_validation_online_only_leaks"] == 0
 
 
 def test_online_only_reference_is_negative_control_and_leak_fails_validation():
