@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import urlparse
 
@@ -12,7 +13,7 @@ from .collection_quality import BenchmarkContext
 from .collection_service import CollectionError, collect_structured_for_store
 from .engine_v140.collectors import best_img, fetch_source, images, parse_aldi_text, visible
 from .engine_v140.price_units import compute_unit_price
-from .models import Store
+from .models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, Store
 
 
 _ALLOWED_HOSTS = {"aldi-sued.de", "www.aldi-sued.de"}
@@ -71,11 +72,7 @@ def _more_specific_name(row) -> str | None:
 
 
 def _harden_aldi_row(row, imgs):
-    """Compatibility hardening for legacy text-only fixtures.
-
-    Production collection no longer relies on this flat parser. It remains for
-    old fixtures and as a deliberately conservative fallback API.
-    """
+    """Compatibility hardening for legacy text-only fixtures."""
     block = str(getattr(row, "source_text", "") or "")
     updated = row
     better_name = _more_specific_name(updated)
@@ -113,15 +110,13 @@ def parse_aldi_stationary_chain_offers(source, text: str, imgs=None):
     if not is_official_aldi_offer_url(source.url):
         raise CollectionError(f"Nicht freigegebene ALDI-SÜD-Quelle: {source.url}")
 
-    parser_text = _FILIAL_SELECTOR_RE.sub("", text or "")
-    image_rows = imgs or []
-    rows = parse_aldi_text(source, parser_text, image_rows)
+    rows = parse_aldi_text(source, _FILIAL_SELECTOR_RE.sub("", text or ""), imgs or [])
     result = []
     seen = set()
     for row in rows:
         if not _has_explicit_week_window(row):
             continue
-        hardened = _harden_aldi_row(row, image_rows)
+        hardened = _harden_aldi_row(row, imgs or [])
         if hardened is None:
             continue
         key = (
@@ -145,6 +140,56 @@ def parse_aldi_stationary_chain_document(source, html: str, text: str, imgs=None
     if not is_official_aldi_offer_url(source.url):
         raise CollectionError(f"Nicht freigegebene ALDI-SÜD-Quelle: {source.url}")
     return parse_aldi_offer_cards(source, html, _FILIAL_SELECTOR_RE.sub("", text or ""), imgs or [])
+
+
+def _parse_day(value):
+    return datetime.strptime(str(value), "%d.%m.%Y").date()
+
+
+def _prune_stale_aldi_week_offers(db: Session, store: Store, safe_rows) -> int:
+    """Remove old current-week ALDI rows not reproduced by the safe v2 parser.
+
+    This runs only after a successful import and only when the structured parser
+    produced a healthy-sized week. Historical weeks and non-ALDI source URLs
+    are untouched. Dependent occurrence/reference rows are removed first.
+    """
+    rows = list(safe_rows or [])
+    if len(rows) < 20:
+        return 0
+    windows = {(getattr(r, "valid_from", None), getattr(r, "valid_to", None)) for r in rows}
+    if len(windows) != 1:
+        return 0
+    valid_from_raw, valid_to_raw = next(iter(windows))
+    if not valid_from_raw or not valid_to_raw:
+        return 0
+    valid_from, valid_to = _parse_day(valid_from_raw), _parse_day(valid_to_raw)
+    safe_keys = {
+        (" ".join(str(r.product_name).lower().split()), round(float(r.price), 2))
+        for r in rows
+        if getattr(r, "product_name", None) and getattr(r, "price", None) is not None
+    }
+
+    candidates = (
+        db.query(Offer)
+        .join(MasterProduct, Offer.master_product_id == MasterProduct.id)
+        .filter(Offer.store_id == store.id, Offer.valid_from == valid_from, Offer.valid_to == valid_to)
+        .all()
+    )
+    stale = []
+    for offer in candidates:
+        if not is_official_aldi_offer_url(offer.source_url or ""):
+            continue
+        key = (" ".join(str(offer.product.name).lower().split()), round(float(offer.price), 2))
+        if key not in safe_keys:
+            stale.append(offer)
+
+    for offer in stale:
+        db.query(OfferOccurrence).filter(OfferOccurrence.offer_id == offer.id).delete(synchronize_session=False)
+        db.query(OfferPriceReference).filter(OfferPriceReference.offer_id == offer.id).delete(synchronize_session=False)
+        db.delete(offer)
+    if stale:
+        db.commit()
+    return len(stale)
 
 
 def collect_aldi_web_for_store(
@@ -188,9 +233,13 @@ def collect_aldi_web_for_store(
             "technical_warning": "",
         }
 
-    return collect_structured_for_store(
+    result, summary, run = collect_structured_for_store(
         db,
         store.name,
         collector_fn=collector,
         benchmark_context=benchmark_context,
     )
+    if getattr(run, "status", None) == "success" and isinstance(result, dict):
+        pruned = _prune_stale_aldi_week_offers(db, store, result.get("offers") or [])
+        result["stale_aldi_offers_pruned"] = pruned
+    return result, summary, run
