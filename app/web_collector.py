@@ -13,6 +13,7 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
+from .aldi_live_collector import collect_aldi_web_for_store
 from .clock import app_today
 from .collection_quality import BenchmarkContext
 from .collection_progress import CollectionProgressReporter
@@ -395,6 +396,8 @@ def collect_store_from_web(
     if not source:
         raise CollectionError(f"Keine Quelle registriert oder automatisch ableitbar für: {store.name}")
 
+    if store.retailer == "ALDI SÜD":
+        return collect_aldi_web_for_store(db, store, benchmark_context=benchmark_context)
     if store.retailer == "Netto Marken-Discount":
         return _collect_netto_from_official_prospect(db, store, source, benchmark_context)
     if store.retailer == "Lidl":
