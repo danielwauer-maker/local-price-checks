@@ -46,7 +46,7 @@ def market_identity_admin(
         {
             "request": request,
             "actor": actor,
-            "admin_section": "stores",
+            "admin_section": "market_identities",
             "groups": groups,
             "standalone": standalone,
             "previews": previews,

@@ -10,7 +10,7 @@
   </style>
 </head>
 <body>
-{% include "admin_sidebar.html" %}
+{% set admin_section = 'rollout' %}{% include "admin_sidebar.html" %}
 <div class="wrap">
   <section class="card hero"><div><h1>Geführte Markt-Freigabe</h1><div class="muted">Ein Markt wird erst öffentlich, wenn Identität, Quelle, Test-Scrape und Quality Gate abgeschlossen sind. Veröffentlichung bleibt immer ein eigener letzter Schritt.</div><div class="steps"><div class="step"><b>1 · Kette</b><span>Collector freigegeben</span></div><div class="step"><b>2 · PLZ</b><span>Rollout-Gebiet aktiv</span></div><div class="step"><b>3 · Identität</b><span>Adresse + Quelle prüfen</span></div><div class="step"><b>4 · Test-Scrape</b><span>Angebote einsammeln</span></div><div class="step"><b>5 · Qualität</b><span>Gate objektiv prüfen</span></div><div class="step"><b>6 · Publish</b><span>Explizit freigeben</span></div></div></div></section>
 
