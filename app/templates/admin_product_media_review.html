@@ -12,7 +12,7 @@
     @media(max-width:1100px){.queue{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.item{grid-template-columns:1fr}.preview{width:100%;height:240px}.filters,.stats{grid-template-columns:1fr 1fr}.top{flex-direction:column}}
   </style>
 </head>
-<body>{% include 'admin_sidebar.html' %}<div class="wrap">
+<body>{% set admin_section = 'product_media_review' %}{% include 'admin_sidebar.html' %}<div class="wrap">
   <div class="top"><div><div class="brand">Produktbilder prüfen</div><div class="sub">Qualitäts-Queue für Produktbilder · falsches Bild ist kritischer als fehlendes Bild</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
 
   <div class="stats">
