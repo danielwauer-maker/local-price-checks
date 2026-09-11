@@ -57,7 +57,7 @@ def _readiness_context(db: Session) -> dict:
                         loaded = json.loads(snapshot.metrics_json)
                         if isinstance(loaded, dict):
                             metrics = loaded
-                    except (TypeError, ValueError, json.JSONDecodeError):
+                    except (TypeError, ValueError):
                         metrics = {}
 
         enriched["next_week_offers"] = next_counts.get(store_id, 0) if store_id is not None else 0
