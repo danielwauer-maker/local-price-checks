@@ -101,7 +101,7 @@ def admin_production_readiness(
         {
             "request": request,
             "actor": actor,
-            "admin_section": "collector",
+            "admin_section": "readiness",
             **_readiness_context(db),
         },
     )
