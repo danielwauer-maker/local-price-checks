@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Koordinaten prüfen · Spareno Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#9a5a00;--danger:#a33b2c}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1500px;margin:auto;padding:20px}.brand{font-size:25px;font-weight:850}.sub{color:var(--muted);max-width:850px}.hero{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}.stats{display:flex;gap:8px;flex-wrap:wrap}.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 12px;min-width:105px}.stat strong{display:block;font-size:21px}.stat span{font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:800}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.queue{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px;margin-top:12px}.item{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fbfcfa}.item.ready{opacity:.74}.title{font-weight:800;font-size:16px}.meta{color:var(--muted);font-size:12px;margin-top:4px}.checks{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pill{padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;background:#f2eee3;color:var(--warn)}.pill.ok{background:#e6f4e9;color:#086b43}.btn{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:8px 11px;background:#fff;color:var(--text);text-decoration:none;font-weight:750}.btn.primary{background:var(--green);border-color:var(--green);color:#fff}.empty{padding:18px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);text-align:center}@media(max-width:800px){.hero{flex-direction:column}.wrap{padding:12px}}
+  </style>
+</head>
+<body>{% set admin_section = 'coordinate_review' %}{% include 'admin_sidebar.html' %}<div class="wrap">
+  <div class="hero">
+    <div><div class="brand">Schritt 1a · Koordinaten prüfen</div><div class="sub">Hier liegen alle entdeckten Märkte, bei denen Adresse oder Position noch nicht vollständig bestätigt sind. Öffne einen Markt, vergleiche die Punkte visuell und bestätige erst dann die Position.</div></div>
+    <div class="stats"><div class="stat"><strong>{{ open_rows|length }}</strong><span>offen</span></div><div class="stat"><strong>{{ ready_rows|length }}</strong><span>geprüft</span></div></div>
+  </div>
+
+  <section class="card">
+    <h2>Offene Prüfungen</h2>
+    {% if open_rows %}<div class="queue">{% for row in open_rows %}
+      <article class="item">
+        <div class="title">{{ row.retailer }} · {{ row.name }}</div>
+        <div class="meta">{{ row.address }}, {{ row.postal_code }} {{ row.city }} · Kandidat {{ row.id }}</div>
+        <div class="checks"><span class="pill {% if row.address_verified %}ok{% endif %}">Adresse {{ '✓' if row.address_verified else 'offen' }}</span><span class="pill {% if row.coordinates_verified %}ok{% endif %}">Position {{ '✓' if row.coordinates_verified else 'offen' }}</span><span class="pill {% if row.official_source_verified %}ok{% endif %}">Quelle {{ '✓' if row.official_source_verified else 'offen' }}</span></div>
+        <a class="btn primary" href="/admin/coverage/candidates/{{ row.id }}/coordinate-review">Prüfung öffnen →</a>
+      </article>
+    {% endfor %}</div>{% else %}<div class="empty">Keine offenen Koordinatenprüfungen. Dieser Freigabeschritt ist aktuell sauber.</div>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Bereits bestätigte Positionen</h2>
+    {% if ready_rows %}<div class="queue">{% for row in ready_rows[:30] %}
+      <article class="item ready"><div class="title">{{ row.retailer }} · {{ row.name }}</div><div class="meta">{{ row.address }}, {{ row.postal_code }} {{ row.city }}</div><div class="checks"><span class="pill ok">Adresse ✓</span><span class="pill ok">Position ✓</span></div><a class="btn" href="/admin/coverage/candidates/{{ row.id }}/coordinate-review">Details</a></article>
+    {% endfor %}</div>{% else %}<div class="empty">Noch keine bestätigten Positionen vorhanden.</div>{% endif %}
+  </section>
+</div></body></html>
