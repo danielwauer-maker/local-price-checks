@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from .aldi_web_offer_audit import run_aldi_web_offer_audit
 from .edeka_multi_source_audit import fetch_combined_edeka
 from .edeka_web_offer_api_audit import (
     _persist_edeka_failure,
@@ -152,15 +153,18 @@ def _attach_source_breakdown(db, run, result) -> None:
 
 
 def run_web_offer_audit(db, store: Store, period_key: str = "current", source_url: str | None = None):
-    """Run EDEKA audit as central-primary plus optional local supplement.
+    """Dispatch reviewed retailer audits without writing public offer rows.
 
-    The central EDEKA market source is always collected first. For verified
-    markets with an official local merchant source (currently Fellenzer
-    071378), local offers are added afterwards. Strong product identities may
-    merge across sources even if the price differs (visible conflict); weak
-    name/quantity matches only merge when the price also agrees. No path writes
-    public Offer rows.
+    ALDI SÜD uses its official stationary regional-chain surface when no
+    branch-specific servicePoint ID is available. That QA path is deliberately
+    marked as *not* sufficient for the independent external-validation gate.
+
+    EDEKA remains central-primary plus optional local supplement. Other
+    retailers continue through the reviewed legacy audit adapter.
     """
+    if store.retailer == "ALDI SÜD":
+        return run_aldi_web_offer_audit(db, store, period_key=period_key, source_url=source_url)
+
     if store.retailer != "EDEKA":
         return run_legacy_edeka_audit(db, store, period_key=period_key, source_url=source_url)
 
