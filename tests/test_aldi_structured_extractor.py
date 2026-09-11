@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from app.aldi_live_collector import parse_aldi_stationary_chain_document
 from app.engine_v140.source_registry import RetailSource
 
@@ -85,6 +87,59 @@ def test_live_style_card_reconstructs_title_when_name_and_pack_are_split():
     assert rows[0].unit == "g"
     assert rows[0].source_text.count("Spare") == 1
     assert "Putenbrust" not in rows[0].source_text
+
+
+def test_weekly_category_accepts_single_price_without_inventing_regular_price():
+    source = replace(
+        _source(),
+        url="https://www.aldi-sued.de/produkte/wochenangebote/frischeprodukte-im-angebot/k/1588161427299187",
+    )
+    visible = "Angebote der aktuellen Woche. Mo., 7.9. – Sa., 12.9."
+    html = """
+    <html><body>
+      <a class="product-card" href="/produkt/trauben">
+        <span>NATUR LIEBLINGE</span>
+        <span>Trauben dunkel kernlos 500 g</span>
+        <span>0,5 kg (2,50 €/1 kg)</span>
+        <span>1,25 €</span>
+        <img src="/img/trauben.webp" alt="Trauben dunkel kernlos 500 g">
+      </a>
+    </body></html>
+    """
+
+    rows = parse_aldi_stationary_chain_document(
+        source, html, visible, [], allow_single_price=True
+    )
+
+    assert len(rows) == 1
+    assert rows[0].product_name == "Trauben dunkel kernlos 500 g"
+    assert rows[0].price == 1.25
+    assert rows[0].regular_price is None
+    assert rows[0].valid_from == "07.09.2026"
+    assert rows[0].valid_to == "12.09.2026"
+    assert rows[0].image_url == "https://www.aldi-sued.de/img/trauben.webp"
+
+
+def test_weekly_category_single_price_rejects_action_card_with_available_since():
+    source = replace(
+        _source(),
+        url="https://www.aldi-sued.de/produkte/wochenangebote/frischeprodukte-im-angebot/k/1588161427299187",
+    )
+    visible = "Angebote der aktuellen Woche. Mo., 7.9. – Sa., 12.9."
+    html = """
+    <html><body>
+      <a href="/produkt/action">
+        <span>Verfügbar seit 07.09.2026</span>
+        <span>HOME CREATION Duftkerze 500 g</span>
+        <span>4,99 €</span>
+      </a>
+    </body></html>
+    """
+
+    rows = parse_aldi_stationary_chain_document(
+        source, html, visible, [], allow_single_price=True
+    )
+    assert rows == []
 
 
 def test_structured_card_never_turns_deposit_into_offer_price():
