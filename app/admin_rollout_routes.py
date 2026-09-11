@@ -32,7 +32,7 @@ router = APIRouter()
 
 
 _LIFECYCLE_LABELS = {
-    "discovered": "Entdeckt",
+    "discovered": "Identität offen",
     "identity_verified": "Identität geprüft",
     "promoted": "Bereit für Test-Scrape",
     "scrape_pending": "Test-Scrape läuft",
@@ -86,27 +86,28 @@ def enable_store_for_qa(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    """Enable collection/QA without publishing the market to users."""
+    """Enable collection/QA without publishing the market to users.
+
+    A legacy public row with no activation identity may be safely pulled back
+    into QA. It stays blocked from test-scrape until identity verification is
+    completed, instead of returning a raw JSON error page.
+    """
     store = db.get(Store, store_id)
     if store is None:
         raise HTTPException(404, "Markt nicht gefunden")
-    if not store_identity_verified(db, store):
-        raise HTTPException(
-            400,
-            "QA-Aktivierung erfordert zuerst eine bestätigte Marktidentität. Bitte Marktidentitäten prüfen.",
-        )
+    identity_verified = store_identity_verified(db, store)
     state = ensure_activation_state(db, store)
     store.active = True
     store.benchmark_verified = False
-    state.identity_verified = True
+    state.identity_verified = bool(identity_verified)
     state.manually_suspended = False
     state.suspension_reason = None
     state.suspended_at = None
-    state.lifecycle_status = "promoted"
+    state.lifecycle_status = "promoted" if identity_verified else "discovered"
     state.last_error = None
     state.updated_at = datetime.utcnow()
     db.commit()
-    return _rollout_redirect(store, "qa-enabled")
+    return _rollout_redirect(store, "qa-enabled" if identity_verified else "qa-needs-identity")
 
 
 @router.post("/admin/rollout/stores/{store_id}/qa-disable")
