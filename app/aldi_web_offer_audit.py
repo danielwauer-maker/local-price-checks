@@ -7,7 +7,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from .aldi_live_collector import is_official_aldi_offer_url, parse_aldi_stationary_chain_offers
+from .aldi_live_collector import is_official_aldi_offer_url, parse_aldi_stationary_chain_document
 from .engine_v140.browser_fetch import browser_fetch
 from .engine_v140.collectors import images, visible
 from .engine_v140.source_registry import RetailSource
@@ -76,6 +76,7 @@ def _to_web_offer(store: Store, row, source_url: str) -> WebOfferRecord:
             "store_specific": False,
             "shared_parser_with_production_collector": True,
             "independent_external_validation": False,
+            "parser_mode": "structured_dom_cards_v2",
             "note": (
                 "Audit of the official stationary ALDI chain surface. Useful for QA/comparison, "
                 "but it must not satisfy the independent external-validation gate by itself."
@@ -98,12 +99,7 @@ def fetch_aldi_stationary_chain_audit(
     started = time.monotonic()
     try:
         try:
-            fetched = fetcher(
-                source_url,
-                timeout_ms=30_000,
-                capture_diagnostics=True,
-                drain_offer_surface=True,
-            )
+            fetched = fetcher(source_url, timeout_ms=30_000, capture_diagnostics=True, drain_offer_surface=True)
         except TypeError:
             fetched = fetcher(source_url, timeout_ms=30_000)
     except TimeoutError as exc:
@@ -118,6 +114,8 @@ def fetch_aldi_stationary_chain_audit(
         raise WebAuditError("blocked", f"ALDI-Audit wurde auf unerwartete URL umgeleitet: {final_url}")
 
     html = fetched.content.decode("utf-8", errors="replace")
+    text = visible(html)
+    image_rows = images(html, final_url)
     source = RetailSource(
         key=f"aldi_web_audit_{store.id}",
         retailer="ALDI SÜD",
@@ -128,40 +126,38 @@ def fetch_aldi_stationary_chain_audit(
         store_specific=False,
         notes="Audit-only ALDI stationary chain source",
     )
-    rows = parse_aldi_stationary_chain_offers(
+    rows = parse_aldi_stationary_chain_document(
         replace(source, url=final_url),
-        visible(html),
-        images(html, final_url),
+        html,
+        text,
+        image_rows,
     )
     offers = [_to_web_offer(store, row, final_url) for row in rows]
     offers, duplicates = quality_deduplicate(offers)
     if not offers:
         raise WebAuditError(
             "empty",
-            "ALDI SÜD: Die offizielle Angebotsseite enthält keine sicher datierten stationären Wochenangebote.",
-            {
-                "fetch_mode": fetched.mode,
-                "final_url": final_url,
-                "response_bytes": len(fetched.content),
-            },
+            "ALDI SÜD: Die offizielle Angebotsseite enthält keine sicher isolierten, datierten Angebotskarten.",
+            {"fetch_mode": fetched.mode, "final_url": final_url, "response_bytes": len(fetched.content)},
         )
 
     return WebAuditResult(
         offers=offers,
         source_url=source_url,
         final_url=final_url,
-        collector_path="aldi_stationary_chain_audit",
+        collector_path="aldi_structured_dom_cards_v2",
         raw_count=len(rows),
         duplicate_count=duplicates,
         message=(
             f"{round((time.monotonic() - started) * 1000)} ms · offizielle ALDI-SÜD-Chain-Quelle; "
-            "kein Ersatz für unabhängige externe Validierung"
+            "strukturierte DOM-Karten; kein Ersatz für unabhängige externe Validierung"
         ),
         artifacts={
             "fetch_mode": fetched.mode,
             "final_url": final_url,
             "response_bytes": len(fetched.content),
             "scope": "regional_chain_stationary",
+            "parser_mode": "structured_dom_cards_v2",
             "store_specific": False,
             "independent_external_validation": False,
             "shared_parser_with_production_collector": True,
@@ -183,7 +179,7 @@ def run_aldi_web_offer_audit(
         retailer=store.retailer,
         period_key=period_key,
         source_url=url,
-        collector_path="aldi_stationary_chain_audit",
+        collector_path="aldi_structured_dom_cards_v2",
         status="running",
     )
     db.add(run)
@@ -209,6 +205,7 @@ def run_aldi_web_offer_audit(
         comparison = _comparison(db, store, result.offers, period_key)
         comparison.update({
             "audit_scope": "regional_chain_stationary",
+            "parser_mode": "structured_dom_cards_v2",
             "store_specific": False,
             "independent_external_validation": False,
             "external_validation_gate_eligible": False,
