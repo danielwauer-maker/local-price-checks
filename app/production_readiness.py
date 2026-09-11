@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import asdict, dataclass, field
@@ -45,6 +46,9 @@ class StoreReadiness:
     run_status: str | None = None
     quality_status: str | None = None
     benchmark_status: str | None = None
+    benchmark_context: str | None = None
+    external_validation_status: str | None = None
+    external_validation_checked: int = 0
     quality_score: float | None = None
     offers_imported: int = 0
     reasons: tuple[str, ...] = ()
@@ -224,7 +228,7 @@ def validate_external_samples(
         idx, offer = candidate
         used.add(idx)
         mismatches: list[str] = []
-        checks = matches = 1  # product identity already matched above threshold
+        checks = matches = 1
 
         def check_text(field_name: str, expected: str | None, actual: Any) -> None:
             nonlocal checks, matches
@@ -322,6 +326,33 @@ def validate_external_samples(
     )
 
 
+def persist_external_validation_result(
+    db: Session,
+    *,
+    run: CollectionRun,
+    result: ExternalValidationResult,
+) -> CollectionQualitySnapshot:
+    """Attach an independent external validation result to this exact collector run."""
+
+    snapshot = _snapshot_for_run(db, run)
+    if snapshot is None:
+        raise ValueError("quality snapshot required before external validation can be persisted")
+    metrics = _snapshot_metrics(snapshot)
+    metrics.update(
+        {
+            "external_validation_status": result.status,
+            "external_validation_score": result.score,
+            "external_validation_checked": result.checked,
+            "external_validation_matched": result.matched,
+            "external_validation_missing": result.missing,
+            "external_validation_online_only_leaks": result.online_only_leaks,
+        }
+    )
+    snapshot.metrics_json = json.dumps(metrics, ensure_ascii=False, sort_keys=True)
+    db.commit()
+    return snapshot
+
+
 def quality_metric_for_display(metrics: Mapping[str, Any], metric: str) -> float | int | str | None:
     """Return N/A semantics for diagnostics that were never applicable.
 
@@ -390,6 +421,16 @@ def _snapshot_for_run(db: Session, run: CollectionRun | None) -> CollectionQuali
     )
 
 
+def _snapshot_metrics(snapshot: CollectionQualitySnapshot | None) -> dict[str, Any]:
+    if snapshot is None or not snapshot.metrics_json:
+        return {}
+    try:
+        loaded = json.loads(snapshot.metrics_json)
+    except (TypeError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _match_target(stores: Iterable[Store], target: TargetMarket) -> Store | None:
     candidates = [
         store
@@ -400,8 +441,7 @@ def _match_target(stores: Iterable[Store], target: TargetMarket) -> Store | None
     ]
     if target.external_id:
         exact = [store for store in candidates if str(store.external_id or "") == target.external_id]
-        if exact:
-            return exact[0]
+        return exact[0] if exact else None
     return candidates[0] if candidates else None
 
 
@@ -420,9 +460,16 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
 
     run = _latest_run(db, store.id)
     snapshot = _snapshot_for_run(db, run)
+    metrics = _snapshot_metrics(snapshot)
     run_status = run.status if run else None
     quality_status = snapshot.quality_status if snapshot else None
     benchmark_status = snapshot.benchmark_status if snapshot else None
+    benchmark_context = snapshot.benchmark_context if snapshot else None
+    external_validation_status = str(metrics.get("external_validation_status") or "") or None
+    try:
+        external_validation_checked = int(metrics.get("external_validation_checked") or 0)
+    except (TypeError, ValueError):
+        external_validation_checked = 0
     reasons: list[str] = []
 
     if not store.active:
@@ -436,15 +483,24 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
     else:
         if quality_status != "PASS":
             reasons.append("quality_not_pass")
+        if benchmark_context != "PRODUCTION":
+            reasons.append("benchmark_context_not_production")
         if benchmark_status != "PASS":
             reasons.append("benchmark_not_pass")
+        if external_validation_status != "PASS":
+            reasons.append("external_validation_not_pass")
+        if external_validation_checked < 10:
+            reasons.append("external_validation_insufficient_samples")
 
     collector_primary = bool(
         store.active
         and run_status == "success"
         and snapshot is not None
         and quality_status == "PASS"
+        and benchmark_context == "PRODUCTION"
         and benchmark_status == "PASS"
+        and external_validation_status == "PASS"
+        and external_validation_checked >= 10
     )
     if collector_primary:
         strategy = "collector_primary"
@@ -467,6 +523,9 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
         run_status=run_status,
         quality_status=quality_status,
         benchmark_status=benchmark_status,
+        benchmark_context=benchmark_context,
+        external_validation_status=external_validation_status,
+        external_validation_checked=external_validation_checked,
         quality_score=snapshot.quality_score if snapshot else None,
         offers_imported=int(run.offers_imported or 0) if run else 0,
         reasons=tuple(reasons),
