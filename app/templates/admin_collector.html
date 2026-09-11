@@ -23,30 +23,13 @@
     <p class="small">Scheduler: {{ 'aktiv' if scheduler_enabled else 'inaktiv' }} · Manuelle Sammlung ENV: {{ 'aktiv' if manual_collection_enabled else 'inaktiv' }}.</p>
   </div>
 
-  {% set readiness = namespace(collector=0, external=7, blocked=0) %}
-  {% for s in stores %}
-    {% set is_target =
-      (s.retailer == 'Lidl' and s.city == 'Puderbach' and 'Lidl' in s.name) or
-      (s.retailer == 'EDEKA' and s.city == 'Puderbach' and 'Fellenzer' in s.name) or
-      (s.retailer == 'ALDI SÜD' and s.city == 'Dierdorf' and 'ALDI' in s.name) or
-      (s.retailer == 'Netto Marken-Discount' and s.city == 'Dierdorf' and 'Netto' in s.name) or
-      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and s.external_id == '321019') or
-      (s.retailer == 'ALDI SÜD' and s.city == 'Oberhonnefeld-Gierend' and 'ALDI' in s.name) or
-      (s.retailer == 'Netto Marken-Discount' and s.city == 'Oberhonnefeld-Gierend' and 'Netto' in s.name)
-    %}
-    {% if is_target %}
-      {% set rr=latest.get(s.id) %}{% set rq=quality_by_run.get(rr.id) if rr else none %}
-      {% if not s.active %}{% set readiness.blocked = readiness.blocked + 1 %}{% set readiness.external = readiness.external - 1 %}
-      {% elif rr and rr.status == 'success' and rq and rq.quality_status == 'PASS' and rq.benchmark_status == 'PASS' %}{% set readiness.collector = readiness.collector + 1 %}{% set readiness.external = readiness.external - 1 %}{% endif %}
-    {% endif %}
-  {% endfor %}
   <div class="card">
-    <div class="actions" style="align-items:center;justify-content:space-between"><div><h2 style="margin:0">Production Readiness</h2><div class="small">Die sieben Startmärkte direkt im Collector. Collector primary nur bei letztem Lauf = success, Quality = PASS und Benchmark = PASS.</div></div><a class="btn" href="/admin/collector/readiness">Diagnose & N/A-Metriken öffnen</a></div>
+    <div class="actions" style="align-items:center;justify-content:space-between"><div><h2 style="margin:0">Production Readiness</h2><div class="small">Die sieben Startmärkte direkt im Collector. Collector primary nur nach Success + Quality PASS + Production-Benchmark PASS + External Validation PASS (≥ 10 Stichproben).</div></div><a class="btn" href="/admin/collector/readiness">Diagnose & N/A-Metriken öffnen</a></div>
     <div class="readiness-grid">
-      <div class="readiness-metric"><span class="label">Production ready</span><strong>{{ readiness.collector }}/7</strong><span class="small">Startmärkte mit Collector primary</span></div>
-      <div class="readiness-metric"><span class="label">Collector primary</span><strong>{{ readiness.collector }}</strong><span class="small">eigene Daten führend</span></div>
-      <div class="readiness-metric"><span class="label">External primary</span><strong>{{ readiness.external }}</strong><span class="small">externe Quelle bleibt führend</span></div>
-      <div class="readiness-metric"><span class="label">Blocked</span><strong>{{ readiness.blocked }}</strong><span class="small">inaktive Zielmärkte</span></div>
+      <div class="readiness-metric"><span class="label">Production ready</span><strong>{{ production_readiness.collector_primary }}/{{ production_readiness.target_count }}</strong><span class="small">Startmärkte mit Collector primary</span></div>
+      <div class="readiness-metric"><span class="label">Collector primary</span><strong>{{ production_readiness.collector_primary }}</strong><span class="small">eigene Daten führend</span></div>
+      <div class="readiness-metric"><span class="label">External primary</span><strong>{{ production_readiness.external_primary }}</strong><span class="small">externe Quelle bleibt führend</span></div>
+      <div class="readiness-metric"><span class="label">Blocked</span><strong>{{ production_readiness.blocked }}</strong><span class="small">gesperrte Zielmärkte</span></div>
     </div>
   </div>
 
@@ -63,17 +46,9 @@
   {% set ns = namespace(has_running=false) %}
   <div class="card"><h2>Märkte & Prospekte</h2><div class="scroll"><table>
     <tr><th>Markt</th><th>Primärquelle</th><th>Status / Freigabe</th><th>Letzter Lauf</th><th>Empfangen / importiert</th><th>Archiviertes Prospekt</th><th>Fallback: PDF hinterlegen</th><th>Sammlung / QA</th><th>Reset</th></tr>
-    {% for s in stores %}{% set a=activation_overviews.get(s.id) %}{% set r=latest.get(s.id) %}{% set q=quality_by_run.get(r.id) if r else none %}{% set g=progress_by_run.get(r.id) if r else none %}{% set p=prospects.get(s.id) %}{% set pn=next_prospects.get(s.id) %}{% set is_target =
-      (s.retailer == 'Lidl' and s.city == 'Puderbach' and 'Lidl' in s.name) or
-      (s.retailer == 'EDEKA' and s.city == 'Puderbach' and 'Fellenzer' in s.name) or
-      (s.retailer == 'ALDI SÜD' and s.city == 'Dierdorf' and 'ALDI' in s.name) or
-      (s.retailer == 'Netto Marken-Discount' and s.city == 'Dierdorf' and 'Netto' in s.name) or
-      (s.retailer == 'REWE' and s.city == 'Dierdorf' and 'REWE' in s.name and s.external_id == '321019') or
-      (s.retailer == 'ALDI SÜD' and s.city == 'Oberhonnefeld-Gierend' and 'ALDI' in s.name) or
-      (s.retailer == 'Netto Marken-Discount' and s.city == 'Oberhonnefeld-Gierend' and 'Netto' in s.name)
-    %}{% if r and r.status == 'running' %}{% set ns.has_running = true %}{% endif %}<tr>
+    {% for s in stores %}{% set a=activation_overviews.get(s.id) %}{% set r=latest.get(s.id) %}{% set q=quality_by_run.get(r.id) if r else none %}{% set g=progress_by_run.get(r.id) if r else none %}{% set p=prospects.get(s.id) %}{% set pn=next_prospects.get(s.id) %}{% set readiness_row=readiness_by_store.get(s.id) %}{% if r and r.status == 'running' %}{% set ns.has_running = true %}{% endif %}<tr>
       <td><b>{{ s.name }}</b><br><span class="small">{{ s.retailer }} · {{ s.city }} · ID {{ s.external_id or '–' }}</span></td>
-      <td>{% if not is_target %}<span class="small">–</span>{% elif not s.active %}<span class="pill source-pill blocked">Blocked</span>{% elif r and r.status == 'success' and q and q.quality_status == 'PASS' and q.benchmark_status == 'PASS' %}<span class="pill source-pill collector">Collector primary</span>{% else %}<span class="pill source-pill external">External primary</span>{% endif %}</td>
+      <td>{% if not readiness_row %}<span class="small">–</span>{% elif readiness_row.source_strategy == 'collector_primary' %}<span class="pill source-pill collector">Collector primary</span>{% elif readiness_row.source_strategy == 'blocked' %}<span class="pill source-pill blocked">Blocked</span>{% else %}<span class="pill source-pill external">External primary</span>{% endif %}</td>
       <td><span class="pill {% if not s.active %}bad{% endif %}">{{ 'aktiv' if s.active else 'inaktiv' }}</span><br><span class="pill {% if not a.is_public %}qa{% endif %}">{{ 'Nutzer freigegeben' if a.is_public else a.status }}</span>{% if a.can_publish %}<form method="post" action="/admin/collector/stores/{{ s.id }}/release" style="margin-top:6px"><input type="hidden" name="released" value="1"><button class="btn primary">Für Nutzer freigeben</button></form>{% elif a.can_suspend %}<form method="post" action="/admin/collector/stores/{{ s.id }}/release" style="margin-top:6px"><input type="hidden" name="released" value="0"><button class="btn warn">Markt sperren</button></form>{% else %}<div class="small">Freigabe erst nach Quality Gate.</div>{% endif %}</td>
       <td>{% if r %}<time class="local-time" datetime="{{ r.started_at.isoformat() }}Z">{{ r.started_at }}</time>{% else %}–{% endif %}<br>{% if r %}<span class="pill {% if r.status == 'running' %}running{% elif r.status not in ['success'] %}bad{% endif %}">Collector {{ r.status }}</span>{% endif %}{% if q %}<br><span class="pill {% if q.quality_status == 'FAIL' %}bad{% elif q.quality_status == 'WARN' %}qa{% endif %}">Quality {{ q.quality_status }}</span><br><span class="pill {% if q.benchmark_status == 'FAIL' %}bad{% elif q.benchmark_status in ['WARN', 'NOT_APPLICABLE'] %}qa{% endif %}">Benchmark {{ q.benchmark_status }}</span>{% endif %}</td>
       <td>{{ r.offers_received if r else 0 }} / {{ r.offers_imported if r else 0 }}{% if g %}<br><span class="small">Phase {{ g.phase }} · Seiten {{ g.pages_done }}/{{ g.pages_total or '?' }} · {{ '%.1f'|format(g.elapsed_seconds) }} s</span>{% endif %}<br><span class="small">{{ r.message if r and r.message else '' }}</span></td>
