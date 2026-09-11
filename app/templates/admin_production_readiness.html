@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Production Readiness · LocalPrices Admin</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--text:#17231c;--muted:#66756d;--line:#e1e7df;--danger:#a33b2c;--warn:#9a5a00;--blue:#315f86}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1700px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.brand{font-size:24px;font-weight:800}.sub,.small{color:var(--muted)}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.summary{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px}.metric{border:1px solid var(--line);border-radius:13px;padding:14px;background:#fff}.metric strong{display:block;font-size:25px;margin-top:3px}.metric .label{font-size:11px;text-transform:uppercase;color:var(--muted);font-weight:800;letter-spacing:.04em}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:11px;color:var(--muted);text-transform:uppercase}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8;font-weight:700}.pill.warn{background:#fff0cf;color:var(--warn)}.pill.bad{background:#fae9e6;color:var(--danger)}.pill.info{background:#eef4f9;color:var(--blue)}.reason{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--muted)}.btn{display:inline-block;border:1px solid var(--line);border-radius:11px;padding:9px 13px;background:#fff;color:var(--text);text-decoration:none;font-weight:700}.actions{display:flex;gap:8px;flex-wrap:wrap}.na{color:var(--muted);font-weight:700}.ok{color:var(--green);font-weight:800}@media(max-width:900px){.summary{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.summary{grid-template-columns:1fr}.wrap{padding:12px}}
+  </style>
+</head>
+<body>{% include 'admin_sidebar.html' %}<div class="wrap">
+  <div class="top"><div><div class="brand">Production Readiness</div><div class="sub">Sieben Startmärkte · Collector wird erst nach Success + Quality PASS + Benchmark PASS zur Primärquelle</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+
+  <div class="card">
+    <div class="actions"><a class="btn" href="/admin/collector">← Collector & Support</a><a class="btn" href="/admin/datenstatus">Datenstatus</a></div>
+    <p class="small">Nächste Angebotswoche: <b>{{ next_week_start.strftime('%d.%m.%Y') }}</b> bis <b>{{ next_week_end.strftime('%d.%m.%Y') }}</b>. Nicht anwendbare Diagnosemetriken werden bewusst als <b>N/A</b> statt 0 % angezeigt.</p>
+  </div>
+
+  <div class="card">
+    <div class="summary">
+      <div class="metric"><span class="label">Gesamtstatus</span><strong>{{ status }}</strong><span class="small">{{ collector_primary }}/{{ target_count }} production ready</span></div>
+      <div class="metric"><span class="label">Collector primary</span><strong>{{ collector_primary }}</strong><span class="small">eigene Daten freigegeben</span></div>
+      <div class="metric"><span class="label">External primary</span><strong>{{ external_primary }}</strong><span class="small">externe Validierung bleibt führend</span></div>
+      <div class="metric"><span class="label">Blocked</span><strong>{{ blocked }}</strong><span class="small">Markt nicht einsatzbereit</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Startmärkte</h2>
+    <div class="scroll"><table>
+      <tr><th>Markt</th><th>Primärquelle</th><th>Collector</th><th>Quality</th><th>Benchmark</th><th>Score</th><th>Importiert</th><th>Nächste Woche</th><th>Price anchors</th><th>Page recall</th><th>Blocker / Gründe</th></tr>
+      {% for row in stores %}
+      <tr>
+        <td><b>{{ row.store_name }}</b><br><span class="small">{{ row.retailer }} · {{ row.city }}{% if row.store_id %} · Store {{ row.store_id }}{% endif %}</span></td>
+        <td>{% if row.source_strategy == 'collector_primary' %}<span class="pill">Collector primary</span>{% elif row.source_strategy == 'external_primary' %}<span class="pill warn">External primary</span>{% else %}<span class="pill bad">Blocked</span>{% endif %}</td>
+        <td>{% if row.run_status == 'success' %}<span class="pill">success</span>{% elif row.run_status %}<span class="pill bad">{{ row.run_status }}</span>{% else %}<span class="na">N/A</span>{% endif %}</td>
+        <td>{% if row.quality_status == 'PASS' %}<span class="pill">PASS</span>{% elif row.quality_status %}<span class="pill {% if row.quality_status == 'FAIL' %}bad{% else %}warn{% endif %}">{{ row.quality_status }}</span>{% else %}<span class="na">N/A</span>{% endif %}</td>
+        <td>{% if row.benchmark_status == 'PASS' %}<span class="pill">PASS</span>{% elif row.benchmark_status %}<span class="pill {% if row.benchmark_status == 'FAIL' %}bad{% else %}warn{% endif %}">{{ row.benchmark_status }}</span>{% else %}<span class="na">N/A</span>{% endif %}</td>
+        <td>{% if row.quality_score is not none %}{{ '%.1f'|format(row.quality_score) }}{% else %}<span class="na">N/A</span>{% endif %}</td>
+        <td>{{ row.offers_imported }}</td>
+        <td>{% if row.next_week_offers %}<span class="ok">{{ row.next_week_offers }}</span>{% else %}<span class="na">0</span>{% endif %}</td>
+        <td>{% if row.price_anchor_match_rate is none %}<span class="na">N/A</span>{% else %}{{ '%.1f'|format(row.price_anchor_match_rate) }} %{% endif %}</td>
+        <td>{% if row.page_offer_recall is none %}<span class="na">N/A</span>{% else %}{{ '%.1f'|format(row.page_offer_recall) }} %{% endif %}</td>
+        <td>{% if row.reasons %}{% for reason in row.reasons %}<div class="reason">{{ reason }}</div>{% endfor %}{% else %}<span class="pill">keine</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Freigaberegel</h2>
+    <p>Ein Markt wechselt nur auf <b>Collector primary</b>, wenn der letzte Collector-Lauf erfolgreich war und sowohl technische Quality als auch der Produktions-Benchmark <b>PASS</b> sind. Bis dahin bleibt <b>External primary</b> die sichere Quelle. Ein fehlender oder inaktiver Markt wird nicht stillschweigend freigegeben.</p>
+  </div>
+</div></body></html>
