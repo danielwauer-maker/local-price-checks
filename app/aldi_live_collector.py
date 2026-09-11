@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -51,6 +52,11 @@ def _deposit_values(text: str) -> set[float]:
         if raw:
             values.add(float(raw.replace(",", ".")))
     return values
+
+
+def _money_round(value: float) -> float:
+    """Round a consumer-facing monetary value using commercial half-up rules."""
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _more_specific_name(row) -> str | None:
@@ -126,8 +132,13 @@ def _harden_aldi_row(row, imgs):
         if unit_price is not None:
             # Unit prices are consumer-facing monetary values. Keep the shared
             # helper's internal precision, but persist ALDI output at cent
-            # precision so 3.99 / 0.4 kg becomes 9.98 €/kg, not 9.975.
-            updated = replace(updated, unit_price=round(unit_price, 2), unit_price_unit=unit_price_unit)
+            # precision with commercial half-up rounding. This avoids binary
+            # float/banker's rounding turning 9.975 into 9.97.
+            updated = replace(
+                updated,
+                unit_price=_money_round(unit_price),
+                unit_price_unit=unit_price_unit,
+            )
     return updated
 
 
