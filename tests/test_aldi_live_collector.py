@@ -3,8 +3,13 @@ from __future__ import annotations
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.aldi_live_collector import is_official_aldi_offer_url, parse_aldi_stationary_chain_offers
+from app.aldi_live_collector import (
+    _harden_aldi_row,
+    is_official_aldi_offer_url,
+    parse_aldi_stationary_chain_offers,
+)
 from app.db import Base
+from app.engine_v140.collectors import CollectedOffer
 from app.engine_v140.source_registry import RetailSource
 from app.models import Store
 from app import web_collector
@@ -79,6 +84,57 @@ def test_both_target_stores_use_same_stationary_chain_scope():
     assert [(r.product_name, r.price, r.valid_from, r.valid_to) for r in dierdorf] == [
         (r.product_name, r.price, r.valid_from, r.valid_to) for r in oberhonnefeld
     ]
+
+
+def test_aldi_hardening_rejects_deposit_selected_card_bleed():
+    row = CollectedOffer(
+        "aldi-test",
+        "ALDI SÜD Dierdorf",
+        "ALDI SÜD",
+        "Vegan FARMER NATURALS",
+        "Sonstiges",
+        0.25,
+        quantity=200,
+        unit="g",
+        valid_from="07.09.2026",
+        valid_to="13.09.2026",
+        source_text=(
+            "Vegan FARMER NATURALS 200 g 1,69 € + 0,25 € Pfand EINWEG "
+            "Walnusskerne 200 g 0,2 kg (9,95 €/1 kg) Spare 33 % 1,99 € 2,99 €"
+        ),
+    )
+
+    assert _harden_aldi_row(row, []) is None
+
+
+def test_aldi_hardening_recovers_specific_title_price_regular_and_image():
+    row = CollectedOffer(
+        "aldi-test",
+        "ALDI SÜD Dierdorf",
+        "ALDI SÜD",
+        "Kühlung BBQ",
+        "Sonstiges",
+        3.99,
+        quantity=400,
+        unit="g",
+        valid_from="07.09.2026",
+        valid_to="13.09.2026",
+        source_text=(
+            "Kühlung BBQ Rinder-Cevapcici 400 g 0,4 kg (9,98 €/1 kg) "
+            "Spare 24 % 3,99 € 5,29 €"
+        ),
+    )
+    imgs = [{"url": "https://img.example/rinder.jpg", "alt": "Rinder-Cevapcici 400 g"}]
+
+    hardened = _harden_aldi_row(row, imgs)
+
+    assert hardened is not None
+    assert hardened.product_name == "Rinder-Cevapcici 400 g"
+    assert hardened.price == 3.99
+    assert hardened.regular_price == 5.29
+    assert hardened.unit_price == 9.98
+    assert hardened.unit_price_unit == "kg"
+    assert hardened.image_url == "https://img.example/rinder.jpg"
 
 
 def test_web_collector_routes_aldi_to_dedicated_collector(monkeypatch):
