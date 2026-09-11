@@ -3,6 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import admin_collector_routes
+from app.collection_quality import BenchmarkContext
 from app.db import Base
 from app.models import CollectionRun, CollectionRunProgress, Store
 
@@ -28,6 +29,26 @@ def _store(SessionLocal):
         address="Teststraße 1",
         active=True,
         benchmark_verified=True,
+    )
+    db.add(store)
+    db.commit()
+    db.refresh(store)
+    store_id = store.id
+    db.close()
+    return store_id
+
+
+def _rewe_store(SessionLocal):
+    db = SessionLocal()
+    store = Store(
+        retailer="REWE",
+        name="REWE Dierdorf",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Str. 20-22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
     )
     db.add(store)
     db.commit()
@@ -93,3 +114,43 @@ def test_background_exception_does_not_duplicate_terminal_collector_run(monkeypa
     assert runs[0].source_key == "edeka-test"
     assert runs[0].message == "collector-specific failure"
     db.close()
+
+
+def test_manual_verified_rewe_collection_runs_authoritative_completion_hook(monkeypatch):
+    SessionLocal = _session_factory()
+    store_id = _rewe_store(SessionLocal)
+    monkeypatch.setattr(admin_collector_routes, "SessionLocal", SessionLocal)
+
+    calls = {}
+    result = {"offers": ["fresh-row"]}
+    summary = object()
+
+    def collect(db, store_name, *, benchmark_context):
+        calls["collector_context"] = benchmark_context
+        calls["store_name"] = store_name
+        return result, summary, CollectionRun(
+            store_id=store_id,
+            source_key="rewe-test",
+            status="success",
+        )
+
+    def reconcile(db, store, actual_result, actual_summary, run):
+        calls["reconciled"] = True
+        calls["reconcile_store_id"] = store.id
+        calls["result"] = actual_result
+        calls["summary"] = actual_summary
+        calls["run"] = run
+        return 0
+
+    monkeypatch.setattr(admin_collector_routes, "collect_store_from_web", collect)
+    monkeypatch.setattr(admin_collector_routes, "_reconcile_rewe_manual_collection", reconcile)
+
+    admin_collector_routes._run_store_collection_background(store_id)
+
+    assert calls["collector_context"] == BenchmarkContext.PRODUCTION
+    assert calls["store_name"] == "REWE Dierdorf"
+    assert calls["reconciled"] is True
+    assert calls["reconcile_store_id"] == store_id
+    assert calls["result"] is result
+    assert calls["summary"] is summary
+    assert calls["run"].status == "success"
