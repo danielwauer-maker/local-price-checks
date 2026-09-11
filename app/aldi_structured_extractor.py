@@ -18,7 +18,7 @@ _SAVING_PAIR_RE = re.compile(
 _SIZE_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
 _UNIT_ONLY_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
 _UNIT_PRICE_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml)\s*\([^)]*€/\s*1?\s*(?:kg|g|l|ml)", re.I)
-_UNIT_PRICE_PAREN_RE = re.compile(r"\([^)]*\d+(?:[.,]\d+)?\s*€\s*/\s*(?:100\s*)?(?:kg|g|l|ml|stück|stk\.?)\s*\)", re.I)
+_UNIT_PRICE_PAREN_RE = re.compile(r"\([^)]*\d+(?:[.,]\d+)?\s*€\s*/\s*(?:(?:1|100)\s*)?(?:kg|g|l|ml|stück|stk\.?)\s*\)", re.I)
 _PRICE_RE = re.compile(r"\d{1,3}[.,]\d{2}\s*€")
 _DEPOSIT_RE = re.compile(
     r"(?:(\d{1,3}[.,]\d{2})\s*€\s*\+?\s*(?:Pfand|Mehrweg|Einweg)|(?:Pfand|Mehrweg|Einweg)\s*(\d{1,3}[.,]\d{2})\s*€)",
