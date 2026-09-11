@@ -93,22 +93,24 @@ def _harden_aldi_row(row, imgs):
     if better_name:
         updated = replace(updated, product_name=better_name, category=getattr(updated, "category", "Sonstiges"))
 
+    deposits = _deposit_values(block)
+    original_price = getattr(row, "price", None)
+
     # Prefer the explicit ALDI saving pair over arbitrary minimum-price logic.
-    # This prevents values such as ``0,25 € Pfand`` from becoming promo prices.
+    # If the legacy parser actually selected a Pfand value, the block has
+    # already crossed a card boundary; fail closed rather than borrowing the
+    # following product's saving pair.
     saving = _SAVING_PRICE_RE.search(block)
     if saving:
+        if original_price in deposits:
+            return None
         promo = float(saving.group(1).replace(",", "."))
         regular = float(saving.group(2).replace(",", "."))
         if regular <= promo:
             regular = None
         updated = replace(updated, price=promo, regular_price=regular)
-    else:
-        deposits = _deposit_values(block)
-        current_price = getattr(updated, "price", None)
-        if current_price in deposits:
-            # Fail closed if the parser selected a deposit but the card does not
-            # expose a trustworthy "Spare …" promo/regular pair.
-            return None
+    elif original_price in deposits:
+        return None
 
     if not getattr(updated, "image_url", None):
         image = best_img(imgs or [], getattr(updated, "product_name", ""))
