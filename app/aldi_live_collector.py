@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from .collection_quality import BenchmarkContext
 from .collection_service import CollectionError, collect_structured_for_store
-from .engine_v140.collectors import fetch_source, images, parse_aldi_text, visible
+from .engine_v140.collectors import best_img, fetch_source, images, parse_aldi_text, visible
+from .engine_v140.price_units import compute_unit_price
 from .models import Store
 
 
@@ -18,6 +19,19 @@ _FILIAL_SELECTOR_RE = re.compile(
     r"(?:wähle\s+deine\s+filiale|filialauswahl|filiale\s+auswählen)",
     re.IGNORECASE,
 )
+_SAVING_PRICE_RE = re.compile(
+    r"\bSpare\s+\d{1,2}\s*%\s*(\d{1,3}[.,]\d{2})\s*€(?:\s*[²*]?\s*)(\d{1,3}[.,]\d{2})\s*€",
+    re.IGNORECASE,
+)
+_DEPOSIT_RE = re.compile(
+    r"(?:(\d{1,3}[.,]\d{2})\s*€\s*\+?\s*(?:Pfand|Mehrweg|Einweg)|(?:Pfand|Mehrweg|Einweg)\s*(\d{1,3}[.,]\d{2})\s*€)",
+    re.IGNORECASE,
+)
+_SIZE_TOKEN_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b",
+    re.IGNORECASE,
+)
+_UNIT_PRICE_PAREN_RE = re.compile(r"\([^)]*(?:€\s*/|/\s*1?\s*(?:kg|l)|(?:kg|l)\s*=)[^)]*\)", re.I)
 
 
 def is_official_aldi_offer_url(url: str) -> bool:
@@ -28,6 +42,88 @@ def is_official_aldi_offer_url(url: str) -> bool:
 
 def _has_explicit_week_window(offer) -> bool:
     return bool(getattr(offer, "valid_from", None) and getattr(offer, "valid_to", None))
+
+
+def _deposit_values(text: str) -> set[float]:
+    values: set[float] = set()
+    for match in _DEPOSIT_RE.finditer(text or ""):
+        raw = match.group(1) or match.group(2)
+        if raw:
+            values.add(float(raw.replace(",", ".")))
+    return values
+
+
+def _more_specific_name(row) -> str | None:
+    """Recover a concrete package-bearing title from an over-broad ALDI label.
+
+    The live ALDI DOM can expose section/category text directly before the
+    actual product title. The legacy line parser can then emit both the broad
+    label (for example ``Kühlung BBQ``) and the real package-bearing product.
+    Only replace a broad current name when the source block starts with it and
+    immediately contains a clearly more specific title with its own pack size.
+    """
+    current = str(getattr(row, "product_name", "") or "").strip()
+    block = str(getattr(row, "source_text", "") or "").strip()
+    if not current or not block or _SIZE_TOKEN_RE.search(current):
+        return None
+    prefix = re.split(r"\bSpare\s+\d{1,2}\s*%", block, maxsplit=1, flags=re.I)[0].strip()
+    if not prefix.lower().startswith(current.lower()):
+        return None
+    remainder = prefix[len(current) :].strip(" ·|:-")
+    if not remainder:
+        return None
+    remainder = _UNIT_PRICE_PAREN_RE.sub(" ", remainder)
+    match = re.match(
+        r"(.{3,120}?\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b)",
+        remainder,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    candidate = " ".join(match.group(1).split()).strip(" ·|:-")
+    return candidate if len(candidate) >= 4 else None
+
+
+def _harden_aldi_row(row, imgs):
+    """Correct known live ALDI card ambiguities without inventing offer data."""
+    block = str(getattr(row, "source_text", "") or "")
+    updated = row
+
+    better_name = _more_specific_name(updated)
+    if better_name:
+        updated = replace(updated, product_name=better_name, category=getattr(updated, "category", "Sonstiges"))
+
+    # Prefer the explicit ALDI saving pair over arbitrary minimum-price logic.
+    # This prevents values such as ``0,25 € Pfand`` from becoming promo prices.
+    saving = _SAVING_PRICE_RE.search(block)
+    if saving:
+        promo = float(saving.group(1).replace(",", "."))
+        regular = float(saving.group(2).replace(",", "."))
+        if regular <= promo:
+            regular = None
+        updated = replace(updated, price=promo, regular_price=regular)
+    else:
+        deposits = _deposit_values(block)
+        current_price = getattr(updated, "price", None)
+        if current_price in deposits:
+            # Fail closed if the parser selected a deposit but the card does not
+            # expose a trustworthy "Spare …" promo/regular pair.
+            return None
+
+    if not getattr(updated, "image_url", None):
+        image = best_img(imgs or [], getattr(updated, "product_name", ""))
+        if image:
+            updated = replace(updated, image_url=image["url"], image_alt=image["alt"])
+
+    if getattr(updated, "price", None) is not None and getattr(updated, "quantity", None) is not None:
+        unit_price, unit_price_unit = compute_unit_price(
+            updated.price,
+            updated.quantity,
+            getattr(updated, "unit", None),
+        )
+        if unit_price is not None:
+            updated = replace(updated, unit_price=unit_price, unit_price_unit=unit_price_unit)
+    return updated
 
 
 def parse_aldi_stationary_chain_offers(source, text: str, imgs=None):
@@ -49,8 +145,30 @@ def parse_aldi_stationary_chain_offers(source, text: str, imgs=None):
         raise CollectionError(f"Nicht freigegebene ALDI-SÜD-Quelle: {source.url}")
 
     parser_text = _FILIAL_SELECTOR_RE.sub("", text or "")
-    rows = parse_aldi_text(source, parser_text, imgs or [])
-    return [row for row in rows if _has_explicit_week_window(row)]
+    image_rows = imgs or []
+    rows = parse_aldi_text(source, parser_text, image_rows)
+
+    result = []
+    seen = set()
+    for row in rows:
+        if not _has_explicit_week_window(row):
+            continue
+        hardened = _harden_aldi_row(row, image_rows)
+        if hardened is None:
+            continue
+        key = (
+            str(getattr(hardened, "product_name", "") or "").lower(),
+            getattr(hardened, "price", None),
+            getattr(hardened, "quantity", None),
+            getattr(hardened, "unit", None),
+            getattr(hardened, "valid_from", None),
+            getattr(hardened, "valid_to", None),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(hardened)
+    return result
 
 
 def collect_aldi_web_for_store(
