@@ -1,53 +1,55 @@
 <style>
-  .admin-sidebar{position:fixed;inset:0 auto 0 0;width:250px;background:#10261c;color:#eef7f1;padding:20px 14px;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,.08);font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif}
-  .admin-sidebar *{box-sizing:border-box}.admin-sidebar a{text-decoration:none}.admin-sidebar-brand{font-size:20px;font-weight:850;padding:4px 8px 16px}.admin-sidebar-brand small{display:block;font-size:11px;font-weight:600;color:#9fbaaa;margin-top:3px}.admin-sidebar-group{margin:12px 0 4px;padding:0 8px;color:#84a391;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}.admin-sidebar-nav{display:flex;flex-direction:column;gap:3px}.admin-sidebar-nav a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;color:#dbe9e1;font-weight:650}.admin-sidebar-nav a:hover{background:rgba(255,255,255,.07)}.admin-sidebar-nav a.active{background:#eaf4e7;color:#0d5839}.admin-sidebar-icon{width:20px;text-align:center;opacity:.9}.admin-sidebar-foot{margin-top:18px;padding:12px 8px 0;border-top:1px solid rgba(255,255,255,.09);color:#8fa99a;font-size:11px}
-  .admin-sidebar + .wrap{margin-left:250px!important;max-width:none!important;padding:22px 24px!important}.admin-sidebar + .wrap .nav{display:none!important}
+  .admin-sidebar{position:fixed;inset:0 auto 0 0;width:292px;background:#10261c;color:#eef7f1;padding:18px 14px;overflow-y:auto;z-index:100;border-right:1px solid rgba(255,255,255,.08);font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif}
+  .admin-sidebar *{box-sizing:border-box}.admin-sidebar a{text-decoration:none}.admin-sidebar-brand{font-size:20px;font-weight:850;padding:4px 8px 10px}.admin-sidebar-brand small{display:block;font-size:11px;font-weight:600;color:#9fbaaa;margin-top:3px}.admin-sidebar-guide{margin:4px 4px 14px;padding:11px 12px;border:1px solid rgba(255,255,255,.11);border-radius:12px;background:rgba(255,255,255,.045)}.admin-sidebar-guide strong{display:block;font-size:12px;margin-bottom:4px}.admin-sidebar-guide span{display:block;color:#a9c0b3;font-size:11px;line-height:1.45}.admin-sidebar-flow{display:flex;gap:5px;margin-top:8px}.admin-sidebar-flow i{display:grid;place-items:center;width:24px;height:24px;border-radius:999px;background:#244437;color:#d9ebe0;font-style:normal;font-size:10px;font-weight:850}.admin-sidebar-group{margin:13px 0 5px;padding:0 8px;color:#84a391;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}.admin-sidebar-nav{display:flex;flex-direction:column;gap:3px}.admin-sidebar-nav a{display:grid;grid-template-columns:28px 1fr auto;align-items:center;column-gap:8px;padding:8px 9px;border-radius:10px;color:#dbe9e1;font-weight:700}.admin-sidebar-nav a:hover{background:rgba(255,255,255,.07)}.admin-sidebar-nav a.active{background:#eaf4e7;color:#0d5839}.admin-sidebar-icon{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,.055);font-size:12px;font-weight:850}.admin-sidebar-nav a.active .admin-sidebar-icon{background:#d5eadb}.admin-sidebar-label{min-width:0}.admin-sidebar-label small{display:block;color:#91aa9c;font-size:10px;font-weight:550;line-height:1.25;margin-top:1px}.admin-sidebar-nav a.active .admin-sidebar-label small{color:#4f7664}.admin-sidebar-step{font-size:9px;font-weight:850;border-radius:999px;padding:3px 6px;background:rgba(255,255,255,.07);color:#9eb5a8}.admin-sidebar-nav a.active .admin-sidebar-step{background:#cfe6d5;color:#0d5839}.admin-sidebar-foot{margin-top:18px;padding:12px 8px 0;border-top:1px solid rgba(255,255,255,.09);color:#8fa99a;font-size:11px}
+  .admin-sidebar + .wrap{margin-left:292px!important;max-width:none!important;padding:22px 24px!important}.admin-sidebar + .wrap .nav{display:none!important}
   .admin-media-delete{margin-top:6px!important}.admin-media-delete button{background:#fae9e6!important;color:#a33b2c!important}
-  @media(max-width:850px){.admin-sidebar{position:relative;width:auto;inset:auto;padding:10px 10px 8px}.admin-sidebar-brand{padding:3px 6px 8px;font-size:17px}.admin-sidebar-brand small,.admin-sidebar-group,.admin-sidebar-foot{display:none}.admin-sidebar-nav{display:flex;flex-direction:row;gap:5px;overflow-x:auto;padding-bottom:2px}.admin-sidebar-nav a{white-space:nowrap;padding:8px 10px;background:rgba(255,255,255,.04)}.admin-sidebar-icon{display:none}.admin-sidebar + .wrap{margin-left:0!important;padding:12px!important}}
+  @media(max-width:850px){.admin-sidebar{position:relative;width:auto;inset:auto;padding:10px}.admin-sidebar-brand{padding:3px 6px 7px;font-size:17px}.admin-sidebar-brand small,.admin-sidebar-guide,.admin-sidebar-group,.admin-sidebar-foot,.admin-sidebar-label small,.admin-sidebar-step{display:none}.admin-sidebar-nav{display:flex;flex-direction:row;gap:5px;overflow-x:auto;padding-bottom:3px}.admin-sidebar-nav a{display:flex;white-space:nowrap;padding:7px 9px;background:rgba(255,255,255,.04)}.admin-sidebar-icon{display:none}.admin-sidebar + .wrap{margin-left:0!important;padding:12px!important}}
 </style>
 <aside class="admin-sidebar">
-  <div class="admin-sidebar-brand">LocalPrices Admin<small>Zentrale Verwaltung</small></div>
+  <div class="admin-sidebar-brand">Spareno Admin<small>Marktfreigabe, Datenqualität & Betrieb</small></div>
+  <div class="admin-sidebar-guide">
+    <strong>Marktfreigabe in 5 Schritten</strong>
+    <span>Gebiet → Identität → Collector → Qualität → Produktion. Für einen manuellen Test einfach von oben nach unten arbeiten.</span>
+    <div class="admin-sidebar-flow"><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i></div>
+  </div>
 
   <div class="admin-sidebar-group">Übersicht</div>
   <nav class="admin-sidebar-nav">
-    <a href="/admin?tab=dashboard" class="{% if admin_section=='dashboard' %}active{% endif %}"><span class="admin-sidebar-icon">⌂</span>Dashboard</a>
-    <a href="/admin/datenstatus" class="{% if admin_section=='data_status' %}active{% endif %}"><span class="admin-sidebar-icon">◉</span>Datenstatus</a>
-    <a href="/admin/users" class="{% if admin_section=='users' %}active{% endif %}"><span class="admin-sidebar-icon">♙</span>Nutzer</a>
+    <a href="/admin?tab=dashboard" class="{% if admin_section=='dashboard' %}active{% endif %}"><span class="admin-sidebar-icon">⌂</span><span class="admin-sidebar-label">Dashboard<small>Gesamtüberblick</small></span></a>
+    <a href="/admin/datenstatus" class="{% if admin_section=='data_status' %}active{% endif %}"><span class="admin-sidebar-icon">◉</span><span class="admin-sidebar-label">Datenstatus<small>Frische, Läufe & Auffälligkeiten</small></span></a>
   </nav>
 
-  <div class="admin-sidebar-group">Katalog</div>
+  <div class="admin-sidebar-group">Marktfreigabe</div>
   <nav class="admin-sidebar-nav">
-    <a href="/admin?tab=products" class="{% if admin_section=='products' %}active{% endif %}"><span class="admin-sidebar-icon">▦</span>Artikel</a>
-    <a href="/admin?tab=quality" class="{% if admin_section=='quality' %}active{% endif %}"><span class="admin-sidebar-icon">✓</span>Datenqualität</a>
-    <a href="/admin?tab=categories" class="{% if admin_section=='categories' %}active{% endif %}"><span class="admin-sidebar-icon">≡</span>Kategorien</a>
-    <a href="/admin?tab=media" class="{% if admin_section=='media' %}active{% endif %}"><span class="admin-sidebar-icon">▧</span>Bilder & Logos</a>
+    <a href="/admin/coverage" class="{% if admin_section=='coverage' %}active{% endif %}"><span class="admin-sidebar-icon">1</span><span class="admin-sidebar-label">Regionen & Onboarding<small>PLZ wählen und Märkte entdecken</small></span><span class="admin-sidebar-step">Start</span></a>
+    <a href="/admin/coverage/coordinate-review" class="{% if admin_section=='coordinate_review' %}active{% endif %}"><span class="admin-sidebar-icon">1a</span><span class="admin-sidebar-label">Koordinaten prüfen<small>Standorte vor Zuordnung kontrollieren</small></span></a>
+    <a href="/admin/market-identities" class="{% if admin_section=='market_identities' %}active{% endif %}"><span class="admin-sidebar-icon">2</span><span class="admin-sidebar-label">Marktidentitäten<small>Dubletten & echte Filiale absichern</small></span></a>
+    <a href="/admin?tab=stores" class="{% if admin_section=='stores' %}active{% endif %}"><span class="admin-sidebar-icon">2a</span><span class="admin-sidebar-label">Märkte<small>Stammdaten, Quelle & Aktivstatus</small></span></a>
+    <a href="/admin/collector" class="{% if admin_section=='collector' %}active{% endif %}"><span class="admin-sidebar-icon">3</span><span class="admin-sidebar-label">Collector<small>Datenlauf starten und prüfen</small></span></a>
+    <a href="/admin/rollout" class="{% if admin_section=='rollout' %}active{% endif %}"><span class="admin-sidebar-icon">3a</span><span class="admin-sidebar-label">Rollout-Steuerung<small>QA-Status und Freigabestufen</small></span></a>
+    <a href="/admin/web-offer-audit" class="{% if admin_section=='web_offer_audit' %}active{% endif %}"><span class="admin-sidebar-icon">4</span><span class="admin-sidebar-label">Web-Angebots-Audit<small>Externe Stichprobe gegen Collector</small></span></a>
+    <a href="/admin/articles/prospect-audit" class="{% if admin_section=='prospect_audit' %}active{% endif %}"><span class="admin-sidebar-icon">4a</span><span class="admin-sidebar-label">Golden Dataset<small>Prospektdaten manuell bestätigen</small></span></a>
+    <a href="/admin/articles/prospect-audit/errors" class="{% if admin_section=='prospect_errors' %}active{% endif %}"><span class="admin-sidebar-icon">!</span><span class="admin-sidebar-label">Fehler-Inbox<small>Offene QA-Fälle bearbeiten</small></span></a>
+    <a href="/admin/quality/provenance" class="{% if admin_section=='provenance' %}active{% endif %}"><span class="admin-sidebar-icon">4b</span><span class="admin-sidebar-label">Quellen & Nachweise<small>Provenance und Belege prüfen</small></span></a>
+    <a href="/admin/collector/readiness" class="{% if admin_section=='readiness' %}active{% endif %}"><span class="admin-sidebar-icon">5</span><span class="admin-sidebar-label">Produktionsfreigabe<small>Finales Gate für Collector Primary</small></span><span class="admin-sidebar-step">Final</span></a>
   </nav>
 
-  <div class="admin-sidebar-group">Märkte & Sammlung</div>
+  <div class="admin-sidebar-group">Katalog & Medien</div>
   <nav class="admin-sidebar-nav">
-    <a href="/admin?tab=stores" class="{% if admin_section=='stores' %}active{% endif %}"><span class="admin-sidebar-icon">⌖</span>Märkte</a>
-    <a href="/admin/coverage" class="{% if admin_section=='coverage' %}active{% endif %}"><span class="admin-sidebar-icon">◎</span>Regionen & Onboarding</a>
-    <a href="/admin/collector" class="{% if admin_section=='collector' %}active{% endif %}"><span class="admin-sidebar-icon">↻</span>Collector & Support</a>
+    <a href="/admin?tab=products" class="{% if admin_section=='products' %}active{% endif %}"><span class="admin-sidebar-icon">▦</span><span class="admin-sidebar-label">Artikel<small>Stammdaten und Korrekturen</small></span></a>
+    <a href="/admin?tab=quality" class="{% if admin_section=='quality' %}active{% endif %}"><span class="admin-sidebar-icon">✓</span><span class="admin-sidebar-label">Datenqualität<small>Produktdaten prüfen</small></span></a>
+    <a href="/admin?tab=categories" class="{% if admin_section=='categories' %}active{% endif %}"><span class="admin-sidebar-icon">≡</span><span class="admin-sidebar-label">Kategorien<small>Warengruppen verwalten</small></span></a>
+    <a href="/admin?tab=media" class="{% if admin_section=='media' %}active{% endif %}"><span class="admin-sidebar-icon">▧</span><span class="admin-sidebar-label">Bilder & Logos<small>Medienbestand verwalten</small></span></a>
+    <a href="/admin/product-media-review" class="{% if admin_section=='product_media_review' %}active{% endif %}"><span class="admin-sidebar-icon">◫</span><span class="admin-sidebar-label">Produktbilder prüfen<small>Bildzuordnung und Qualität</small></span></a>
   </nav>
 
-  <div class="admin-sidebar-group">Prospekt-QA</div>
+  <div class="admin-sidebar-group">Spareno & System</div>
   <nav class="admin-sidebar-nav">
-    <a href="/admin/articles/prospect-audit" class="{% if admin_section=='prospect_audit' %}active{% endif %}"><span class="admin-sidebar-icon">▤</span>Golden Dataset</a>
-    <a href="/admin/web-offer-audit" class="{% if admin_section=='web_offer_audit' %}active{% endif %}"><span class="admin-sidebar-icon">⌁</span>Web-Angebots-Audit</a>
-    <a href="/admin/articles/prospect-audit/errors" class="{% if admin_section=='prospect_errors' %}active{% endif %}"><span class="admin-sidebar-icon">!</span>Fehler-Inbox</a>
-    <a href="/admin/quality/provenance" class="{% if admin_section=='provenance' %}active{% endif %}"><span class="admin-sidebar-icon">⛓</span>Provenance-QA</a>
-  </nav>
-
-  <div class="admin-sidebar-group">Spareno</div>
-  <nav class="admin-sidebar-nav">
-    <a href="/admin/lokero-controls" class="{% if admin_section=='lokero_controls' %}active{% endif %}"><span class="admin-sidebar-icon">◈</span>Produktsteuerung</a>
-  </nav>
-
-  <div class="admin-sidebar-group">System</div>
-  <nav class="admin-sidebar-nav">
-    <a href="/admin?tab=settings" class="{% if admin_section=='settings' %}active{% endif %}"><span class="admin-sidebar-icon">⚙</span>Einstellungen</a>
-    <a href="/admin?tab=audit" class="{% if admin_section=='audit' %}active{% endif %}"><span class="admin-sidebar-icon">☷</span>Audit-Log</a>
-    <a href="/admin/support-export.zip"><span class="admin-sidebar-icon">⇩</span>Support-Export ZIP</a>
+    <a href="/admin/lokero-controls" class="{% if admin_section=='lokero_controls' %}active{% endif %}"><span class="admin-sidebar-icon">◈</span><span class="admin-sidebar-label">Produktsteuerung<small>Spareno-Funktionen steuern</small></span></a>
+    <a href="/admin/users" class="{% if admin_section=='users' %}active{% endif %}"><span class="admin-sidebar-icon">♙</span><span class="admin-sidebar-label">Nutzer<small>Accounts verwalten</small></span></a>
+    <a href="/admin?tab=settings" class="{% if admin_section=='settings' %}active{% endif %}"><span class="admin-sidebar-icon">⚙</span><span class="admin-sidebar-label">Einstellungen<small>Runtime-Konfiguration</small></span></a>
+    <a href="/admin?tab=audit" class="{% if admin_section=='audit' %}active{% endif %}"><span class="admin-sidebar-icon">☷</span><span class="admin-sidebar-label">Audit-Log<small>Änderungen nachvollziehen</small></span></a>
+    <a href="/admin/support-export.zip"><span class="admin-sidebar-icon">⇩</span><span class="admin-sidebar-label">Support-Export<small>Diagnosepaket herunterladen</small></span></a>
   </nav>
   <div class="admin-sidebar-foot">Angemeldet: {{ actor or 'Admin' }}</div>
 </aside>
