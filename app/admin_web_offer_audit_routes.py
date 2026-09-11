@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -23,6 +24,7 @@ from .web_offer_audit_models import WebOfferAuditRun
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
+ALDI_STATIONARY_AUDIT_URL = "https://www.aldi-sued.de/angebote"
 
 
 def _positive_int(value: str | int | None) -> int | None:
@@ -35,6 +37,10 @@ def _positive_int(value: str | int | None) -> int | None:
 
 def _audit_source_url(store: Store) -> str | None:
     """Resolve the admin audit URL without changing the persisted Store source."""
+    if store.retailer == "ALDI SÜD":
+        # ALDI's weekly stationary offers are chain-scoped. Store rows do not
+        # need a fake branch URL merely to make the independent audit usable.
+        return ALDI_STATIONARY_AUDIT_URL
     if store.retailer == "EDEKA" and store.external_id:
         market_id = "".join(character for character in str(store.external_id).strip() if character.isdigit())
         if market_id:
@@ -86,6 +92,32 @@ def _supported_active_stores(db: Session) -> list[Store]:
         collapse_physical_stores(raw),
         key=lambda row: (row.retailer, row.city or "", row.name or "", row.id),
     )
+
+
+def _persist_audit_preflight_failure(
+    db: Session,
+    store: Store,
+    *,
+    period_key: str,
+    source_url: str | None,
+    error: Exception,
+) -> WebOfferAuditRun:
+    """Keep admin failures inside the audit UI instead of returning raw JSON."""
+    run = WebOfferAuditRun(
+        store_id=store.id,
+        retailer=store.retailer,
+        period_key=period_key,
+        source_url=source_url or "about:blank",
+        collector_path="admin_source_preflight",
+        status="failed",
+        error_type="source_preflight",
+        message=str(error),
+        finished_at=datetime.utcnow(),
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
 
 
 def _rewe_beta_market_statuses(db: Session) -> list[dict]:
@@ -226,15 +258,22 @@ def start_web_offer_audit(
     if not requested_store or not requested_store.active or requested_store.retailer not in SUPPORTED_RETAILERS:
         raise HTTPException(status_code=404, detail="Unterstützter aktiver Markt nicht gefunden")
     store = _canonical_active_store(db, requested_store)
+    source_url = _resolved_audit_source_url(db, store)
     try:
         run = run_web_offer_audit(
             db,
             store,
             period_key=period_key,
-            source_url=_resolved_audit_source_url(db, store),
+            source_url=source_url,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        run = _persist_audit_preflight_failure(
+            db,
+            store,
+            period_key=period_key,
+            source_url=source_url,
+            error=exc,
+        )
     audit(
         db, "web_offer_audit_run", "web_offer_audit", run.id,
         f"store={store.id}; retailer={store.retailer}; period={period_key}; status={run.status}; count={run.valid_count}", actor,
