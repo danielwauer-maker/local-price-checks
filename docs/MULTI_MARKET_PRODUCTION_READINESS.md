@@ -36,6 +36,19 @@ python scripts/production_readiness.py
 
 The command exits `0` only when all seven launch markets are collector-primary. It exits `2` while rollout is still in progress.
 
+## Admin workflow
+
+The full readiness cockpit is available at `/admin/collector/readiness`. It shows all seven launch markets with source strategy, collector status, quality, benchmark, score, imported offers, next-week coverage, and diagnostic metrics.
+
+The daily operator view at `/admin/collector` now carries the same production gate directly into the collector workflow:
+
+- `x/7 production ready`
+- counts for `Collector primary`, `External primary`, and `Blocked`
+- a visible primary-source badge for each of the seven target markets in the `Märkte & Prospekte` table
+- a direct link to the detailed readiness cockpit for N/A diagnostics and root-cause inspection
+
+This keeps routine collection work on one page while preserving the detailed cockpit for diagnosis.
+
 ## Independent external validation
 
 External leaflet/web research is no longer a competing primary data source for a production-ready collector. It is an independent benchmark layer.
@@ -102,5 +115,6 @@ Retailer-specific validity can end on Saturday or Sunday; overlap with the weekl
 - Online-only negative controls do not leak into local offers.
 - Next-week data is detectable without replacing historical offer observations.
 - Dashboard/UI uses N/A for diagnostics that were not applicable instead of misleading numeric zero.
+- Collector & Support shows the same primary-source decision inline for day-to-day operation.
 
 Only after this gate should basket optimization be treated as beta-production quality across all seven launch stores.
