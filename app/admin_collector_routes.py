@@ -17,6 +17,7 @@ from .db import SessionLocal, get_db
 from .edeka_live_collector import collect_edeka_web_for_store
 from .models import CollectionRun, CollectionRunProgress, Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
+from .production_readiness import build_multi_market_readiness
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
@@ -253,6 +254,22 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
         db.close()
 
 
+def _collector_readiness_context(db: Session) -> tuple[dict, dict[int, dict]]:
+    """Expose the canonical seven-market gate to the collector admin.
+
+    The detailed readiness page and the collector overview must never implement
+    different release rules. Both therefore originate from
+    ``build_multi_market_readiness``.
+    """
+    readiness = build_multi_market_readiness(db)
+    by_store_id = {
+        int(row["store_id"]): row
+        for row in readiness["stores"]
+        if row.get("store_id") is not None
+    }
+    return readiness, by_store_id
+
+
 @router.get("/admin/collector")
 def collector_admin(request: Request, collected: str = "", db: Session = Depends(get_db), actor: str = Depends(_admin)):
     raw_stores = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
@@ -289,6 +306,7 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
         )
     }
     activation_overviews = {store.id: activation_overview(db, store) for store in stores}
+    production_readiness, readiness_by_store = _collector_readiness_context(db)
     return templates.TemplateResponse("admin_collector.html", {
         "request": request, "actor": actor, "stores": stores, "latest": latest,
         "prospects": prospects, "next_prospects": next_prospects, "recent": recent,
@@ -297,6 +315,8 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
         "quality_by_run": quality_by_run,
         "progress_by_run": progress_by_run,
         "activation_overviews": activation_overviews,
+        "production_readiness": production_readiness,
+        "readiness_by_store": readiness_by_store,
     })
 
 
