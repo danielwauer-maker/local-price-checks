@@ -43,6 +43,16 @@ def test_rewe_audit_keeps_already_normalized_offer_route():
     assert _audit_source_url(store) == url
 
 
+def test_aldi_audit_uses_canonical_stationary_chain_source_without_store_url():
+    store = _store("ALDI SÜD", None, None)
+    assert _audit_source_url(store) == "https://www.aldi-sued.de/angebote"
+
+
+def test_aldi_audit_does_not_trust_stale_store_specific_source_url():
+    store = _store("ALDI SÜD", None, "https://example.invalid/aldi")
+    assert _audit_source_url(store) == "https://www.aldi-sued.de/angebote"
+
+
 def test_other_retailers_keep_persisted_reviewed_source_url():
     store = _store("PENNY", "4030882", "https://www.penny.de/angebote")
     assert _audit_source_url(store) == "https://www.penny.de/angebote"
