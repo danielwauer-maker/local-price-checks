@@ -27,7 +27,8 @@ def evaluate_offer(row)->OfferQuality:
     if not alpha:return OfferQuality(False,0.0,('Keine Produktbezeichnung erkennbar',))
     if len(alpha)==1:
         t=alpha[0]
-        if low not in SAFE_SINGLE_WORDS and len(t)<5 and '-' not in t and not any(c.isupper() for c in t[1:]):return OfferQuality(False,0.0,('Einzelwort zu unspezifisch',))
+        has_numeric_qualifier=any(token.isdigit() for token in tokens if token != t)
+        if low not in SAFE_SINGLE_WORDS and len(t)<5 and '-' not in t and not any(c.isupper() for c in t[1:]) and not has_numeric_qualifier:return OfferQuality(False,0.0,('Einzelwort zu unspezifisch',))
     score=0.50; quantity=getattr(row,'quantity',None); unit=(getattr(row,'unit',None) or '').lower(); unit_price=getattr(row,'unit_price',None)
     if quantity is not None and quantity>0 and unit in {'kg','g','l','ml','stück','stk.','becher','dose','flasche','pckg.','btl.','fl.'}:score+=0.22
     elif unit_price is not None and unit_price>0:score+=0.15
