@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote_plus
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from .admin_routes import _admin
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .db import get_db
-from .market_activation import activation_overview
+from .market_activation import (
+    activation_overview,
+    ensure_activation_state,
+    store_identity_verified,
+)
 from .models import Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores, duplicate_groups
 from .postcode_coverage_service import candidate_ready_for_promotion
@@ -36,6 +44,19 @@ _LIFECYCLE_LABELS = {
 }
 
 
+@event.listens_for(Store.active, "set", propagate=True)
+def _clear_stale_public_gate_on_admin_reactivation(target, value, oldvalue, initiator):
+    """An active toggle is a QA/runtime switch, never a publication decision.
+
+    Legacy admin screens still mutate ``Store.active`` directly. If an older
+    store carries a stale ``benchmark_verified=True`` flag, turning it back on
+    must not make it public. Explicit ``publish_store`` remains authoritative
+    because it sets ``benchmark_verified`` after activating the row.
+    """
+    if target.id is not None and bool(value) and oldvalue is not True:
+        target.benchmark_verified = False
+
+
 def _step_state(store: Store, overview) -> tuple[str, str]:
     if store.benchmark_verified and store.active:
         return "public", "Öffentlich"
@@ -48,6 +69,66 @@ def _step_state(store: Store, overview) -> tuple[str, str]:
     if latest_run and latest_run.status in {"success", "warning"}:
         return "quality", "Qualität prüfen"
     return "test", "Test-Scrape"
+
+
+def _rollout_redirect(store: Store, suffix: str) -> RedirectResponse:
+    retailer = quote_plus(store.retailer)
+    postcode = quote_plus(store.postal_code or "")
+    return RedirectResponse(
+        f"/admin/rollout?retailer={retailer}&postal_code={postcode}&result=store:{store.id}:{suffix}",
+        status_code=303,
+    )
+
+
+@router.post("/admin/rollout/stores/{store_id}/qa-enable")
+def enable_store_for_qa(
+    store_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    """Enable collection/QA without publishing the market to users."""
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    if not store_identity_verified(db, store):
+        raise HTTPException(
+            400,
+            "QA-Aktivierung erfordert zuerst eine bestätigte Marktidentität. Bitte Marktidentitäten prüfen.",
+        )
+    state = ensure_activation_state(db, store)
+    store.active = True
+    store.benchmark_verified = False
+    state.identity_verified = True
+    state.manually_suspended = False
+    state.suspension_reason = None
+    state.suspended_at = None
+    state.lifecycle_status = "promoted"
+    state.last_error = None
+    state.updated_at = datetime.utcnow()
+    db.commit()
+    return _rollout_redirect(store, "qa-enabled")
+
+
+@router.post("/admin/rollout/stores/{store_id}/qa-disable")
+def disable_store_for_qa(
+    store_id: int,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    """Pause QA and collection; never preserve a user-facing publication flag."""
+    store = db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(404, "Markt nicht gefunden")
+    state = ensure_activation_state(db, store)
+    store.active = False
+    store.benchmark_verified = False
+    state.lifecycle_status = "suspended"
+    state.manually_suspended = True
+    state.suspension_reason = "QA manuell pausiert"
+    state.suspended_at = datetime.utcnow()
+    state.updated_at = datetime.utcnow()
+    db.commit()
+    return _rollout_redirect(store, "qa-disabled")
 
 
 @router.get("/admin/rollout")
