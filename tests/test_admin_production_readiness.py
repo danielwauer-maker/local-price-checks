@@ -75,7 +75,10 @@ def test_readiness_admin_context_shows_na_for_non_applicable_diagnostics(monkeyp
 
     monkeypatch.setattr("app.admin_data_status_routes.app_today", lambda: date(2026, 9, 11))
     context = _readiness_context(db)
-    rewe = next(row for row in context["stores"] if row["target_key"] == "rewe-dierdorf")
+    rewe = next(
+        row for row in context["stores"]
+        if row["target_key"] == "rewe-hundertmark-dierdorf"
+    )
 
     assert rewe["source_strategy"] == "collector_primary"
     assert rewe["price_anchor_match_rate"] is None
