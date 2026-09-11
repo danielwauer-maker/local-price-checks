@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
 from .engine_v140.collectors import CollectedOffer, best_img, cat, infer_validity, size
 from .engine_v140.price_units import compute_unit_price
+from .engine_v140.week_utils import parse_any_date
 
 
 _SAVING_PAIR_RE = re.compile(
@@ -21,6 +23,12 @@ _DEPOSIT_RE = re.compile(
     re.I,
 )
 _NAV_PREFIX_RE = re.compile(r"^(?:alle\s+anzeigen\s+)+", re.I)
+_ALDI_EXPLICIT_WEEK_RE = re.compile(
+    r"\bWochenangebote\s+(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*"
+    r"(\d{1,2}\.\d{1,2}\.?)\s*[–-]\s*"
+    r"(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*(\d{1,2}\.\d{1,2}\.?)",
+    re.I,
+)
 
 
 def _norm(value: str) -> str:
@@ -34,6 +42,36 @@ def _deposit_values(text: str) -> set[float]:
         if raw:
             values.add(float(raw.replace(",", ".")))
     return values
+
+
+def _explicit_aldi_week_window(text: str):
+    """Return an explicit ALDI weekly range without guessing missing dates.
+
+    The shared parser historically recognises ALDI's Monday-to-Saturday heading.
+    The live page/tests can also carry an explicit Sunday end date. Accept that
+    retailer-specific heading only when both dates are present and form a
+    plausible contiguous offer window of at most seven days.
+    """
+    valid_from, valid_to, _, _ = infer_validity(text or "")
+    if valid_from and valid_to:
+        return valid_from, valid_to
+
+    match = _ALDI_EXPLICIT_WEEK_RE.search(text or "")
+    if not match:
+        return None, None
+    start = parse_any_date(match.group(1))
+    end = parse_any_date(match.group(2))
+    if not start or not end:
+        return None, None
+    if end < start:
+        try:
+            end = end.replace(year=start.year + 1)
+        except ValueError:
+            return None, None
+    duration = end - start
+    if duration < timedelta(0) or duration > timedelta(days=7):
+        return None, None
+    return start, end
 
 
 def _container_for_saving_marker(node: Tag) -> Tag | None:
@@ -61,7 +99,10 @@ def _container_for_saving_marker(node: Tag) -> Tag | None:
 
 def _title_from_card(card: Tag) -> str | None:
     parts = [_norm(part) for part in card.stripped_strings if _norm(part)]
-    marker_idx = next((i for i, part in enumerate(parts) if re.search(r"\bSpare\s+\d{1,2}\s*%", part, re.I)), len(parts))
+    marker_idx = next(
+        (i for i, part in enumerate(parts) if re.search(r"\bSpare\s+\d{1,2}\s*%", part, re.I)),
+        len(parts),
+    )
     before = parts[:marker_idx]
 
     # Prefer the nearest package-bearing textual node. Pure quantity/unit-price
@@ -80,14 +121,23 @@ def _title_from_card(card: Tag) -> str | None:
         # label. This is structural de-duplication, not category guessing.
         if idx > 0:
             previous = _NAV_PREFIX_RE.sub("", before[idx - 1]).strip(" ·|:-")
-            if 3 <= len(previous) <= 48 and raw.lower().startswith(previous.lower() + " ") and not _SIZE_RE.search(previous):
+            if (
+                3 <= len(previous) <= 48
+                and raw.lower().startswith(previous.lower() + " ")
+                and not _SIZE_RE.search(previous)
+            ):
                 raw = raw[len(previous) :].strip(" ·|:-")
         return raw[:180] if len(raw) >= 3 else None
 
     return None
 
 
-def _card_image(card: Tag, base_url: str, product_name: str, all_images: list[dict]) -> tuple[str | None, str | None]:
+def _card_image(
+    card: Tag,
+    base_url: str,
+    product_name: str,
+    all_images: list[dict],
+) -> tuple[str | None, str | None]:
     for img in card.find_all("img"):
         alt = _norm(str(img.get("alt") or ""))
         raw_url = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
@@ -104,7 +154,12 @@ def _card_image(card: Tag, base_url: str, product_name: str, all_images: list[di
     return None, None
 
 
-def parse_aldi_offer_cards(source, html: str, visible_text: str, all_images: list[dict] | None = None):
+def parse_aldi_offer_cards(
+    source,
+    html: str,
+    visible_text: str,
+    all_images: list[dict] | None = None,
+):
     """Parse ALDI stationary offers from isolated DOM cards.
 
     Fail closed when a card cannot provide one unambiguous saving pair, a
@@ -112,7 +167,7 @@ def parse_aldi_offer_cards(source, html: str, visible_text: str, all_images: lis
     validity. Deposit amounts are never accepted as promotional prices.
     """
     soup = BeautifulSoup(html or "", "html.parser")
-    valid_from, valid_to, _, _ = infer_validity(visible_text or "")
+    valid_from, valid_to = _explicit_aldi_week_window(visible_text or "")
     if not valid_from or not valid_to:
         return []
     vf = valid_from.strftime("%d.%m.%Y")
