@@ -70,6 +70,44 @@ def _address_geocode(candidate: StoreDiscoveryCandidate) -> dict | None:
     return min(rows, key=lambda row: row["distance_m"])
 
 
+@router.get("/admin/coverage/coordinate-review")
+def coordinate_review_queue(
+    request: Request,
+    db: Session = Depends(get_db),
+    actor: str = Depends(_admin),
+):
+    candidates = (
+        db.query(StoreDiscoveryCandidate)
+        .filter(StoreDiscoveryCandidate.status != "rejected")
+        .order_by(
+            StoreDiscoveryCandidate.coordinates_verified.asc(),
+            StoreDiscoveryCandidate.address_verified.asc(),
+            StoreDiscoveryCandidate.postal_code,
+            StoreDiscoveryCandidate.retailer,
+            StoreDiscoveryCandidate.name,
+        )
+        .all()
+    )
+    open_rows = [
+        row for row in candidates
+        if not row.address_verified or not row.coordinates_verified
+    ]
+    ready_rows = [
+        row for row in candidates
+        if row.address_verified and row.coordinates_verified
+    ]
+    return templates.TemplateResponse(
+        "admin_candidate_coordinate_queue.html",
+        {
+            "request": request,
+            "actor": actor,
+            "admin_section": "coordinate_review",
+            "open_rows": open_rows,
+            "ready_rows": ready_rows,
+        },
+    )
+
+
 @router.post("/admin/coverage/candidates/{candidate_id}/verify")
 def verify_candidate_and_open_coordinate_review(
     candidate_id: int,
@@ -109,6 +147,7 @@ def coordinate_review(
         {
             "request": request,
             "actor": actor,
+            "admin_section": "coordinate_review",
             "candidate": candidate,
             "store": store,
             "address_point": address_point,
