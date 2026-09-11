@@ -22,11 +22,16 @@ A store is `collector_primary` only when all of the following are true for the l
 - collector run is `success`
 - quality snapshot is present
 - `quality_status=PASS`
+- `benchmark_context=PRODUCTION`
 - `benchmark_status=PASS`
+- independent external validation for that exact run is `PASS`
+- at least 10 external validation samples were checked
 
 Until that gate is reached the store remains `external_primary`. An inactive store is `blocked`.
 
-This deliberately makes REWE Dierdorf, with a successful production benchmark, authoritative without assuming the same readiness for the other six stores.
+A configured target `external_id` is a hard identity constraint. For REWE Dierdorf the target id is `321019`; a different REWE market in Dierdorf must never be substituted if that exact market cannot be found.
+
+Existing collector runs that predate the independent validation metadata intentionally remain `external_primary` until an external validation has been recorded for the exact run. This is conservative by design.
 
 Run the operator check with:
 
@@ -34,20 +39,13 @@ Run the operator check with:
 python scripts/production_readiness.py
 ```
 
-The command exits `0` only when all seven launch markets are collector-primary. It exits `2` while rollout is still in progress.
+The script adds the repository root to `sys.path`, so the documented direct command works without a manually supplied `PYTHONPATH`. The command exits `0` only when all seven launch markets are collector-primary. It exits `2` while rollout is still in progress.
 
 ## Admin workflow
 
 The full readiness cockpit is available at `/admin/collector/readiness`. It shows all seven launch markets with source strategy, collector status, quality, benchmark, score, imported offers, next-week coverage, and diagnostic metrics.
 
-The daily operator view at `/admin/collector` now carries the same production gate directly into the collector workflow:
-
-- `x/7 production ready`
-- counts for `Collector primary`, `External primary`, and `Blocked`
-- a visible primary-source badge for each of the seven target markets in the `Märkte & Prospekte` table
-- a direct link to the detailed readiness cockpit for N/A diagnostics and root-cause inspection
-
-This keeps routine collection work on one page while preserving the detailed cockpit for diagnosis.
+The daily operator view at `/admin/collector` provides a compact readiness summary and links to the detailed cockpit for diagnosis.
 
 ## Independent external validation
 
@@ -64,7 +62,7 @@ A normal validation set contains 10–20 samples per store/week and checks, wher
 - image presence
 - negative controls for offers explicitly marked online-only
 
-`validate_external_samples()` returns an `external_validation_score`, sample-level mismatches, missing offers and online-only leaks. Online-only reference rows are negative controls: if such an item is found in the local collector result the validation fails.
+`validate_external_samples()` returns an `ExternalValidationResult` with score, sample-level mismatches, missing offers and online-only leaks. `persist_external_validation_result()` writes the result into the quality snapshot belonging to the exact collector run. Readiness reads only that run-scoped metadata; a validation from an older run cannot unlock a newer run.
 
 Suggested operational thresholds:
 
@@ -72,6 +70,8 @@ Suggested operational thresholds:
 - `WARN`: score >= 90 with a non-critical mismatch/missing reference
 - `FAIL`: score < 90 or any online-only leak
 - `INSUFFICIENT_SAMPLES`: fewer than 10 references
+
+Even if a custom caller lowers `min_samples` while experimenting, the production readiness gate still requires `external_validation_checked >= 10`.
 
 The benchmark is intentionally source-agnostic. Reference samples can come from an official local leaflet, official local retailer page or a manually curated gold set.
 
@@ -109,12 +109,12 @@ Retailer-specific validity can end on Saturday or Sunday; overlap with the weekl
 ## Definition of done for the rollout
 
 - All seven target stores are present and active.
+- Branch identities with configured external ids match exactly.
 - Latest collector run for every target store succeeds.
-- Every target store has quality PASS and production benchmark PASS.
-- Independent 10–20 sample validation passes for each retailer/store pattern.
+- Every target store has quality PASS and `benchmark_context=PRODUCTION` with benchmark PASS.
+- Independent 10–20 sample validation passes for the exact latest run of each target store.
 - Online-only negative controls do not leak into local offers.
 - Next-week data is detectable without replacing historical offer observations.
 - Dashboard/UI uses N/A for diagnostics that were not applicable instead of misleading numeric zero.
-- Collector & Support shows the same primary-source decision inline for day-to-day operation.
 
 Only after this gate should basket optimization be treated as beta-production quality across all seven launch stores.
