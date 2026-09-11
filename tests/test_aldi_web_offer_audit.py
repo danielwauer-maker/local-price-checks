@@ -24,16 +24,16 @@ def _store() -> Store:
 
 def _row():
     return SimpleNamespace(
-        product_name="Test Kaffee",
+        product_name="Test Kaffee 500 g",
         category="Kaffee",
         price=4.99,
-        regular_price=None,
+        regular_price=5.99,
         unit_price=9.98,
         quantity=500.0,
         unit="g",
         valid_from="07.09.2026",
         valid_to="12.09.2026",
-        source_text="Test Kaffee 500 g 4,99 €",
+        source_text="Test Kaffee 500 g Spare 17 % 4,99 € 5,99 €",
         image_url="https://www.aldi-sued.de/test.webp",
         image_alt="Test Kaffee",
     )
@@ -42,7 +42,7 @@ def _row():
 def test_aldi_chain_offer_conversion_is_explicitly_not_independent_validation():
     offer = _to_web_offer(_store(), _row(), ALDI_STATIONARY_OFFERS_URL)
 
-    assert offer.name == "Test Kaffee"
+    assert offer.name == "Test Kaffee 500 g"
     assert offer.price == 4.99
     assert offer.packaging_text == "500 g"
     assert str(offer.valid_from) == "2026-09-07"
@@ -51,6 +51,7 @@ def test_aldi_chain_offer_conversion_is_explicitly_not_independent_validation():
     assert offer.provenance["store_specific"] is False
     assert offer.provenance["independent_external_validation"] is False
     assert offer.provenance["shared_parser_with_production_collector"] is True
+    assert offer.provenance["parser_mode"] == "structured_dom_cards_v2"
 
 
 def test_aldi_chain_audit_does_not_require_servicepoint_id(monkeypatch):
@@ -58,8 +59,8 @@ def test_aldi_chain_audit_does_not_require_servicepoint_id(monkeypatch):
 
     monkeypatch.setattr(
         module,
-        "parse_aldi_stationary_chain_offers",
-        lambda source, text, imgs: [_row()],
+        "parse_aldi_stationary_chain_document",
+        lambda source, html, text, imgs: [_row()],
     )
 
     def fetcher(url, **kwargs):
@@ -72,11 +73,12 @@ def test_aldi_chain_audit_does_not_require_servicepoint_id(monkeypatch):
 
     result = fetch_aldi_stationary_chain_audit(_store(), fetcher=fetcher)
 
-    assert result.collector_path == "aldi_stationary_chain_audit"
+    assert result.collector_path == "aldi_structured_dom_cards_v2"
     assert result.raw_count == 1
     assert len(result.offers) == 1
-    assert result.offers[0].name == "Test Kaffee"
+    assert result.offers[0].name == "Test Kaffee 500 g"
     assert result.artifacts["scope"] == "regional_chain_stationary"
+    assert result.artifacts["parser_mode"] == "structured_dom_cards_v2"
     assert result.artifacts["independent_external_validation"] is False
 
 
