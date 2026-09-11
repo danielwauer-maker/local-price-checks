@@ -17,6 +17,7 @@ _SAVING_PAIR_RE = re.compile(
 )
 _SIZE_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
 _UNIT_ONLY_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
+_UNIT_PRICE_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml)\s*\([^)]*€/\s*1?\s*(?:kg|g|l|ml)", re.I)
 _PRICE_RE = re.compile(r"\d{1,3}[.,]\d{2}\s*€")
 _DEPOSIT_RE = re.compile(
     r"(?:(\d{1,3}[.,]\d{2})\s*€\s*\+?\s*(?:Pfand|Mehrweg|Einweg)|(?:Pfand|Mehrweg|Einweg)\s*(\d{1,3}[.,]\d{2})\s*€)",
@@ -29,6 +30,14 @@ _ALDI_EXPLICIT_WEEK_RE = re.compile(
     r"(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*(\d{1,2}\.\d{1,2}\.?)",
     re.I,
 )
+_CATEGORY_LABELS = {
+    "aktion",
+    "kühlung",
+    "tiefkühlung",
+    "vegan",
+    "bio",
+    "regional",
+}
 
 
 def _norm(value: str) -> str:
@@ -45,13 +54,7 @@ def _deposit_values(text: str) -> set[float]:
 
 
 def _explicit_aldi_week_window(text: str):
-    """Return an explicit ALDI weekly range without guessing missing dates.
-
-    The shared parser historically recognises ALDI's Monday-to-Saturday heading.
-    The live page/tests can also carry an explicit Sunday end date. Accept that
-    retailer-specific heading only when both dates are present and form a
-    plausible contiguous offer window of at most seven days.
-    """
+    """Return an explicit ALDI weekly range without guessing missing dates."""
     valid_from, valid_to, _, _ = infer_validity(text or "")
     if valid_from and valid_to:
         return valid_from, valid_to
@@ -75,52 +78,65 @@ def _explicit_aldi_week_window(text: str):
 
 
 def _container_for_saving_marker(node: Tag) -> Tag | None:
-    """Return the smallest DOM ancestor that contains exactly one saving pair.
-
-    The old ALDI parser flattened the entire page and could therefore borrow a
-    price/title from a neighboring card. By selecting the smallest ancestor
-    with one complete ``Spare … promo regular`` pair, every parsed row is
-    bounded to one concrete DOM card.
-    """
+    """Return the smallest DOM ancestor that contains exactly one saving pair."""
     current: Tag | None = node
-    best: Tag | None = None
-    for _ in range(10):
+    for _ in range(12):
         if current is None or current.name in {"html", "body"}:
             break
         text = _norm(current.get_text(" ", strip=True))
         pairs = list(_SAVING_PAIR_RE.finditer(text))
         if len(pairs) == 1 and _SIZE_RE.search(text):
-            best = current
-            break
+            return current
         parent = current.parent
         current = parent if isinstance(parent, Tag) else None
-    return best
+    return None
+
+
+def _clean_title_part(value: str) -> str:
+    value = _NAV_PREFIX_RE.sub("", _norm(value)).strip(" ·|:-")
+    return value
+
+
+def _is_noise_part(value: str) -> bool:
+    lowered = value.lower().strip()
+    if not lowered:
+        return True
+    if lowered in _CATEGORY_LABELS:
+        return True
+    if lowered.startswith("spare "):
+        return True
+    if _PRICE_RE.search(value):
+        return True
+    if _UNIT_PRICE_RE.search(value):
+        return True
+    return False
 
 
 def _title_from_card(card: Tag) -> str | None:
-    parts = [_norm(part) for part in card.stripped_strings if _norm(part)]
+    """Build a concrete title even when ALDI splits name and pack size across nodes.
+
+    The live ALDI cards render product name, pack size and calculated quantity in
+    separate DOM nodes. The first v2 parser required name+size inside one text
+    node and therefore collapsed to almost no rows. We now select the first
+    package token before the saving marker and attach the nearest meaningful
+    product/brand nodes, while still staying inside the isolated card.
+    """
+    parts = [_clean_title_part(part) for part in card.stripped_strings]
+    parts = [part for part in parts if part]
     marker_idx = next(
         (i for i, part in enumerate(parts) if re.search(r"\bSpare\s+\d{1,2}\s*%", part, re.I)),
         len(parts),
     )
     before = parts[:marker_idx]
 
-    # Prefer the nearest package-bearing textual node. Pure quantity/unit-price
-    # lines start with a number and are not product identities.
-    for idx in range(len(before) - 1, -1, -1):
-        raw = _NAV_PREFIX_RE.sub("", before[idx]).strip(" ·|:-")
-        if not _SIZE_RE.search(raw) or _UNIT_ONLY_RE.search(raw):
-            continue
-        if _PRICE_RE.search(raw) and raw.count("€") >= 2:
+    # Existing compact cards: title and package are already one node.
+    for idx, raw in enumerate(before):
+        if not _SIZE_RE.search(raw) or _UNIT_ONLY_RE.search(raw) or _is_noise_part(raw):
             continue
         if not any(ch.isalpha() for ch in raw):
             continue
-
-        # If a short preceding label is repeated as a prefix in the selected
-        # node (for example ``Kühlung BBQ``), remove only that exact repeated
-        # label. This is structural de-duplication, not category guessing.
         if idx > 0:
-            previous = _NAV_PREFIX_RE.sub("", before[idx - 1]).strip(" ·|:-")
+            previous = _clean_title_part(before[idx - 1])
             if (
                 3 <= len(previous) <= 48
                 and raw.lower().startswith(previous.lower() + " ")
@@ -129,7 +145,38 @@ def _title_from_card(card: Tag) -> str | None:
                 raw = raw[len(previous) :].strip(" ·|:-")
         return raw[:180] if len(raw) >= 3 else None
 
-    return None
+    # Live DOM: e.g. "Rinder-Cevapcici" / "400 g" / "0,4 kg (...)".
+    # Use the earliest size-only node; later ones are usually normalized unit
+    # quantity or unit-price text. Attach at most two nearest textual nodes so a
+    # brand can be retained without pulling navigation/category labels.
+    size_idx = next(
+        (
+            i
+            for i, raw in enumerate(before)
+            if _SIZE_RE.search(raw) and _UNIT_ONLY_RE.search(raw) and not _UNIT_PRICE_RE.search(raw)
+        ),
+        None,
+    )
+    if size_idx is None:
+        return None
+
+    pack = before[size_idx]
+    prefix_parts: list[str] = []
+    for raw in reversed(before[:size_idx]):
+        candidate = _clean_title_part(raw)
+        if _is_noise_part(candidate) or _SIZE_RE.search(candidate):
+            continue
+        if not any(ch.isalpha() for ch in candidate):
+            continue
+        prefix_parts.append(candidate)
+        if len(prefix_parts) >= 2:
+            break
+    prefix_parts.reverse()
+    if not prefix_parts:
+        return None
+
+    name = _norm(" ".join([*prefix_parts, pack]))
+    return name[:180] if len(name) >= 4 else None
 
 
 def _card_image(
