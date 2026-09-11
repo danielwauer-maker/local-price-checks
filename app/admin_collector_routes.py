@@ -185,6 +185,13 @@ def _persist_background_failure(
     db.commit()
 
 
+def _reconcile_rewe_manual_collection(db: Session, store: Store, result: dict, summary, run) -> int | None:
+    """Use the scheduler's authoritative REWE completion hook for manual production runs."""
+    from .authoritative_offer_reconcile import reconcile_completed_rewe_collection
+
+    return reconcile_completed_rewe_collection(db, store, result, summary, run)
+
+
 def _run_store_collection_background(store_id: int, activation_test: bool = False) -> None:
     """Run one market collection outside the HTTP request lifecycle."""
     db = SessionLocal()
@@ -206,7 +213,9 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
         if store.retailer == "EDEKA":
             _, _, run = collect_edeka_web_for_store(db, store, benchmark_context=context)
         else:
-            _, _, run = collect_store_from_web(db, store.name, benchmark_context=context)
+            result, summary, run = collect_store_from_web(db, store.name, benchmark_context=context)
+            if store.retailer == "REWE" and context == BenchmarkContext.PRODUCTION:
+                _reconcile_rewe_manual_collection(db, store, result, summary, run)
         if activation_test:
             complete_test_scrape(db, store, run)
     except Exception as exc:
