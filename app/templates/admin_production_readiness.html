@@ -10,7 +10,7 @@
   </style>
 </head>
 <body>{% include 'admin_sidebar.html' %}<div class="wrap">
-  <div class="top"><div><div class="brand">Production Readiness</div><div class="sub">Sieben Startmärkte · Collector wird erst nach Success + Quality PASS + Benchmark PASS zur Primärquelle</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+  <div class="top"><div><div class="brand">Production Readiness</div><div class="sub">Sieben Startmärkte · Collector primary erst nach Success + Quality PASS + Produktions-Benchmark PASS + External Validation PASS mit mindestens 10 Stichproben</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
 
   <div class="card">
     <div class="actions"><a class="btn" href="/admin/collector">← Collector & Support</a><a class="btn" href="/admin/datenstatus">Datenstatus</a></div>
@@ -50,6 +50,6 @@
 
   <div class="card">
     <h2>Freigaberegel</h2>
-    <p>Ein Markt wechselt nur auf <b>Collector primary</b>, wenn der letzte Collector-Lauf erfolgreich war und sowohl technische Quality als auch der Produktions-Benchmark <b>PASS</b> sind. Bis dahin bleibt <b>External primary</b> die sichere Quelle. Ein fehlender oder inaktiver Markt wird nicht stillschweigend freigegeben.</p>
+    <p>Ein Markt wechselt nur auf <b>Collector primary</b>, wenn der letzte Collector-Lauf erfolgreich war, die technische Quality <b>PASS</b> ist, der Benchmark im Kontext <b>PRODUCTION</b> ebenfalls <b>PASS</b> ist und die an genau diesen Collector-Lauf gebundene <b>External Validation PASS</b> mit mindestens <b>10 unabhängigen Stichproben</b> erreicht. Bis dahin bleibt <b>External primary</b> die sichere Quelle. Ein fehlender oder inaktiver Markt wird nicht stillschweigend freigegeben.</p>
   </div>
 </div></body></html>
