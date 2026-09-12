@@ -292,6 +292,35 @@ def test_validation_requires_standard_sample_size():
     assert result.status == "INSUFFICIENT_SAMPLES"
 
 
+def test_external_validation_cannot_pass_with_one_wrong_required_field():
+    references = [
+        ExternalOfferSample(
+            product_name=f"Produkt {idx}",
+            price=1.99,
+            brand="Testmarke",
+            package_size="500 g",
+        )
+        for idx in range(10)
+    ]
+    offers = [
+        {
+            "id": idx,
+            "product_name": reference.product_name,
+            "price": 2.49 if idx == 0 else reference.price,
+            "brand": reference.brand,
+            "package_size": reference.package_size,
+            "local_store_offer": True,
+        }
+        for idx, reference in enumerate(references)
+    ]
+
+    result = validate_external_samples(references, offers)
+
+    assert result.score >= 97.0
+    assert result.samples[0].mismatches == ("price",)
+    assert result.status == "WARN"
+
+
 def test_next_week_window_is_always_following_monday_to_sunday():
     assert next_week_window(date(2026, 9, 11)) == (date(2026, 9, 14), date(2026, 9, 20))
     assert next_week_window(date(2026, 9, 14)) == (date(2026, 9, 21), date(2026, 9, 27))
