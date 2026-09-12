@@ -4,8 +4,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.aldi_live_collector import (
+    _discover_weekly_page_urls,
     _harden_aldi_row,
     is_official_aldi_offer_url,
+    is_official_aldi_weekly_url,
     parse_aldi_stationary_chain_offers,
 )
 from app.db import Base
@@ -35,6 +37,27 @@ def test_official_aldi_offer_url_is_strict():
     assert not is_official_aldi_offer_url("https://www.aldi-sued.de/filialen")
     assert not is_official_aldi_offer_url("https://example.org/angebote")
     assert not is_official_aldi_offer_url("http://www.aldi-sued.de/angebote")
+
+
+def test_official_aldi_weekly_url_allows_only_known_categories_and_safe_pagination():
+    root = "https://www.aldi-sued.de/produkte/wochenangebote/eigenmarken-im-angebot/k/1588161427299188"
+    assert is_official_aldi_weekly_url(root)
+    assert is_official_aldi_weekly_url(root + "?page=2")
+    assert not is_official_aldi_weekly_url(root + "?page=999")
+    assert not is_official_aldi_weekly_url(root + "?foo=2")
+    assert not is_official_aldi_weekly_url("https://www.aldi-sued.de/produkte/wochenangebote/irgendwas")
+    assert not is_official_aldi_weekly_url("https://example.org" + root.split("aldi-sued.de", 1)[1])
+
+
+def test_discover_weekly_page_urls_stays_on_same_category():
+    root = "https://www.aldi-sued.de/produkte/wochenangebote/eigenmarken-im-angebot/k/1588161427299188"
+    html = """
+    <a href="?page=2">2</a>
+    <a href="?page=3">3</a>
+    <a href="/produkte/wochenangebote/markenprodukte-im-angebot/k/1588161427299189?page=2">other</a>
+    <a href="https://example.org/?page=2">external</a>
+    """
+    assert _discover_weekly_page_urls(html, root) == [root + "?page=2", root + "?page=3"]
 
 
 def test_chain_parser_allows_generic_filial_selector_but_requires_explicit_week():

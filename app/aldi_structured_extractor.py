@@ -18,6 +18,7 @@ _SAVING_PAIR_RE = re.compile(
 _SIZE_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
 _UNIT_ONLY_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml|stück|stk\.?)\b", re.I)
 _UNIT_PRICE_RE = re.compile(r"^\s*\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml)\s*\([^)]*€/\s*1?\s*(?:kg|g|l|ml)", re.I)
+_UNIT_PRICE_PAREN_RE = re.compile(r"\([^)]*\d+(?:[.,]\d+)?\s*€\s*/\s*(?:(?:1|100)\s*)?(?:kg|g|l|ml|stück|stk\.?)\s*\)", re.I)
 _PRICE_RE = re.compile(r"\d{1,3}[.,]\d{2}\s*€")
 _DEPOSIT_RE = re.compile(
     r"(?:(\d{1,3}[.,]\d{2})\s*€\s*\+?\s*(?:Pfand|Mehrweg|Einweg)|(?:Pfand|Mehrweg|Einweg)\s*(\d{1,3}[.,]\d{2})\s*€)",
@@ -25,7 +26,7 @@ _DEPOSIT_RE = re.compile(
 )
 _NAV_PREFIX_RE = re.compile(r"^(?:alle\s+anzeigen\s+)+", re.I)
 _ALDI_EXPLICIT_WEEK_RE = re.compile(
-    r"\bWochenangebote\s+(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*"
+    r"\b(?:Wochenangebote|Angebote\s+der\s+aktuellen\s+Woche\.?)\s*(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*"
     r"(\d{1,2}\.\d{1,2}\.?)\s*[–-]\s*"
     r"(?:Mo|Di|Mi|Do|Fr|Sa|So)\.?,?\s*(\d{1,2}\.\d{1,2}\.?)",
     re.I,
@@ -113,14 +114,7 @@ def _is_noise_part(value: str) -> bool:
 
 
 def _title_from_card(card: Tag) -> str | None:
-    """Build a concrete title even when ALDI splits name and pack size across nodes.
-
-    The live ALDI cards render product name, pack size and calculated quantity in
-    separate DOM nodes. The first v2 parser required name+size inside one text
-    node and therefore collapsed to almost no rows. We now select the first
-    package token before the saving marker and attach the nearest meaningful
-    product/brand nodes, while still staying inside the isolated card.
-    """
+    """Build a concrete title even when ALDI splits name and pack size across nodes."""
     parts = [_clean_title_part(part) for part in card.stripped_strings]
     parts = [part for part in parts if part]
     marker_idx = next(
@@ -129,7 +123,6 @@ def _title_from_card(card: Tag) -> str | None:
     )
     before = parts[:marker_idx]
 
-    # Existing compact cards: title and package are already one node.
     for idx, raw in enumerate(before):
         if not _SIZE_RE.search(raw) or _UNIT_ONLY_RE.search(raw) or _is_noise_part(raw):
             continue
@@ -145,10 +138,6 @@ def _title_from_card(card: Tag) -> str | None:
                 raw = raw[len(previous) :].strip(" ·|:-")
         return raw[:180] if len(raw) >= 3 else None
 
-    # Live DOM: e.g. "Rinder-Cevapcici" / "400 g" / "0,4 kg (...)".
-    # Use the earliest size-only node; later ones are usually normalized unit
-    # quantity or unit-price text. Attach at most two nearest textual nodes so a
-    # brand can be retained without pulling navigation/category labels.
     size_idx = next(
         (
             i
@@ -201,17 +190,56 @@ def _card_image(
     return None, None
 
 
+def _single_price_from_card(block: str) -> float | None:
+    """Return one unambiguous selling price after removing unit-price/deposit noise."""
+    if re.search(r"\bVerfügbar\s+seit\b", block, re.I):
+        return None
+    cleaned = _UNIT_PRICE_PAREN_RE.sub(" ", block)
+    deposits = _deposit_values(cleaned)
+    prices = []
+    for match in _PRICE_RE.finditer(cleaned):
+        value = float(match.group(0).replace("€", "").replace(",", ".").strip())
+        if value in deposits:
+            continue
+        prices.append(value)
+    unique = []
+    for value in prices:
+        if value not in unique:
+            unique.append(value)
+    return unique[0] if len(unique) == 1 and unique[0] > 0 else None
+
+
+def _single_price_cards(soup: BeautifulSoup) -> list[Tag]:
+    """Find product-link cards on dedicated weekly category pages.
+
+    ALDI's category pages expose products as links. Requiring an anchor with a
+    package token and exactly one selling price keeps navigation/action content
+    out while allowing fresh weekly offers that intentionally have no RRP.
+    """
+    cards: list[Tag] = []
+    for anchor in soup.find_all("a", href=True):
+        block = _norm(anchor.get_text(" ", strip=True))
+        if not _SIZE_RE.search(block):
+            continue
+        if _SAVING_PAIR_RE.search(block) or _single_price_from_card(block) is not None:
+            cards.append(anchor)
+    return cards
+
+
 def parse_aldi_offer_cards(
     source,
     html: str,
     visible_text: str,
     all_images: list[dict] | None = None,
+    *,
+    allow_single_price: bool = False,
 ):
     """Parse ALDI stationary offers from isolated DOM cards.
 
-    Fail closed when a card cannot provide one unambiguous saving pair, a
-    concrete package-bearing product title, package size, or explicit weekly
-    validity. Deposit amounts are never accepted as promotional prices.
+    Savings cards require one unambiguous ``Spare`` pair. Dedicated weekly
+    category pages may additionally provide one unambiguous selling price with
+    no advertised reference price; those rows remain valid offers but do not
+    manufacture a regular price.
     """
     soup = BeautifulSoup(html or "", "html.parser")
     valid_from, valid_to = _explicit_aldi_week_window(visible_text or "")
@@ -222,6 +250,12 @@ def parse_aldi_offer_cards(
 
     cards: list[Tag] = []
     seen_nodes: set[int] = set()
+    if allow_single_price:
+        for card in _single_price_cards(soup):
+            if id(card) not in seen_nodes:
+                seen_nodes.add(id(card))
+                cards.append(card)
+
     for text_node in soup.find_all(string=re.compile(r"\bSpare\s+\d{1,2}\s*%", re.I)):
         parent = text_node.parent
         if not isinstance(parent, Tag):
@@ -237,11 +271,17 @@ def parse_aldi_offer_cards(
     for card in cards:
         block = _norm(card.get_text(" ", strip=True))
         pair = _SAVING_PAIR_RE.search(block)
-        if not pair:
-            continue
-        promo = float(pair.group(1).replace(",", "."))
-        regular = float(pair.group(2).replace(",", "."))
-        if promo <= 0 or regular <= promo or promo in _deposit_values(block):
+        if pair:
+            promo = float(pair.group(1).replace(",", "."))
+            regular = float(pair.group(2).replace(",", "."))
+            if promo <= 0 or regular <= promo or promo in _deposit_values(block):
+                continue
+        elif allow_single_price:
+            promo = _single_price_from_card(block)
+            regular = None
+            if promo is None:
+                continue
+        else:
             continue
 
         name = _title_from_card(card)

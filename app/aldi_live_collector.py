@@ -4,8 +4,9 @@ import re
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
+from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from .aldi_structured_extractor import parse_aldi_offer_cards
@@ -18,6 +19,12 @@ from .models import MasterProduct, Offer, OfferOccurrence, OfferPriceReference, 
 
 _ALLOWED_HOSTS = {"aldi-sued.de", "www.aldi-sued.de"}
 _ALLOWED_PATHS = {"/angebote", "/angebote/", "/tools/features/angebote", "/tools/features/angebote/"}
+_WEEKLY_CATEGORY_PATHS = {
+    "/produkte/wochenangebote/frischeprodukte-im-angebot/k/1588161427299187",
+    "/produkte/wochenangebote/eigenmarken-im-angebot/k/1588161427299188",
+    "/produkte/wochenangebote/markenprodukte-im-angebot/k/1588161427299189",
+}
+_WEEKLY_CATEGORY_URLS = tuple(f"https://www.aldi-sued.de{path}" for path in sorted(_WEEKLY_CATEGORY_PATHS))
 _FILIAL_SELECTOR_RE = re.compile(
     r"(?:wähle\s+deine\s+filiale|filialauswahl|filiale\s+auswählen)", re.IGNORECASE
 )
@@ -36,6 +43,22 @@ _UNIT_PRICE_PAREN_RE = re.compile(r"\([^)]*(?:€\s*/|/\s*1?\s*(?:kg|l)|(?:kg|l)
 def is_official_aldi_offer_url(url: str) -> bool:
     parsed = urlparse((url or "").strip())
     return parsed.scheme == "https" and parsed.hostname in _ALLOWED_HOSTS and parsed.path in _ALLOWED_PATHS
+
+
+def is_official_aldi_weekly_url(url: str) -> bool:
+    """Allow only the three official weekly category pages and their pagination."""
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_HOSTS:
+        return False
+    if parsed.path not in _WEEKLY_CATEGORY_PATHS:
+        return False
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if not query:
+        return True
+    if set(query) != {"page"} or len(query["page"]) != 1:
+        return False
+    value = query["page"][0]
+    return value.isdigit() and 1 <= int(value) <= 10
 
 
 def _has_explicit_week_window(offer) -> bool:
@@ -133,13 +156,51 @@ def parse_aldi_stationary_chain_offers(source, text: str, imgs=None):
     return result
 
 
-def parse_aldi_stationary_chain_document(source, html: str, text: str, imgs=None):
+def parse_aldi_stationary_chain_document(
+    source,
+    html: str,
+    text: str,
+    imgs=None,
+    *,
+    allow_single_price: bool = False,
+):
     """Primary production parser: one isolated DOM card becomes one offer."""
     if source.retailer != "ALDI SÜD":
         raise CollectionError(f"Kein ALDI-SÜD-Collector: {source.store_name}")
-    if not is_official_aldi_offer_url(source.url):
+    if not (is_official_aldi_offer_url(source.url) or is_official_aldi_weekly_url(source.url)):
         raise CollectionError(f"Nicht freigegebene ALDI-SÜD-Quelle: {source.url}")
-    return parse_aldi_offer_cards(source, html, _FILIAL_SELECTOR_RE.sub("", text or ""), imgs or [])
+    return parse_aldi_offer_cards(
+        source,
+        html,
+        _FILIAL_SELECTOR_RE.sub("", text or ""),
+        imgs or [],
+        allow_single_price=allow_single_price,
+    )
+
+
+def _discover_weekly_page_urls(html: str, base_url: str) -> list[str]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    urls = []
+    for anchor in soup.find_all("a", href=True):
+        candidate = urljoin(base_url, str(anchor.get("href") or ""))
+        if candidate == base_url or not is_official_aldi_weekly_url(candidate):
+            continue
+        if urlparse(candidate).path != urlparse(base_url).path:
+            continue
+        if candidate not in urls:
+            urls.append(candidate)
+    return urls[:9]
+
+
+def _offer_key(row):
+    return (
+        " ".join(str(getattr(row, "product_name", "") or "").lower().split()),
+        round(float(getattr(row, "price", 0.0) or 0.0), 2),
+        getattr(row, "quantity", None),
+        getattr(row, "unit", None),
+        getattr(row, "valid_from", None),
+        getattr(row, "valid_to", None),
+    )
 
 
 def _parse_day(value):
@@ -147,12 +208,7 @@ def _parse_day(value):
 
 
 def _prune_stale_aldi_week_offers(db: Session, store: Store, safe_rows) -> int:
-    """Remove old current-week ALDI rows not reproduced by the safe v2 parser.
-
-    This runs only after a successful import and only when the structured parser
-    produced a healthy-sized week. Historical weeks and non-ALDI source URLs
-    are untouched. Dependent occurrence/reference rows are removed first.
-    """
+    """Remove old current-week ALDI rows not reproduced by the safe parser."""
     rows = list(safe_rows or [])
     if len(rows) < 20:
         return 0
@@ -177,7 +233,8 @@ def _prune_stale_aldi_week_offers(db: Session, store: Store, safe_rows) -> int:
     )
     stale = []
     for offer in candidates:
-        if not is_official_aldi_offer_url(offer.source_url or ""):
+        source_url = offer.source_url or ""
+        if not (is_official_aldi_offer_url(source_url) or is_official_aldi_weekly_url(source_url)):
             continue
         key = (" ".join(str(offer.product.name).lower().split()), round(float(offer.price), 2))
         if key not in safe_keys:
@@ -209,27 +266,80 @@ def collect_aldi_web_for_store(
             locality="regional_chain",
             store_specific=False,
             notes=(
-                "Offizielle ALDI-SÜD-Angebotsseite; strukturierte DOM-Karten. "
+                "Offizielle ALDI-SÜD-Wochenangebotsseiten; strukturierte DOM-Karten. "
                 "Filialbestand bleibt unabhängige QA."
             ),
         )
+
         raw, content_type, fetch_mode, final_url = fetch_source(resolved)
         html = raw.decode("utf-8", errors="replace")
         text = visible(html)
         image_rows = images(html, final_url or resolved.url)
-        offers = parse_aldi_stationary_chain_document(resolved, html, text, image_rows)
-        if not offers:
+        all_offers = parse_aldi_stationary_chain_document(resolved, html, text, image_rows)
+        fetched_pages = [final_url or resolved.url]
+
+        for root_url in _WEEKLY_CATEGORY_URLS:
+            category_source = replace(resolved, url=root_url)
+            category_raw, _, _, category_final = fetch_source(category_source)
+            category_html = category_raw.decode("utf-8", errors="replace")
+            category_text = visible(category_html)
+            category_images = images(category_html, category_final or root_url)
+            category_source = replace(category_source, url=category_final or root_url)
+            category_offers = parse_aldi_stationary_chain_document(
+                category_source,
+                category_html,
+                category_text,
+                category_images,
+                allow_single_price=True,
+            )
+            if not category_offers:
+                raise CollectionError(f"ALDI SÜD Wochenkategorie ohne sichere Angebote: {root_url}")
+            all_offers.extend(category_offers)
+            fetched_pages.append(category_source.url)
+
+            for page_url in _discover_weekly_page_urls(category_html, category_source.url):
+                page_source = replace(resolved, url=page_url)
+                page_raw, _, _, page_final = fetch_source(page_source)
+                page_html = page_raw.decode("utf-8", errors="replace")
+                page_text = visible(page_html)
+                page_images = images(page_html, page_final or page_url)
+                page_source = replace(page_source, url=page_final or page_url)
+                page_offers = parse_aldi_stationary_chain_document(
+                    page_source,
+                    page_html,
+                    page_text,
+                    page_images,
+                    allow_single_price=True,
+                )
+                all_offers.extend(page_offers)
+                fetched_pages.append(page_source.url)
+
+        deduped = []
+        seen = set()
+        for row in all_offers:
+            key = _offer_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+
+        windows = {(row.valid_from, row.valid_to) for row in deduped if row.valid_from and row.valid_to}
+        if len(windows) != 1:
+            raise CollectionError(f"ALDI SÜD Wochenquellen widersprechen sich bei der Gültigkeit: {sorted(windows)}")
+        if not deduped:
             raise CollectionError("ALDI SÜD lieferte keine sicher isolierten, datierten Angebotskarten")
+
         return {
             "source": resolved,
             "raw": raw,
             "content_type": content_type,
             "fetch_mode": fetch_mode,
             "final_url": final_url,
-            "offers": offers,
+            "offers": deduped,
             "status": "parsed",
             "aldi_scope": "regional_chain_stationary",
-            "parser_mode": "structured_dom_cards_v2",
+            "parser_mode": "structured_weekly_categories_v3",
+            "weekly_pages_fetched": len(dict.fromkeys(fetched_pages)),
             "technical_warning": "",
         }
 
