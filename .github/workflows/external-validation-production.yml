@@ -91,7 +91,7 @@ jobs:
             "cd /opt/local-price-checks && docker compose exec -T app python /app/scripts/validate_external_offers.py '/app/$REFERENCE_FILE' --persist"
 
       - name: Diagnose validation mismatch read-only
-        if: steps.validation.outcome == 'failure'
+        if: ${{ failure() && steps.validation.outcome == 'failure' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
