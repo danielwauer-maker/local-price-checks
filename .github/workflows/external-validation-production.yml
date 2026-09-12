@@ -1,0 +1,90 @@
+name: External validation production
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation_profile:
+        description: Independent validation profile to persist against the latest eligible production collector run
+        required: true
+        type: choice
+        options:
+          - aldi-dierdorf-2026-09-12
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-external-validation-${{ inputs.validation_profile }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Resolve approved reference file
+        id: profile
+        env:
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+        run: |
+          set -euo pipefail
+          case "$VALIDATION_PROFILE" in
+            aldi-dierdorf-2026-09-12)
+              echo "reference_file=data/external_validation/aldi-dierdorf-2026-09-12.json" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported validation profile: $VALIDATION_PROFILE" >&2
+              exit 2
+              ;;
+          esac
+
+      - name: Check production SSH configuration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_HOST" || -z "$DEPLOY_USER" || -z "$DEPLOY_SSH_KEY" || -z "$DEPLOY_KNOWN_HOSTS" ]]; then
+            echo "Production SSH configuration is incomplete." >&2
+            exit 2
+          fi
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run and persist independent validation
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          REFERENCE_FILE: ${{ steps.profile.outputs.reference_file }}
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /opt/local-price-checks && test -f '$REFERENCE_FILE' && docker compose exec -T app python scripts/validate_external_offers.py '$REFERENCE_FILE' --persist"
+
+      - name: Report resulting ALDI Dierdorf readiness
+        if: always()
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /opt/local-price-checks && docker compose exec -T app python -c 'from app.db import SessionLocal; from app.production_readiness import build_multi_market_readiness; db=SessionLocal(); payload=build_multi_market_readiness(db); matches=[r for r in payload[\"stores\"] if r[\"target_key\"]==\"aldi-dierdorf\"]; print(\"READINESS\", matches[0] if len(matches)==1 else {\"error\": \"aldi-dierdorf readiness row not found\"}); db.close()'"
