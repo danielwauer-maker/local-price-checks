@@ -41,7 +41,8 @@ def test_external_validation_workflow_runs_read_only_diagnostics_only_after_vali
 
     assert "id: validation" in text
     assert "Diagnose validation mismatch read-only" in text
-    assert "if: steps.validation.outcome == 'failure'" in text
+    assert "if: ${{ failure() && steps.validation.outcome == 'failure' }}" in text
+    assert "if: steps.validation.outcome == 'failure'" not in text
     diagnostic_command = "python /app/scripts/diagnose_external_validation.py '/app/$REFERENCE_FILE'"
     assert diagnostic_command in text
     diagnostic_section = text.split("- name: Diagnose validation mismatch read-only", 1)[1].split(
