@@ -12,6 +12,9 @@ def test_offer_summary_exposes_identity_and_price_fields_for_root_cause_analysis
         "unit_price_unit": "kg",
         "valid_from": "2026-09-07",
         "valid_to": "2026-09-12",
+        "occurrence_id": 84,
+        "occurrence_package_size": "1,5 kg",
+        "occurrence_source_text": "MEINE METZGEREI Hähnchenbrustfilet 1500 g",
     }
 
     result = _offer_summary(row, 0.73456)
@@ -27,4 +30,7 @@ def test_offer_summary_exposes_identity_and_price_fields_for_root_cause_analysis
         "unit_price_unit": "kg",
         "valid_from": "2026-09-07",
         "valid_to": "2026-09-12",
+        "occurrence_id": 84,
+        "occurrence_package_size": "1,5 kg",
+        "occurrence_source_text": "MEINE METZGEREI Hähnchenbrustfilet 1500 g",
     }

@@ -303,12 +303,17 @@ def validate_external_samples(
     detail_score = field_matches / field_checks * 100.0 if field_checks else 100.0
     leak_penalty = min(100.0, online_only_leaks * 25.0)
     score = round(max(0.0, identity_score * 0.60 + detail_score * 0.40 - leak_penalty), 1)
+    positive_field_mismatch = any(
+        row.mismatches
+        for reference, row in zip(references, rows)
+        if not reference.online_only and row.matched
+    )
 
     if len(references) < min_samples:
         status = "INSUFFICIENT_SAMPLES"
     elif online_only_leaks or score < 90.0:
         status = "FAIL"
-    elif score < 97.0 or missing:
+    elif score < 97.0 or missing or positive_field_mismatch:
         status = "WARN"
     else:
         status = "PASS"

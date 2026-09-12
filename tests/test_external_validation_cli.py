@@ -1,9 +1,16 @@
+import subprocess
+import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from app.db import Base
+from app.models import CollectionRun, MasterProduct, Offer, OfferOccurrence, Store
 from app.production_readiness import validate_external_samples
-from scripts.validate_external_offers import _load_payload, _reference_samples
+from scripts.validate_external_offers import _load_payload, _offer_rows, _reference_samples
 
 
 REFERENCE_FILE = Path("data/external_validation/aldi-dierdorf-2026-09-12.json")
@@ -84,3 +91,90 @@ def test_reference_loader_rejects_empty_sample_set(tmp_path):
 
     with pytest.raises(ValueError, match="non-empty samples"):
         _load_payload(path)
+
+
+def test_offer_rows_are_limited_to_occurrences_from_the_exact_collection_run():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine, future=True)()
+    started = datetime(2026, 9, 12, 11, 29)
+    finished = started + timedelta(minutes=5)
+    store = Store(
+        retailer="ALDI SÜD",
+        name="ALDI SÜD Dierdorf",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Straße 50",
+    )
+    db.add(store)
+    db.flush()
+    run = CollectionRun(
+        store_id=store.id,
+        source_key="aldi",
+        started_at=started,
+        finished_at=finished,
+        status="success",
+    )
+    db.add(run)
+    products = [
+        MasterProduct(name="Current", normalized_key="current"),
+        MasterProduct(name="Stale", normalized_key="stale"),
+    ]
+    db.add_all(products)
+    db.flush()
+    offers = [
+        Offer(
+            store_id=store.id,
+            master_product_id=product.id,
+            price=1.99,
+            valid_from=date(2026, 9, 7),
+            valid_to=date(2026, 9, 12),
+            local_store_offer=True,
+        )
+        for product in products
+    ]
+    db.add_all(offers)
+    db.flush()
+    db.add_all(
+        [
+            OfferOccurrence(
+                offer_id=offers[0].id,
+                occurrence_fingerprint="current",
+                package_size="500 g",
+                collected_at=started + timedelta(minutes=1),
+            ),
+            OfferOccurrence(
+                offer_id=offers[1].id,
+                occurrence_fingerprint="stale",
+                package_size="500 g",
+                collected_at=started - timedelta(days=1),
+            ),
+        ]
+    )
+    db.commit()
+
+    rows = _offer_rows(
+        db,
+        store,
+        date(2026, 9, 7),
+        date(2026, 9, 12),
+        run=run,
+    )
+
+    assert [row["product_name"] for row in rows] == ["Current"]
+    assert rows[0]["occurrence_package_size"] == "500 g"
+
+
+def test_diagnostic_cli_can_import_app_when_invoked_by_absolute_path(tmp_path):
+    script = Path("scripts/diagnose_external_validation.py").resolve()
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Read-only diagnostics" in result.stdout

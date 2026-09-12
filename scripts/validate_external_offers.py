@@ -15,7 +15,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from app.collection_quality import CollectionQualitySnapshot
 from app.db import SessionLocal
-from app.models import CollectionRun, MediaAsset, Offer, Store
+from app.models import CollectionRun, MediaAsset, Offer, OfferOccurrence, Store
 from app.production_readiness import (
     ExternalOfferSample,
     persist_external_validation_result,
@@ -124,18 +124,38 @@ def _period(payload: dict[str, Any]) -> tuple[date, date]:
     return start, end
 
 
-def _offer_rows(db, store: Store, start: date, end: date) -> list[dict[str, Any]]:
-    offers = (
-        db.query(Offer)
-        .options(joinedload(Offer.product))
+def _offer_rows(
+    db,
+    store: Store,
+    start: date,
+    end: date,
+    *,
+    run: CollectionRun,
+) -> list[dict[str, Any]]:
+    if run.store_id != store.id:
+        raise ValueError("collection run does not belong to target store")
+    if run.started_at is None or run.finished_at is None:
+        raise ValueError("collection run requires a completed time window")
+
+    occurrences = (
+        db.query(OfferOccurrence)
+        .join(Offer, OfferOccurrence.offer_id == Offer.id)
+        .options(joinedload(OfferOccurrence.offer).joinedload(Offer.product))
         .filter(
             Offer.store_id == store.id,
             Offer.local_store_offer.is_(True),
             Offer.valid_from <= end,
             Offer.valid_to >= start,
+            OfferOccurrence.collected_at >= run.started_at,
+            OfferOccurrence.collected_at <= run.finished_at,
         )
+        .order_by(OfferOccurrence.collected_at.desc(), OfferOccurrence.id.desc())
         .all()
     )
+    latest_occurrence_by_offer: dict[int, OfferOccurrence] = {}
+    for occurrence in occurrences:
+        latest_occurrence_by_offer.setdefault(occurrence.offer_id, occurrence)
+    offers = [occurrence.offer for occurrence in latest_occurrence_by_offer.values()]
     product_ids = {row.master_product_id for row in offers}
     image_product_ids = {
         row.master_product_id
@@ -152,7 +172,10 @@ def _offer_rows(db, store: Store, start: date, end: date) -> list[dict[str, Any]
             "id": offer.id,
             "product_name": offer.product.name,
             "brand": offer.product.brand,
-            "package_size": offer.product.package_size,
+            "package_size": (
+                offer.product.package_size
+                or latest_occurrence_by_offer[offer.id].package_size
+            ),
             "price": offer.price,
             "unit_price": offer.unit_price,
             "unit_price_unit": offer.unit_price_unit,
@@ -160,6 +183,13 @@ def _offer_rows(db, store: Store, start: date, end: date) -> list[dict[str, Any]
             "valid_to": offer.valid_to,
             "local_store_offer": offer.local_store_offer,
             "image_present": offer.master_product_id in image_product_ids,
+            "occurrence_id": latest_occurrence_by_offer[offer.id].id,
+            "occurrence_package_size": latest_occurrence_by_offer[offer.id].package_size,
+            "occurrence_unit_price": latest_occurrence_by_offer[offer.id].unit_price,
+            "occurrence_unit_price_unit": latest_occurrence_by_offer[offer.id].unit_price_unit,
+            "occurrence_detail_text": latest_occurrence_by_offer[offer.id].detail_text,
+            "occurrence_source_url": latest_occurrence_by_offer[offer.id].source_url,
+            "occurrence_source_text": latest_occurrence_by_offer[offer.id].source_text,
         }
         for offer in offers
     ]
@@ -176,7 +206,7 @@ def run_validation(reference_path: Path, *, persist: bool = False) -> dict[str, 
         store = _target_store(db, payload)
         run, snapshot = _latest_run(db, store)
         start, end = _period(payload)
-        offers = _offer_rows(db, store, start, end)
+        offers = _offer_rows(db, store, start, end, run=run)
         result = validate_external_samples(references, offers, min_samples=10)
         if persist:
             persist_external_validation_result(db, run=run, result=result)
