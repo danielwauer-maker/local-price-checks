@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -207,6 +207,50 @@ def _parse_day(value):
     return datetime.strptime(str(value), "%d.%m.%Y").date()
 
 
+def _select_current_aldi_week_offers(rows, *, today: date | None = None):
+    """Keep exactly one offer window that is active today; ignore stale/future ALDI cards."""
+    candidates = list(rows or [])
+    current_day = today or date.today()
+    active_by_window: dict[tuple[str, str], list] = {}
+    available_windows: set[tuple[str, str]] = set()
+
+    for row in candidates:
+        if not _has_explicit_week_window(row):
+            continue
+        valid_from_raw = str(row.valid_from)
+        valid_to_raw = str(row.valid_to)
+        try:
+            valid_from = _parse_day(valid_from_raw)
+            valid_to = _parse_day(valid_to_raw)
+        except (TypeError, ValueError) as exc:
+            raise CollectionError(
+                f"ALDI SÜD lieferte ein ungültiges Angebotsdatum: {valid_from_raw}–{valid_to_raw}"
+            ) from exc
+        if valid_to < valid_from:
+            raise CollectionError(
+                f"ALDI SÜD lieferte ein ungültiges Angebotsfenster: {valid_from_raw}–{valid_to_raw}"
+            )
+
+        window = (valid_from_raw, valid_to_raw)
+        available_windows.add(window)
+        if valid_from <= current_day <= valid_to:
+            active_by_window.setdefault(window, []).append(row)
+
+    if len(active_by_window) != 1:
+        if not active_by_window:
+            raise CollectionError(
+                "ALDI SÜD lieferte keine eindeutig aktuell gültige Angebotswoche; "
+                f"gefundene Fenster: {sorted(available_windows)}"
+            )
+        raise CollectionError(
+            "ALDI SÜD lieferte mehrere aktuell gültige Angebotswochen: "
+            f"{sorted(active_by_window)}"
+        )
+
+    active_window, active_rows = next(iter(active_by_window.items()))
+    return active_rows, active_window, available_windows
+
+
 def _prune_stale_aldi_week_offers(db: Session, store: Store, safe_rows) -> int:
     """Remove old current-week ALDI rows not reproduced by the safe parser."""
     rows = list(safe_rows or [])
@@ -323,11 +367,10 @@ def collect_aldi_web_for_store(
             seen.add(key)
             deduped.append(row)
 
-        windows = {(row.valid_from, row.valid_to) for row in deduped if row.valid_from and row.valid_to}
-        if len(windows) != 1:
-            raise CollectionError(f"ALDI SÜD Wochenquellen widersprechen sich bei der Gültigkeit: {sorted(windows)}")
         if not deduped:
             raise CollectionError("ALDI SÜD lieferte keine sicher isolierten, datierten Angebotskarten")
+
+        current_offers, active_window, available_windows = _select_current_aldi_week_offers(deduped)
 
         return {
             "source": resolved,
@@ -335,11 +378,14 @@ def collect_aldi_web_for_store(
             "content_type": content_type,
             "fetch_mode": fetch_mode,
             "final_url": final_url,
-            "offers": deduped,
+            "offers": current_offers,
             "status": "parsed",
             "aldi_scope": "regional_chain_stationary",
             "parser_mode": "structured_weekly_categories_v3",
             "weekly_pages_fetched": len(dict.fromkeys(fetched_pages)),
+            "active_week": active_window,
+            "available_week_windows": sorted(available_windows),
+            "noncurrent_offers_discarded": len(deduped) - len(current_offers),
             "technical_warning": "",
         }
 
