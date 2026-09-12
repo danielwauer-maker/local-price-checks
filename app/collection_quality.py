@@ -108,6 +108,25 @@ def _suspicious_name_reason(name: str) -> str | None:
     return product_name_issue(name)
 
 
+def _verified_web_occurrence_offer_ids(rows: list[OfferOccurrence]) -> set[int]:
+    """Return offers with auditable retailer-web evidence.
+
+    Prospect/PDF collectors prove provenance through ``OfferProvenance`` and an
+    immutable archive. Structured retailer-web collectors do not necessarily
+    create a PDF-style archive, but every accepted offer still persists the
+    exact official source URL and the isolated source text in
+    ``OfferOccurrence``. Count that as source evidence only when both are
+    present and the URL is HTTP(S); a bare occurrence row is not sufficient.
+    """
+
+    return {
+        row.offer_id
+        for row in rows
+        if (row.source_url or "").strip().startswith(("https://", "http://"))
+        and bool((row.source_text or "").strip())
+    }
+
+
 def _activation_metrics(rows: list, summary) -> dict:
     """Extract objective activation metrics without changing legacy QA semantics."""
     received = len(rows)
@@ -245,6 +264,7 @@ def evaluate_collection_quality(
         else []
     )
     occurrence_offer_ids = {occurrence.offer_id for occurrence in occurrence_rows}
+    web_evidence_offer_ids = _verified_web_occurrence_offer_ids(occurrence_rows)
 
     received = len(rows)
     imported = int(summary.imported or 0)
@@ -260,6 +280,10 @@ def evaluate_collection_quality(
     crop_fallback_rate = _pct(len(crop_fallback_product_ids), len(product_ids))
     weighted_image_rate = round(min(100.0, official_image_rate + crop_fallback_rate * 0.5), 1)
     provenance_rate = _pct(len(provenance_offer_ids), len(offer_ids)) if archive else 0.0
+    web_evidence_rate = _pct(len(web_evidence_offer_ids), len(offer_ids))
+    source_evidence_mode = "archive_provenance" if archive is not None else "web_occurrence"
+    source_evidence_offer_ids = provenance_offer_ids if archive is not None else web_evidence_offer_ids
+    source_evidence_rate = _pct(len(source_evidence_offer_ids), len(offer_ids))
     occurrence_rate = _pct(len(occurrence_offer_ids), len(offer_ids))
     suspicious_rate = _pct(suspicious_count, len(products))
     diagnostic_row = next(
@@ -269,6 +293,7 @@ def evaluate_collection_quality(
         ),
         None,
     )
+
     def diagnostic_value(name: str, default=0):
         if diagnostic_row is None:
             return default
@@ -292,7 +317,7 @@ def evaluate_collection_quality(
     quality_score += min(package_rate / 100.0, 1.0) * 15.0
     quality_score += min(unit_price_rate / 100.0, 1.0) * 15.0
     quality_score += min(weighted_image_rate / 100.0, 1.0) * 15.0
-    quality_score += min(provenance_rate / 100.0, 1.0) * 25.0
+    quality_score += min(source_evidence_rate / 100.0, 1.0) * 25.0
     quality_score += min(occurrence_rate / 100.0, 1.0) * 5.0
     quality_score -= min(suspicious_rate, 20.0)
     quality_score = round(max(0.0, min(quality_score, 100.0)), 1)
@@ -307,8 +332,10 @@ def evaluate_collection_quality(
         quality_reasons.append("import_rate_below_50")
     elif eligible_received > 0 and import_rate < policy.min_import_rate:
         quality_reasons.append("import_rate_below_target")
-    if archive is not None and provenance_rate < policy.min_provenance_rate:
-        quality_reasons.append("provenance_below_target")
+    if source_evidence_rate < policy.min_provenance_rate:
+        quality_reasons.append(
+            "provenance_below_target" if archive is not None else "source_evidence_below_target"
+        )
     if package_rate < policy.min_package_rate:
         quality_reasons.append("package_rate_low")
     if image_rate < policy.min_image_rate:
@@ -359,6 +386,11 @@ def evaluate_collection_quality(
         "archive_pages": archive.page_count if archive else 0,
         "provenance_links": len(provenance_offer_ids),
         "provenance_rate": provenance_rate,
+        "web_evidence_links": len(web_evidence_offer_ids),
+        "web_evidence_rate": web_evidence_rate,
+        "source_evidence_mode": source_evidence_mode,
+        "source_evidence_links": len(source_evidence_offer_ids),
+        "source_evidence_rate": source_evidence_rate,
         "package_rate": package_rate,
         "unit_price_rate": unit_price_rate,
         "image_rate": image_rate,
@@ -442,12 +474,16 @@ def persist_collection_quality(
         snapshot.created_at = datetime.utcnow()
     db.flush()
 
+    quality_reason_text = ",".join(metrics["quality_reasons"]) or "none"
+    benchmark_reason_text = ",".join(metrics["benchmark_reasons"]) or "none"
     diagnostic = (
         f"run_status={run_status} quality_status={quality_status} "
         f"benchmark_status={benchmark_status} benchmark_context={metrics['benchmark_context']} "
         f"quality_score={score:.1f} import_rate={metrics['import_rate']:.1f} "
         f"archive_created={str(metrics['archive_created']).lower()} "
         f"provenance_rate={metrics['provenance_rate']:.1f} "
+        f"source_evidence_mode={metrics['source_evidence_mode']} "
+        f"source_evidence_rate={metrics['source_evidence_rate']:.1f} "
         f"package_rate={metrics['package_rate']:.1f} "
         f"unit_price_rate={metrics['unit_price_rate']:.1f} "
         f"image_rate={metrics['image_rate']:.1f} "
@@ -462,6 +498,7 @@ def persist_collection_quality(
         f"price_anchors_unmatched={metrics['price_anchors_unmatched']} "
         f"price_anchor_match_rate={metrics['price_anchor_match_rate']:.1f} "
         f"page_offer_recall={metrics['page_offer_recall']:.1f} "
+        f"quality_reasons={quality_reason_text} benchmark_reasons={benchmark_reason_text} "
         f"suspicious={metrics['suspicious_name_count']}"
     )
     return diagnostic, metrics
