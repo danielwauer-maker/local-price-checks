@@ -46,7 +46,9 @@ RETAILER_QUALITY_POLICIES: dict[str, RetailerQualityPolicy] = {
     "REWE": RetailerQualityPolicy(expected_min_offers=150, min_image_rate=50.0),
     "Lidl": RetailerQualityPolicy(expected_min_offers=120, min_image_rate=35.0),
     "Netto Marken-Discount": RetailerQualityPolicy(expected_min_offers=250, min_image_rate=20.0),
-    "ALDI SÜD": RetailerQualityPolicy(expected_min_offers=130, min_image_rate=20.0),
+    # Calibrated against the complete official ALDI SÜD weekly category set on
+    # 2026-09-12 (100 current cards across fresh, own-brand and brand pages).
+    "ALDI SÜD": RetailerQualityPolicy(expected_min_offers=100, min_image_rate=20.0),
     "ALDI NORD": RetailerQualityPolicy(expected_min_offers=130, min_image_rate=20.0),
     "EDEKA": RetailerQualityPolicy(expected_min_offers=60, min_image_rate=20.0),
     "PENNY": RetailerQualityPolicy(expected_min_offers=100, min_image_rate=20.0),
