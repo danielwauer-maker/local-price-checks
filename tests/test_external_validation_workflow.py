@@ -19,8 +19,19 @@ def test_external_validation_workflow_uses_approved_profile_and_persists():
     assert "type: choice" in text
     assert "aldi-dierdorf-2026-09-12" in text
     assert "data/external_validation/aldi-dierdorf-2026-09-12.json" in text
-    assert "scripts/validate_external_offers.py '$REFERENCE_FILE' --persist" in text
+    assert "'/app/$REFERENCE_FILE' --persist" in text
     assert "Unsupported validation profile" in text
+
+
+def test_external_validation_workflow_syncs_only_approved_assets_into_container():
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "Sync approved validation assets into app container" in text
+    assert "test -f scripts/validate_external_offers.py" in text
+    assert "test -f '$REFERENCE_FILE'" in text
+    assert "docker compose cp scripts/validate_external_offers.py app:/app/scripts/validate_external_offers.py" in text
+    assert "docker compose cp '$REFERENCE_FILE' app:/app/$REFERENCE_FILE" in text
+    assert "docker compose exec -T app mkdir -p /app/scripts /app/data/external_validation" in text
 
 
 def test_external_validation_workflow_reports_canonical_readiness():

@@ -63,6 +63,19 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Sync approved validation assets into app container
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          REFERENCE_FILE: ${{ steps.profile.outputs.reference_file }}
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /opt/local-price-checks && test -f scripts/validate_external_offers.py && test -f '$REFERENCE_FILE' && docker compose exec -T app mkdir -p /app/scripts /app/data/external_validation && docker compose cp scripts/validate_external_offers.py app:/app/scripts/validate_external_offers.py && docker compose cp '$REFERENCE_FILE' app:/app/$REFERENCE_FILE"
+
       - name: Run and persist independent validation
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -74,7 +87,7 @@ jobs:
           PORT="${DEPLOY_PORT:-22}"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd /opt/local-price-checks && test -f '$REFERENCE_FILE' && docker compose exec -T app python scripts/validate_external_offers.py '$REFERENCE_FILE' --persist"
+            "cd /opt/local-price-checks && docker compose exec -T app python /app/scripts/validate_external_offers.py '/app/$REFERENCE_FILE' --persist"
 
       - name: Report resulting ALDI Dierdorf readiness
         if: always()
