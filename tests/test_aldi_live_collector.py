@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+from datetime import date
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.aldi_live_collector import (
     _discover_weekly_page_urls,
     _harden_aldi_row,
+    _select_current_aldi_week_offers,
     is_official_aldi_offer_url,
     is_official_aldi_weekly_url,
     parse_aldi_stationary_chain_offers,
 )
+from app.collection_service import CollectionError
 from app.db import Base
 from app.engine_v140.collectors import CollectedOffer
 from app.engine_v140.source_registry import RetailSource
@@ -28,6 +33,19 @@ def _source(store_name: str = "ALDI SÜD Dierdorf") -> RetailSource:
         notes="test",
         supports_products=True,
         store_specific=False,
+    )
+
+
+def _offer(name: str, valid_from: str, valid_to: str, price: float = 1.99) -> CollectedOffer:
+    return CollectedOffer(
+        "aldi-test",
+        "ALDI SÜD Dierdorf",
+        "ALDI SÜD",
+        name,
+        "Sonstiges",
+        price,
+        valid_from=valid_from,
+        valid_to=valid_to,
     )
 
 
@@ -58,6 +76,44 @@ def test_discover_weekly_page_urls_stays_on_same_category():
     <a href="https://example.org/?page=2">external</a>
     """
     assert _discover_weekly_page_urls(html, root) == [root + "?page=2", root + "?page=3"]
+
+
+def test_current_week_selection_discards_stale_aldi_cards():
+    stale = _offer("August Altbestand", "03.08.2026", "09.08.2026")
+    current_a = _offer("Aktuelle Milch", "07.09.2026", "12.09.2026", 1.11)
+    current_b = _offer("Aktuelle Butter", "07.09.2026", "12.09.2026", 1.79)
+
+    selected, active_window, available_windows = _select_current_aldi_week_offers(
+        [stale, current_a, current_b],
+        today=date(2026, 9, 12),
+    )
+
+    assert selected == [current_a, current_b]
+    assert active_window == ("07.09.2026", "12.09.2026")
+    assert available_windows == {
+        ("03.08.2026", "09.08.2026"),
+        ("07.09.2026", "12.09.2026"),
+    }
+
+
+def test_current_week_selection_still_fails_closed_for_overlapping_active_windows():
+    rows = [
+        _offer("Fenster A", "07.09.2026", "12.09.2026"),
+        _offer("Fenster B", "10.09.2026", "13.09.2026"),
+    ]
+
+    with pytest.raises(CollectionError, match="mehrere aktuell gültige Angebotswochen"):
+        _select_current_aldi_week_offers(rows, today=date(2026, 9, 12))
+
+
+def test_current_week_selection_fails_closed_without_active_week():
+    rows = [
+        _offer("August Altbestand", "03.08.2026", "09.08.2026"),
+        _offer("Nächste Woche", "14.09.2026", "19.09.2026"),
+    ]
+
+    with pytest.raises(CollectionError, match="keine eindeutig aktuell gültige Angebotswoche"):
+        _select_current_aldi_week_offers(rows, today=date(2026, 9, 12))
 
 
 def test_chain_parser_allows_generic_filial_selector_but_requires_explicit_week():
