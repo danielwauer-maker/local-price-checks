@@ -8,6 +8,7 @@ TARGET_SHA="${1:-}"
 PENDING_FILE="$BACKUP_DIR/.pending-schema-release"
 APP_STOPPED=0
 FORCE_FULL_REDEPLOY="${FORCE_FULL_REDEPLOY:-0}"
+DISK_SAFETY_SCRIPT="${DISK_SAFETY_SCRIPT:-$APP_DIR/scripts/production-disk-safety.sh}"
 
 if [[ "$FORCE_FULL_REDEPLOY" != "0" && "$FORCE_FULL_REDEPLOY" != "1" ]]; then
   echo "ERROR: FORCE_FULL_REDEPLOY must be 0 or 1."
@@ -15,6 +16,13 @@ if [[ "$FORCE_FULL_REDEPLOY" != "0" && "$FORCE_FULL_REDEPLOY" != "1" ]]; then
 fi
 
 cd "$APP_DIR"
+
+if [[ ! -r "$DISK_SAFETY_SCRIPT" ]]; then
+  echo "ERROR: production disk safety helper is missing or unreadable: $DISK_SAFETY_SCRIPT"
+  exit 1
+fi
+# shellcheck source=scripts/production-disk-safety.sh
+source "$DISK_SAFETY_SCRIPT"
 
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "ERROR: tracked working tree changes detected; refusing production deploy."
@@ -183,6 +191,11 @@ if [[ "$FORCE_FULL_REDEPLOY" -eq 1 ]]; then
   GATEWAY=1
 fi
 
+if [[ $APP -eq 1 || $FRONTEND -eq 1 ]]; then
+  safe_prebuild_cleanup
+  require_production_build_space
+fi
+
 on_error() {
   rc=$?
   echo "ERROR: production release failed with exit code $rc."
@@ -293,6 +306,7 @@ for attempt in {1..30}; do
     echo
     echo "Production healthy at $TARGET_SHA"
     docker compose ps
+    log_production_storage "after successful production deploy"
     if [[ $CONTROLLED_SCHEMA_RELEASE -eq 1 ]]; then
       rm -f "$PENDING_FILE"
     fi
