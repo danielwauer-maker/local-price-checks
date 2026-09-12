@@ -7,6 +7,12 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/backups/local-price-checks}"
 TARGET_SHA="${1:-}"
 PENDING_FILE="$BACKUP_DIR/.pending-schema-release"
 APP_STOPPED=0
+FORCE_FULL_REDEPLOY="${FORCE_FULL_REDEPLOY:-0}"
+
+if [[ "$FORCE_FULL_REDEPLOY" != "0" && "$FORCE_FULL_REDEPLOY" != "1" ]]; then
+  echo "ERROR: FORCE_FULL_REDEPLOY must be 0 or 1."
+  exit 1
+fi
 
 cd "$APP_DIR"
 
@@ -77,7 +83,7 @@ if [[ -f "$PENDING_FILE" ]]; then
   fi
 fi
 
-if [[ "$OLD_SHA" == "$TARGET_SHA" && "$DIFF_BASE" == "$OLD_SHA" ]]; then
+if [[ "$OLD_SHA" == "$TARGET_SHA" && "$DIFF_BASE" == "$OLD_SHA" && "$FORCE_FULL_REDEPLOY" -eq 0 ]]; then
   echo "Already deployed: $TARGET_SHA"
   exit 0
 fi
@@ -168,6 +174,13 @@ if [[ $FRONTEND -eq 0 && $APP -eq 0 && $GATEWAY -eq 0 ]]; then
     FRONTEND=1
     APP=1
   fi
+fi
+
+if [[ "$FORCE_FULL_REDEPLOY" -eq 1 ]]; then
+  echo "Forcing full production rebuild/recreate because deployment proof is missing or unverified."
+  APP=1
+  FRONTEND=1
+  GATEWAY=1
 fi
 
 on_error() {
