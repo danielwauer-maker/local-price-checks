@@ -1,10 +1,13 @@
+import os
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "run-production-release.sh"
 DEPLOY = ROOT / "scripts" / "deploy-production.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-production.yml"
+DISK_SAFETY = ROOT / "scripts" / "production-disk-safety.sh"
 
 
 def test_release_wrapper_uses_versioned_post_success_marker_as_deployment_truth():
@@ -15,7 +18,7 @@ def test_release_wrapper_uses_versioned_post_success_marker_as_deployment_truth(
     assert 'git merge-base --is-ancestor "$LAST_SUCCESSFUL_SHA" "$TARGET_SHA"' in script
     assert 'git reset --hard "$LAST_SUCCESSFUL_SHA"' in script
 
-    deploy_call = 'FORCE_FULL_REDEPLOY="$FORCE_FULL_REDEPLOY" bash "$DEPLOY_SCRIPT" "$TARGET_SHA"'
+    deploy_call = 'DISK_SAFETY_SCRIPT="$DISK_SAFETY_SCRIPT" FORCE_FULL_REDEPLOY="$FORCE_FULL_REDEPLOY" bash "$DEPLOY_SCRIPT" "$TARGET_SHA"'
     marker_write = 'printf \'%s %s\\n\' "$MARKER_VERSION" "$TARGET_SHA" > "${SUCCESS_MARKER}.tmp"'
     marker_commit = 'mv "${SUCCESS_MARKER}.tmp" "$SUCCESS_MARKER"'
 
@@ -67,3 +70,91 @@ def test_production_workflow_invokes_release_wrapper_not_raw_deploy_script():
     assert "/tmp/local-price-checks-release.sh" in workflow
     assert "bash /tmp/local-price-checks-release.sh '$TARGET_SHA'" in workflow
     assert "git show '${TARGET_SHA}:scripts/deploy-production.sh' > /tmp/local-price-checks-deploy.sh" not in workflow
+
+
+def _fake_disk_commands(tmp_path: Path, available_bytes: int) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "df").write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == \"-PB1\" ]]; then\n"
+        "  echo 'Filesystem 1-blocks Used Available Capacity Mounted on'\n"
+        f"  echo '/dev/root 40000000000 1 {available_bytes} 1% /'\n"
+        "else\n"
+        "  echo 'Filesystem Size Used Avail Use% Mounted on'\n"
+        "  echo '/dev/root 38G 29G 9G 77% /'\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        "echo \"docker $*\" >> \"$FAKE_DOCKER_LOG\"\n",
+        encoding="utf-8",
+    )
+    for command in (bin_dir / "df", bin_dir / "docker"):
+        command.chmod(0o755)
+    docker_log = tmp_path / "docker.log"
+    return {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_DOCKER_LOG": str(docker_log),
+    }
+
+
+def test_disk_preflight_aborts_below_seven_gib_after_safe_cleanup(tmp_path):
+    env = _fake_disk_commands(tmp_path, 7 * 1024 * 1024 * 1024 - 1)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"source '{DISK_SAFETY}'; safe_prebuild_cleanup; require_production_build_space",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "insufficient free root disk" in result.stdout
+    docker_log = Path(env["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8")
+    assert "docker system df" in docker_log
+    assert "docker builder prune -af" in docker_log
+    assert "docker image prune -f" in docker_log
+    assert "volume" not in docker_log
+
+
+def test_disk_preflight_passes_at_seven_gib_and_deploy_logs_post_success_state(tmp_path):
+    env = _fake_disk_commands(tmp_path, 7 * 1024 * 1024 * 1024)
+
+    result = subprocess.run(
+        ["bash", "-c", f"source '{DISK_SAFETY}'; require_production_build_space"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "preflight passed" in result.stdout
+    deploy = DEPLOY.read_text(encoding="utf-8")
+    preflight = "require_production_build_space"
+    first_build = "docker compose build app"
+    assert deploy.index(preflight) < deploy.index(first_build)
+    assert 'log_production_storage "after successful production deploy"' in deploy
+
+
+def test_release_wrapper_extracts_versioned_disk_safety_helper():
+    script = WRAPPER.read_text(encoding="utf-8")
+
+    assert 'git show "${TARGET_SHA}:scripts/production-disk-safety.sh" > "$DISK_SAFETY_SCRIPT"' in script
+    assert 'DISK_SAFETY_SCRIPT="$DISK_SAFETY_SCRIPT"' in script
+
+
+def test_workflow_delegates_cleanup_and_preflight_to_versioned_release_scripts():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "docker builder prune" not in workflow
+    assert "docker image prune" not in workflow
+    assert "docker volume prune" not in workflow
