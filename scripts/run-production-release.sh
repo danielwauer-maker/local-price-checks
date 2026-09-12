@@ -6,6 +6,7 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/backups/local-price-checks}"
 TARGET_SHA="${1:-}"
 SUCCESS_MARKER="$BACKUP_DIR/.last-successful-release"
 DEPLOY_SCRIPT="/tmp/local-price-checks-deploy.sh"
+DISK_SAFETY_SCRIPT="/tmp/local-price-checks-production-disk-safety.sh"
 FORCE_FULL_REDEPLOY=0
 MARKER_VERSION="v2"
 
@@ -67,12 +68,14 @@ else
 fi
 
 git show "${TARGET_SHA}:scripts/deploy-production.sh" > "$DEPLOY_SCRIPT"
+git show "${TARGET_SHA}:scripts/production-disk-safety.sh" > "$DISK_SAFETY_SCRIPT"
 chmod 700 "$DEPLOY_SCRIPT"
+chmod 700 "$DISK_SAFETY_SCRIPT"
 
 # deploy-production.sh performs its own build/migration/recreate/health gates.
 # A bootstrap/unverified marker explicitly forces app+frontend+gateway rebuild
 # and recreation so an identical checkout cannot be mistaken for a release.
-FORCE_FULL_REDEPLOY="$FORCE_FULL_REDEPLOY" bash "$DEPLOY_SCRIPT" "$TARGET_SHA"
+DISK_SAFETY_SCRIPT="$DISK_SAFETY_SCRIPT" FORCE_FULL_REDEPLOY="$FORCE_FULL_REDEPLOY" bash "$DEPLOY_SCRIPT" "$TARGET_SHA"
 
 mkdir -p "$BACKUP_DIR"
 printf '%s %s\n' "$MARKER_VERSION" "$TARGET_SHA" > "${SUCCESS_MARKER}.tmp"
