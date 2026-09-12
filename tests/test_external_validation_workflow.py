@@ -28,10 +28,26 @@ def test_external_validation_workflow_syncs_only_approved_assets_into_container(
 
     assert "Sync approved validation assets into app container" in text
     assert "test -f scripts/validate_external_offers.py" in text
+    assert "test -f scripts/diagnose_external_validation.py" in text
     assert "test -f '$REFERENCE_FILE'" in text
     assert "docker compose cp scripts/validate_external_offers.py app:/app/scripts/validate_external_offers.py" in text
+    assert "docker compose cp scripts/diagnose_external_validation.py app:/app/scripts/diagnose_external_validation.py" in text
     assert "docker compose cp '$REFERENCE_FILE' app:/app/$REFERENCE_FILE" in text
     assert "docker compose exec -T app mkdir -p /app/scripts /app/data/external_validation" in text
+
+
+def test_external_validation_workflow_runs_read_only_diagnostics_only_after_validation_failure():
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "id: validation" in text
+    assert "Diagnose validation mismatch read-only" in text
+    assert "if: steps.validation.outcome == 'failure'" in text
+    diagnostic_command = "python /app/scripts/diagnose_external_validation.py '/app/$REFERENCE_FILE'"
+    assert diagnostic_command in text
+    diagnostic_section = text.split("- name: Diagnose validation mismatch read-only", 1)[1].split(
+        "- name: Report resulting ALDI Dierdorf readiness", 1
+    )[0]
+    assert "--persist" not in diagnostic_section
 
 
 def test_external_validation_workflow_reports_canonical_readiness():
