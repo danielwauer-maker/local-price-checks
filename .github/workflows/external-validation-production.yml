@@ -74,9 +74,10 @@ jobs:
           PORT="${DEPLOY_PORT:-22}"
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd /opt/local-price-checks && test -f scripts/validate_external_offers.py && test -f '$REFERENCE_FILE' && docker compose exec -T app mkdir -p /app/scripts /app/data/external_validation && docker compose cp scripts/validate_external_offers.py app:/app/scripts/validate_external_offers.py && docker compose cp '$REFERENCE_FILE' app:/app/$REFERENCE_FILE"
+            "cd /opt/local-price-checks && test -f scripts/validate_external_offers.py && test -f scripts/diagnose_external_validation.py && test -f '$REFERENCE_FILE' && docker compose exec -T app mkdir -p /app/scripts /app/data/external_validation && docker compose cp scripts/validate_external_offers.py app:/app/scripts/validate_external_offers.py && docker compose cp scripts/diagnose_external_validation.py app:/app/scripts/diagnose_external_validation.py && docker compose cp '$REFERENCE_FILE' app:/app/$REFERENCE_FILE"
 
       - name: Run and persist independent validation
+        id: validation
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -88,6 +89,20 @@ jobs:
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd /opt/local-price-checks && docker compose exec -T app python /app/scripts/validate_external_offers.py '/app/$REFERENCE_FILE' --persist"
+
+      - name: Diagnose validation mismatch read-only
+        if: steps.validation.outcome == 'failure'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          REFERENCE_FILE: ${{ steps.profile.outputs.reference_file }}
+        run: |
+          set -euo pipefail
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd /opt/local-price-checks && docker compose exec -T app python /app/scripts/diagnose_external_validation.py '/app/$REFERENCE_FILE'"
 
       - name: Report resulting ALDI Dierdorf readiness
         if: always()
