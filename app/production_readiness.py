@@ -152,13 +152,62 @@ def _name_similarity(reference: ExternalOfferSample, offer: Any) -> float:
     offer_name = _text(_offer_product_value(offer, "name", _offer_value(offer, "product_name", "")))
     if not reference_name or not offer_name:
         return 0.0
+    brand = _text(reference.brand)
+    offer_brand = _text(_offer_product_value(offer, "brand", ""))
+    if brand and offer_brand and brand == offer_brand:
+        if reference_name.startswith(brand + " "):
+            reference_name = reference_name[len(brand) + 1 :]
+        if offer_name.startswith(brand + " "):
+            offer_name = offer_name[len(brand) + 1 :]
     ratio = SequenceMatcher(None, reference_name, offer_name).ratio()
     ref_tokens, offer_tokens = set(reference_name.split()), set(offer_name.split())
     token_score = len(ref_tokens & offer_tokens) / max(1, len(ref_tokens | offer_tokens))
-    brand = _text(reference.brand)
-    offer_brand = _text(_offer_product_value(offer, "brand", ""))
+    reordered_score = SequenceMatcher(
+        None,
+        " ".join(sorted(_identity_tokens(reference_name))),
+        " ".join(sorted(_identity_tokens(offer_name))),
+    ).ratio()
     brand_bonus = 0.08 if brand and offer_brand and brand == offer_brand else 0.0
-    return min(1.0, max(ratio, token_score) + brand_bonus)
+    return min(1.0, max(ratio, token_score, reordered_score) + brand_bonus)
+
+
+_IDENTITY_STOPWORDS = {
+    "der", "die", "das", "mit", "ohne", "vom", "von", "im", "in", "und", "art",
+    "g", "kg", "ml", "l", "stück", "stk",
+}
+_IDENTITY_TOKEN_ALIASES = {"rinder": "rind"}
+
+
+def _identity_tokens(value: str) -> tuple[str, ...]:
+    tokens = []
+    for token in _text(value).split():
+        if token in _IDENTITY_STOPWORDS or token.isdigit() or re.fullmatch(r"\d+(?:g|kg|ml|l)", token):
+            continue
+        tokens.append(_IDENTITY_TOKEN_ALIASES.get(token, token))
+    return tuple(tokens)
+
+
+def _reference_identity_covered(reference: ExternalOfferSample, offer: Any) -> bool:
+    """Require every meaningful reference token to occur in the candidate.
+
+    The check permits reordered wording and compounds (for example
+    ``Rinder-Hackfleisch`` versus ``Hackfleisch vom Rind``), but rejects a
+    shared generic suffix from turning different products into one identity.
+    """
+    reference_tokens = _identity_tokens(reference.product_name)
+    offer_tokens = _identity_tokens(
+        _offer_product_value(offer, "name", _offer_value(offer, "product_name", ""))
+    )
+    if not reference_tokens or not offer_tokens:
+        return False
+    return all(
+        any(
+            reference_token == offer_token
+            or (len(reference_token) >= 4 and reference_token in offer_token)
+            for offer_token in offer_tokens
+        )
+        for reference_token in reference_tokens
+    )
 
 
 def _best_offer(reference: ExternalOfferSample, offers: Sequence[Any], used: set[int]) -> tuple[int, Any] | None:
@@ -167,7 +216,7 @@ def _best_offer(reference: ExternalOfferSample, offers: Sequence[Any], used: set
         if idx in used:
             continue
         similarity = _name_similarity(reference, offer)
-        if similarity >= 0.60:
+        if similarity >= 0.60 and _reference_identity_covered(reference, offer):
             ranked.append((similarity, idx, offer))
     if not ranked:
         return None

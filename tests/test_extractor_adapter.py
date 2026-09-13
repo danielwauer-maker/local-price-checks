@@ -3,6 +3,7 @@ from datetime import date
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app import data_operations_models  # noqa: F401 - register observation tables
 from app.db import Base
 from app.extractor_adapter import import_collected_offers, normalize_master_key
 from app.models import MasterProduct, Offer, Store
@@ -55,6 +56,17 @@ def test_import_creates_master_product_and_offer():
     assert product.package_size == "500 g"
     assert offer.price == 6.49
     assert offer.unit_price == 12.98
+
+
+def test_import_persists_explicit_collector_brand_without_learning_signal():
+    db = _db()
+    db.add(Store(retailer="REWE", name="REWE Test", postal_code="12345", city="Test", address="Test 1"))
+    db.commit()
+
+    summary = import_collected_offers(db, [_row(brand="Dallmayr")])
+
+    assert summary.imported == 1
+    assert db.query(MasterProduct).one().brand == "Dallmayr"
 
 
 def test_duplicate_offer_is_updated_not_duplicated():

@@ -321,6 +321,33 @@ def test_external_validation_cannot_pass_with_one_wrong_required_field():
     assert result.status == "WARN"
 
 
+def test_external_validation_rejects_similar_but_different_meat_products():
+    references = [
+        ExternalOfferSample(product_name="Kasseler Minutensteaks"),
+        ExternalOfferSample(product_name="Hähnchen-Schenkel mit Rückenstück"),
+    ]
+    offers = [
+        {"id": 1, "product_name": "Schweine-Minutensteaks 400 g"},
+        {"id": 2, "product_name": "Hähnchenschenkel-Steaks 500 g, Provence"},
+    ]
+
+    result = validate_external_samples(references, offers, min_samples=1)
+
+    assert result.matched == 0
+    assert result.missing == 2
+    assert all(sample.mismatches == ("offer_missing",) for sample in result.samples)
+
+
+def test_external_validation_accepts_reordered_rind_hackfleisch_wording():
+    references = [ExternalOfferSample(product_name="Rinder-Hackfleisch")]
+    offers = [{"id": 1, "product_name": "Hackfleisch vom Rind 500 g"}]
+
+    result = validate_external_samples(references, offers, min_samples=1)
+
+    assert result.matched == 1
+    assert result.missing == 0
+
+
 def test_next_week_window_is_always_following_monday_to_sunday():
     assert next_week_window(date(2026, 9, 11)) == (date(2026, 9, 14), date(2026, 9, 20))
     assert next_week_window(date(2026, 9, 14)) == (date(2026, 9, 21), date(2026, 9, 27))
