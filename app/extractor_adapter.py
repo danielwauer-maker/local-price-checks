@@ -314,7 +314,8 @@ def import_collected_offers(
         if not product:
             product = db.query(MasterProduct).filter(MasterProduct.normalized_key == key).first()
         package_label = details.package_label or package_size_label(row.quantity, row.unit)
-        learned_brand = infer_learned_brand(db, name, candidates=brand_candidates)
+        explicit_brand = str(getattr(row, "brand", None) or "").strip() or None
+        learned_brand = explicit_brand or infer_learned_brand(db, name, candidates=brand_candidates)
         if not product:
             product = MasterProduct(brand=learned_brand, name=name, package_size=package_label, normalized_key=key)
             db.add(product)

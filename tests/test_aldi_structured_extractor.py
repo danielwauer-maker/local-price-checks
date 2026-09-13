@@ -52,6 +52,7 @@ def test_structured_cards_keep_neighbor_products_isolated_and_use_card_image():
     assert "Hähnchenschenkel" not in rows[0].source_text
     assert rows[0].image_url == "https://www.aldi-sued.de/img/rinder.webp"
     assert rows[1].image_url == "https://www.aldi-sued.de/img/huhn.webp"
+    assert [row.brand for row in rows] == ["BBQ", "BBQ"]
 
 
 def test_live_style_card_reconstructs_title_when_name_and_pack_are_split():
@@ -87,6 +88,7 @@ def test_live_style_card_reconstructs_title_when_name_and_pack_are_split():
     assert rows[0].unit == "g"
     assert rows[0].source_text.count("Spare") == 1
     assert "Putenbrust" not in rows[0].source_text
+    assert [row.brand for row in rows] == ["BBQ", "MEINE METZGEREI"]
 
 
 def test_weekly_category_accepts_single_price_without_inventing_regular_price():

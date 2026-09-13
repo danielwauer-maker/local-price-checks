@@ -168,6 +168,36 @@ def _title_from_card(card: Tag) -> str | None:
     return name[:180] if len(name) >= 4 else None
 
 
+def _brand_from_card(card: Tag, product_name: str) -> str | None:
+    """Return only an explicit adjacent ALDI brand label.
+
+    Live ALDI cards render the brand in its own uppercase node immediately
+    before the product title.  Keeping this DOM-bound avoids guessing a brand
+    from arbitrary first words in the flattened card text.
+    """
+    parts = [_clean_title_part(part) for part in card.stripped_strings]
+    parts = [part for part in parts if part]
+    product_lower = product_name.casefold()
+
+    for idx, part in enumerate(parts):
+        candidate = part.strip()
+        for category in _CATEGORY_LABELS:
+            prefix = category + " "
+            if candidate.casefold().startswith(prefix.casefold()):
+                candidate = candidate[len(prefix) :].strip()
+                break
+        if not candidate or _is_noise_part(candidate) or _SIZE_RE.search(candidate):
+            continue
+        letters = [char for char in candidate if char.isalpha()]
+        if len(letters) < 2 or candidate != candidate.upper():
+            continue
+        if product_lower.startswith(candidate.casefold() + " "):
+            return candidate[:80]
+        if idx + 1 < len(parts) and product_lower.startswith(parts[idx + 1].casefold()):
+            return candidate[:80]
+    return None
+
+
 def _card_image(
     card: Tag,
     base_url: str,
@@ -312,6 +342,7 @@ def parse_aldi_offer_cards(
             image_url=image_url,
             image_alt=image_alt,
             confidence=.99,
+            brand=_brand_from_card(card, name),
         )
         key = (name.lower(), promo, quantity, unit, vf, vt)
         if key not in seen:

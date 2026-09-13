@@ -31,7 +31,7 @@ CATS=[
 class CollectedOffer:
     source_key:str; store_name:str; retailer:str; product_name:str; category:str; price:float|None
     regular_price:float|None=None; app_price:float|None=None; unit_price:float|None=None; unit_price_unit:str|None=None; quantity:float|None=None; unit:str|None=None
-    valid_from:str|None=None; valid_to:str|None=None; source_text:str=""; source_url:str=""; image_url:str|None=None; image_alt:str|None=None; local_store_offer:bool=True; confidence:float=.5
+    valid_from:str|None=None; valid_to:str|None=None; source_text:str=""; source_url:str=""; image_url:str|None=None; image_alt:str|None=None; local_store_offer:bool=True; confidence:float=.5; brand:str|None=None
 def cat(s):
     x=s.lower()
     for c,words in CATS:
