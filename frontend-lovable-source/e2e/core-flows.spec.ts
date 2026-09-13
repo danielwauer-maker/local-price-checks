@@ -119,6 +119,8 @@ test("@critical offers screen switches safely from the current to the next calen
 
   await page.getByRole("button", { name: "Nächste Woche" }).click();
   await expect(page.getByText("Nächste Woche: 14.09. – 20.09.2026")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Obst & Gemüse · 1 Angebote" })).toBeVisible();
+  await page.getByRole("button", { name: "Obst & Gemüse", exact: true }).click();
   await expect(page.getByText("Äpfel nächste Woche")).toBeVisible();
 });
 
