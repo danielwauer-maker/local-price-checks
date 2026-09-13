@@ -68,6 +68,60 @@ test("adding an offer updates the shopping list immediately", async ({ page }) =
   await expect(page.getByText("Milbona Gouda jung").first()).toBeVisible();
 });
 
+test("@critical offers screen switches safely from the current to the next calendar week", async ({ page }) => {
+  const upcoming = {
+    productId: "next-week-apples",
+    marketId: "lidl-puderbach",
+    price: 1.49,
+    validFrom: "2026-09-14",
+    validUntil: "2026-09-19",
+    product: {
+      id: "next-week-apples",
+      name: "Äpfel nächste Woche",
+      brand: "",
+      amount: "1 kg",
+      category: "obst-gemuese",
+      tags: [],
+    },
+    market: {
+      id: "lidl-puderbach",
+      name: "Lidl Puderbach",
+      chain: "Lidl",
+      street: "Teststraße 1",
+      city: "Puderbach",
+      lat: 50.6,
+      lng: 7.57,
+      distanceKm: 1.2,
+    },
+  };
+
+  await page.route("**/api/lokero/offers**", (route) => {
+    const period = new URL(route.request().url()).searchParams.get("period");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify(period === "next" ? [upcoming] : []),
+    });
+  });
+  await page.route("**/api/lokero/offer-week**", (route) => {
+    const period = new URL(route.request().url()).searchParams.get("period");
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify(period === "next"
+        ? { from: "2026-09-14", until: "2026-09-20" }
+        : { from: "2026-09-07", until: "2026-09-13" }),
+    });
+  });
+
+  await openApp(page, "/angebote");
+  await expect(page.getByText("Für deine ausgewählten Märkte wurden diese Woche keine Angebote gefunden.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Nächste Woche" }).click();
+  await expect(page.getByText("Nächste Woche: 14.09. – 20.09.2026")).toBeVisible();
+  await expect(page.getByText("Äpfel nächste Woche")).toBeVisible();
+});
+
 test("@critical scoped offer suggestions keep existing list market prices intact", async ({ page }) => {
   const market = {
     id: "rewe-puderbach",
