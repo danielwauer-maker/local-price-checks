@@ -324,9 +324,11 @@ export type OfferFilter = {
   tag?: DietTag | null;
   marketIds?: string[];
   query?: string;
+  period?: OfferPeriod;
 };
 
 export type OfferView = Offer & { product: Product; market: Market };
+export type OfferPeriod = "current" | "next";
 
 function mergeRuntimeOffers(incoming: Offer[]) {
   const merged = new Map(runtimeOffers.map((offer) => [`${offer.productId}:${offer.marketId}`, offer]));
@@ -347,6 +349,7 @@ export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]
       if (filter.query) params.set("q", filter.query);
       if (filter.categoryId) params.set("category", filter.categoryId);
       if (filter.marketIds?.length) params.set("market_ids", filter.marketIds.join(","));
+      if (filter.period === "next") params.set("period", "next");
       const rows = await api<Array<Record<string, unknown>>>(`/api/lokero/offers?${params}`);
       const mapped = rows.map((row) => {
         const product = asProduct((row.product ?? {}) as Record<string, unknown>);
@@ -356,14 +359,17 @@ export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]
       });
       runtimeProducts = Array.from(new Map([...runtimeProducts, ...mapped.map((x) => x.product)].map((p) => [p.id, p])).values());
       runtimeMarkets = Array.from(new Map([...runtimeMarkets, ...mapped.map((x) => x.market)].map((m) => [m.id, m])).values());
-      const incomingOffers = mapped.map(({ product: _p, market: _m, ...offer }) => offer);
-      const filteredWithinMarkets = Boolean(filter.query?.trim() || filter.categoryId || filter.tag);
-      if (filteredWithinMarkets) mergeRuntimeOffers(incomingOffers);
-      else if (filter.marketIds?.length) replaceRuntimeOffersForMarkets(filter.marketIds, incomingOffers);
-      else runtimeOffers = incomingOffers;
+      if (filter.period !== "next") {
+        const incomingOffers = mapped.map(({ product: _p, market: _m, ...offer }) => offer);
+        const filteredWithinMarkets = Boolean(filter.query?.trim() || filter.categoryId || filter.tag);
+        if (filteredWithinMarkets) mergeRuntimeOffers(incomingOffers);
+        else if (filter.marketIds?.length) replaceRuntimeOffersForMarkets(filter.marketIds, incomingOffers);
+        else runtimeOffers = incomingOffers;
+      }
       return filter.tag ? mapped.filter((o) => o.product.tags.includes(filter.tag!)) : mapped;
     },
     () => {
+      if (filter.period === "next") return [];
       const q = filter.query?.trim().toLowerCase() ?? "";
       return OFFERS.map((o) => ({
         ...o,
@@ -379,8 +385,21 @@ export async function fetchOffers(filter: OfferFilter = {}): Promise<OfferView[]
   );
 }
 
-export async function fetchOfferWeek() {
-  return realOrFallback(() => api<{ from: string; until: string }>("/api/lokero/offer-week"), () => OFFER_WEEK);
+function shiftedOfferWeek(days: number) {
+  const shift = (iso: string) => {
+    const value = new Date(`${iso}T12:00:00`);
+    value.setDate(value.getDate() + days);
+    return value.toISOString().slice(0, 10);
+  };
+  return { from: shift(OFFER_WEEK.from), until: shift(OFFER_WEEK.until) };
+}
+
+export async function fetchOfferWeek(period: OfferPeriod = "current") {
+  const suffix = period === "next" ? "?period=next" : "";
+  return realOrFallback(
+    () => api<{ from: string; until: string }>(`/api/lokero/offer-week${suffix}`),
+    () => (period === "next" ? shiftedOfferWeek(7) : OFFER_WEEK),
+  );
 }
 
 export async function fetchTopOffers(limit = 6): Promise<OfferView[]> {

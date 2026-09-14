@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/AppShell";
 import { CategoryIcon } from "@/components/lokero/CategoryIcon";
 import { OfferRow } from "@/components/lokero/OfferCard";
 import { EmptyState, ErrorState, SkeletonList } from "@/components/lokero/States";
-import { fetchOffers, fetchOfferWeek, type OfferView } from "@/services/lokero-api";
+import { fetchOffers, fetchOfferWeek, type OfferPeriod, type OfferView } from "@/services/lokero-api";
 import { fetchCategories } from "@/services/lokero-categories-api";
 import type { CategoryId } from "@/data/lokero";
 import { formatDateRange } from "@/lib/format";
@@ -77,19 +77,20 @@ function OffersScreen() {
     () => readStoredCategories(initial.category),
   );
   const [selectedCategory, setSelectedCategory] = useState<string | null>(initial.category ?? null);
+  const [period, setPeriod] = useState<OfferPeriod>("current");
   const initialScrollDone = useRef(false);
   const favoriteMarketKey = useMemo(() => [...favoriteMarkets].sort().join(","), [favoriteMarkets]);
   const hasFavoriteMarkets = favoriteMarkets.length > 0;
 
   const categories = useQuery({ queryKey: ["lokero-categories"], queryFn: fetchCategories });
   const query = useQuery({
-    queryKey: ["offers", favoriteMarketKey],
-    queryFn: () => fetchOffers({ categoryId: null, tag: null, marketIds: favoriteMarkets }),
+    queryKey: ["offers", favoriteMarketKey, period],
+    queryFn: () => fetchOffers({ categoryId: null, tag: null, marketIds: favoriteMarkets, period }),
     enabled: hasFavoriteMarkets,
   });
   const week = useQuery({
-    queryKey: ["offer-week"],
-    queryFn: fetchOfferWeek,
+    queryKey: ["offer-week", period],
+    queryFn: () => fetchOfferWeek(period),
     enabled: hasFavoriteMarkets,
   });
 
@@ -230,10 +231,31 @@ function OffersScreen() {
               </div>
             </section>
 
+            <div className="grid grid-cols-2 rounded-xl bg-muted-surface p-1" role="group" aria-label="Angebotswoche">
+              {(["current", "next"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={period === value}
+                  onClick={() => {
+                    setPeriod(value);
+                    setSelectedCategory(null);
+                    setOpenCategories(new Set());
+                  }}
+                  className={cn(
+                    "h-10 rounded-lg text-[12px] font-semibold transition-colors",
+                    period === value ? "bg-surface text-navy shadow-sm" : "text-muted-foreground",
+                  )}
+                >
+                  {value === "current" ? "Diese Woche" : "Nächste Woche"}
+                </button>
+              ))}
+            </div>
+
             <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2.5">
               <CalendarDays className="h-4 w-4 shrink-0 text-primary" />
               <p className="tabular min-w-0 flex-1 truncate text-[12px] font-medium text-navy">
-                {week.data ? `Diese Woche: ${formatDateRange(week.data.from, week.data.until)}` : "Angebotszeitraum wird geladen …"}
+                {week.data ? `${period === "current" ? "Diese Woche" : "Nächste Woche"}: ${formatDateRange(week.data.from, week.data.until)}` : "Angebotszeitraum wird geladen …"}
               </p>
             </div>
           </>
@@ -248,7 +270,7 @@ function OffersScreen() {
             <EmptyState
               icon={Tag}
               title="Keine Angebote gefunden"
-              description={search ? "Für deine Suche wurden keine Angebote gefunden." : "Für deine ausgewählten Märkte wurden diese Woche keine Angebote gefunden."}
+              description={search ? "Für deine Suche wurden keine Angebote gefunden." : period === "current" ? "Für deine ausgewählten Märkte wurden diese Woche keine Angebote gefunden." : "Für deine ausgewählten Märkte sind noch keine Angebote für nächste Woche verfügbar."}
               action={search ? <button onClick={() => setSearch("")} className="inline-flex h-11 items-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground">Suche löschen</button> : undefined}
             />
           )}

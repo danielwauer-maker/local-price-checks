@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,7 @@ from .feature_flags import feature_enabled, get_feature_flags
 from .geo import haversine_km
 from .lokero_routes import (
     _category_slug_map,
-    _current_offers,
+    _offers_for_period,
     _market_payload,
     _latest_occurrence_map,
     _offer_payload_from_parts,
@@ -89,6 +91,7 @@ def canonical_offers(
     q: str = "",
     market_ids: str = "",
     category: str = "",
+    period: Literal["current", "next"] = "current",
     limit: int = Query(250, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
@@ -114,7 +117,7 @@ def canonical_offers(
 
     scoped_stores = [store for store in stores if store.id in store_ids]
     road_distances = _road_distance_map(user, scoped_stores)
-    rows = _current_offers(db, sorted(store_ids))
+    rows = _offers_for_period(db, sorted(store_ids), period)
     if q.strip():
         needle = q.strip().lower()
         rows = [

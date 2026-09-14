@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -218,21 +218,29 @@ def _offer_serialization_maps(db: Session, offers: list[Offer], *, expose_normal
 
 
 def _current_offers(db: Session, store_ids: list[int]) -> list[Offer]:
+    return _offers_for_period(db, store_ids, "current")
+
+
+def _offers_for_period(
+    db: Session,
+    store_ids: list[int],
+    period: Literal["current", "next"] = "current",
+) -> list[Offer]:
     if not store_ids:
         return []
     today = app_today()
-    return (
+    query = (
         db.query(Offer)
         .options(joinedload(Offer.product), joinedload(Offer.store))
-        .filter(
-            Offer.store_id.in_(store_ids),
-            Offer.local_store_offer.is_(True),
-            Offer.valid_from <= today,
-            Offer.valid_to >= today,
-        )
-        .order_by(Offer.price.asc())
-        .all()
+        .filter(Offer.store_id.in_(store_ids), Offer.local_store_offer.is_(True))
     )
+    if period == "next":
+        next_monday = today + timedelta(days=7 - today.weekday())
+        next_sunday = next_monday + timedelta(days=6)
+        query = query.filter(Offer.valid_from <= next_sunday, Offer.valid_to >= next_monday)
+    else:
+        query = query.filter(Offer.valid_from <= today, Offer.valid_to >= today)
+    return query.order_by(Offer.price.asc()).all()
 
 
 def _region_state(db: Session, region: CoverageRegion) -> dict:
@@ -310,6 +318,7 @@ def offers(
     q: str = "",
     market_ids: str = "",
     category: str = "",
+    period: Literal["current", "next"] = "current",
     limit: int = Query(250, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
@@ -323,7 +332,7 @@ def offers(
     if market_ids.strip():
         wanted = {int(x) for x in market_ids.split(",") if x.strip().isdigit()}
         store_ids &= wanted
-    rows = _current_offers(db, sorted(store_ids))
+    rows = _offers_for_period(db, sorted(store_ids), period)
     if q.strip():
         needle = q.strip().lower()
         rows = [
@@ -347,7 +356,17 @@ def offers(
 
 
 @router.get("/offer-week")
-def offer_week(db: Session = Depends(get_db)):
+def offer_week(
+    period: Literal["current", "next"] = "current",
+    db: Session = Depends(get_db),
+):
+    if period == "next":
+        today = app_today()
+        week_start = today + timedelta(days=7 - today.weekday())
+        return {
+            "from": week_start.isoformat(),
+            "until": (week_start + timedelta(days=6)).isoformat(),
+        }
     user = current_user(db)
     store_ids = [store.id for store in _released_stores(db, user)]
     rows = _current_offers(db, store_ids)
