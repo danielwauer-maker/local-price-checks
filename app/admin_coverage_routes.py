@@ -32,7 +32,12 @@ from .postcode_coverage_service import (
     verify_staged_candidate,
 )
 from .postcode_geometry import OSM_ATTRIBUTION, OSM_LICENSE_URL, import_postcode_geometry, postcode_feature
-from .postcode_reconciliation import deduplicate_candidates, reconcile_postcode_coverage
+from .postcode_reconciliation import (
+    deduplicate_candidates,
+    group_physical_candidates,
+    reconcile_postcode_coverage,
+    store_matches_candidate,
+)
 from .retailer_store_sources import stage_official_store_candidates
 from .web_collector import collect_store_from_web
 
@@ -61,6 +66,52 @@ def safe_external_url(value: str | None) -> str | None:
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
         return None
     return cleaned
+
+
+def _activation_reconciliation(
+    candidates: list[StoreDiscoveryCandidate],
+    stores: list[Store],
+) -> tuple[list[dict], set[int]]:
+    """Expose physical markets missing a Store and Stores missing a discovery identity.
+
+    The discovery layer and the activation layer intentionally remain separate.
+    This helper reconciles them for the admin UI without silently promoting or
+    linking anything. One pending row represents one physical candidate group.
+    """
+    pending_rows: list[dict] = []
+    matched_store_ids: set[int] = set()
+
+    for group in group_physical_candidates(candidates):
+        matching_stores = [
+            store
+            for store in stores
+            if any(store_matches_candidate(store, member) for member in group.members)
+        ]
+        if matching_stores:
+            matched_store_ids.update(store.id for store in matching_stores)
+            continue
+
+        representative = group.representative
+        promotion_candidate = next(
+            (member for member in group.members if candidate_ready_for_promotion(member)),
+            None,
+        )
+        pending_rows.append(
+            {
+                "candidate": representative,
+                "promotion_candidate": promotion_candidate,
+                "address_verified": any(member.address_verified for member in group.members),
+                "coordinates_verified": any(member.coordinates_verified for member in group.members),
+                "official_source_verified": any(
+                    member.official_source_verified or member.source.startswith("official:")
+                    for member in group.members
+                ),
+                "source_count": len(group.members),
+            }
+        )
+
+    orphan_store_ids = {store.id for store in stores if store.id not in matched_store_ids}
+    return pending_rows, orphan_store_ids
 
 
 def _load_germany_postcode_geojson() -> dict:
@@ -130,6 +181,17 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
     stores_by_postcode: dict[str, list[Store]] = {}
     for store in postcode_stores:
         stores_by_postcode.setdefault(store.postal_code, []).append(store)
+
+    activation_pending_by_postcode: dict[str, list[dict]] = {}
+    activation_orphan_store_ids: dict[str, set[int]] = {}
+    for postal_code in postcode_values:
+        pending_rows, orphan_store_ids = _activation_reconciliation(
+            raw_candidates_by_postcode.get(postal_code, []),
+            stores_by_postcode.get(postal_code, []),
+        )
+        activation_pending_by_postcode[postal_code] = pending_rows
+        activation_orphan_store_ids[postal_code] = orphan_store_ids
+
     activation_overviews = {
         store.id: activation_overview(db, store)
         for store in postcode_stores
@@ -157,6 +219,8 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "postcodes": postcodes,
         "candidates_by_postcode": candidates_by_postcode,
         "stores_by_postcode": stores_by_postcode,
+        "activation_pending_by_postcode": activation_pending_by_postcode,
+        "activation_orphan_store_ids": activation_orphan_store_ids,
         "activation_overviews": activation_overviews,
         "safe_candidate_source_urls": safe_candidate_source_urls,
         "coverage_summaries": summaries,
