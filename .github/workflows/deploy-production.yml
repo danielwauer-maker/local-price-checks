@@ -71,3 +71,70 @@ jobs:
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd /opt/local-price-checks && docker compose exec -T app python -c 'from app.db import SessionLocal; from app.freshness import market_freshness; db=SessionLocal(); rows=market_freshness(db); problems=[r for r in rows if r[\"state\"] in {\"failed\", \"stale\"}]; print(\"COLLECTION_PROBLEM_COUNT\", len(problems)); [print(\"COLLECTION_PROBLEM\", \"store_id=\"+str(r[\"store\"].id), \"retailer=\"+str(r[\"store\"].retailer), \"name=\"+str(r[\"store\"].name), \"state=\"+str(r[\"state\"]), \"run_id=\"+str(r[\"run\"].id if r[\"run\"] else None), \"run_status=\"+str(r[\"run\"].status if r[\"run\"] else None), \"started_at=\"+str(r[\"run\"].started_at if r[\"run\"] else None), \"source_key=\"+str(r[\"run\"].source_key if r[\"run\"] else None), \"message=\"+str((r[\"run\"].message or \"\")[:1000] if r[\"run\"] else \"\")) for r in problems]; db.close()'"
+
+      - name: One-time Docker storage cleanup
+        if: steps.preflight.outputs.configured == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          PORT="${DEPLOY_PORT:-22}"
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          set -u
+
+          MARKER="/opt/backups/local-price-checks/.docker-storage-cleanup-20260915"
+          RETIRED_IMAGE="local-price-checks-app:rollback-20260915"
+
+          if [[ -f "$MARKER" ]]; then
+            echo "Docker storage cleanup already completed; skipping one-time cleanup."
+          else
+            cleanup_complete=1
+
+            if docker image inspect "$RETIRED_IMAGE" >/dev/null 2>&1; then
+              image_id="$(docker image inspect --format '{{.Id}}' "$RETIRED_IMAGE")"
+              image_in_use=0
+
+              while IFS= read -r container_id; do
+                [[ -z "$container_id" ]] && continue
+                if [[ "$(docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true)" == "$image_id" ]]; then
+                  image_in_use=1
+                  break
+                fi
+              done < <(docker ps -aq)
+
+              if [[ "$image_in_use" -eq 1 ]]; then
+                echo "Retired rollback image is still referenced by a container; keeping it for safety."
+                cleanup_complete=0
+              elif docker image rm "$RETIRED_IMAGE"; then
+                echo "Removed retired rollback image tag: $RETIRED_IMAGE"
+              else
+                echo "Could not remove retired rollback image tag; cleanup will be retried on a future deploy."
+                cleanup_complete=0
+              fi
+            else
+              echo "Retired rollback image tag is already absent."
+            fi
+
+            if ! docker builder prune -af; then
+              echo "Docker build-cache cleanup failed; cleanup will be retried on a future deploy."
+              cleanup_complete=0
+            fi
+
+            if ! docker image prune -f; then
+              echo "Dangling-image cleanup failed; cleanup will be retried on a future deploy."
+              cleanup_complete=0
+            fi
+
+            if [[ "$cleanup_complete" -eq 1 ]]; then
+              mkdir -p "$(dirname "$MARKER")"
+              touch "$MARKER"
+              echo "Recorded completed Docker storage cleanup."
+            fi
+          fi
+
+          echo "Storage after Docker cleanup:"
+          df -h / || true
+          docker system df || true
+          REMOTE
