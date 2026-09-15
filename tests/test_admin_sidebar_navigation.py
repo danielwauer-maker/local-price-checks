@@ -16,6 +16,7 @@ def test_admin_sidebar_contains_all_current_admin_features():
         "/admin/collector",
         "/admin/rollout",
         "/admin/web-offer-audit",
+        "/admin/rewe-beta-accuracy",
         "/admin/articles/prospect-audit",
         "/admin/articles/prospect-audit/errors",
         "/admin/quality/provenance",
@@ -36,6 +37,15 @@ def test_admin_sidebar_contains_all_current_admin_features():
         assert link in sidebar
 
 
+def test_admin_sidebar_owns_desktop_content_offset_for_every_workspace():
+    sidebar = (TEMPLATES / "admin_sidebar.html").read_text(encoding="utf-8")
+    assert ".admin-sidebar ~ .wrap" in sidebar
+    assert "width:calc(100% - 292px)!important" in sidebar
+    assert ".admin-sidebar + .wrap" not in sidebar
+    assert "@media(max-width:850px)" in sidebar
+    assert "width:100%!important" in sidebar
+
+
 def test_market_release_links_are_in_operator_workflow_order():
     sidebar = (TEMPLATES / "admin_sidebar.html").read_text(encoding="utf-8")
     workflow = [
@@ -46,6 +56,7 @@ def test_market_release_links_are_in_operator_workflow_order():
         "/admin/collector",
         "/admin/rollout",
         "/admin/web-offer-audit",
+        "/admin/rewe-beta-accuracy",
         "/admin/articles/prospect-audit",
         "/admin/articles/prospect-audit/errors",
         "/admin/quality/provenance",
@@ -65,14 +76,18 @@ def test_all_admin_workspaces_use_shared_sidebar():
         "admin_coverage.html": "admin_section = 'coverage'",
         "admin_candidate_coordinate_queue.html": "admin_section = 'coordinate_review'",
         "admin_candidate_coordinate_review.html": "admin_sidebar.html",
+        "admin_data_status.html": "admin_sidebar.html",
+        "admin_lokero_controls.html": "admin_sidebar.html",
         "admin_market_identities.html": "admin_sidebar.html",
         "admin_rollout.html": "admin_section = 'rollout'",
         "admin_production_readiness.html": "admin_sidebar.html",
         "admin_product_media_review.html": "admin_section = 'product_media_review'",
         "admin_prospect_audit.html": "admin_section = 'prospect_audit'",
         "admin_web_offer_audit.html": "admin_section = 'web_offer_audit'",
+        "admin_rewe_beta_accuracy.html": "admin_section = 'rewe_beta_accuracy'",
         "admin_prospect_errors.html": "admin_sidebar.html",
         "admin_provenance.html": "admin_section = 'provenance'",
+        "admin_users.html": "admin_sidebar.html",
     }
     for filename, marker in expected_sections.items():
         content = (TEMPLATES / filename).read_text(encoding="utf-8")
