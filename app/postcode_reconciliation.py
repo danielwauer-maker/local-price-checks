@@ -29,8 +29,6 @@ STATUS_PRESENTATION = {
 AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
     # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
     "57610": 5,
-    # Manually checked: no supported grocery market in this postcode area.
-    "56316": 0,
 }
 
 _GENERIC_MARKET_WORDS = {
@@ -59,6 +57,7 @@ class PostcodeCoverageSummary:
     promoted: int
     missing_expected: int
     additional_discovered: int
+    source_health_incomplete: bool
     status: str
     status_label: str
     status_color: str
@@ -285,16 +284,20 @@ def reconcile_postcode_coverage(
         result.status in {"manual_verification_required", "source_unavailable"} for result in results
     )
 
+    # The postcode onboarding state answers whether the physical-market set is
+    # known and verified. Adapter/source health is deliberately reported
+    # separately below; an incomplete adapter must not turn an otherwise fully
+    # verified postcode into a false onboarding failure.
     if not postcode.enabled:
         status = "disabled"
-    elif audited_target == 0 and not groups and not postcode_stores:
-        status = "no_known_stores"
     elif missing_expected:
         status = "incomplete"
-    elif expected == 0 and found == 0 and incomplete_sources:
-        status = "source_unavailable"
+    elif expected == 0 and found == 0 and not postcode_stores:
+        status = "no_known_stores"
     elif expected == 0 and found == 0:
-        status = "no_expected_stores"
+        # A persisted Store without a corresponding discovery identity needs
+        # operator reconciliation instead of being reported as an empty area.
+        status = "verification_pending"
     elif (
         additional_discovered
         or address_verified < found
@@ -303,8 +306,6 @@ def reconcile_postcode_coverage(
         or promoted < found
     ):
         status = "verification_pending"
-    elif incomplete_sources:
-        status = "source_unavailable"
     else:
         status = "complete"
 
@@ -321,6 +322,7 @@ def reconcile_postcode_coverage(
         promoted=promoted,
         missing_expected=missing_expected,
         additional_discovered=additional_discovered,
+        source_health_incomplete=incomplete_sources,
         status=status,
         status_label=label,
         status_color=color,

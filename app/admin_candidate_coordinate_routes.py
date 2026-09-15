@@ -15,6 +15,7 @@ from .db import get_db
 from .geo import haversine_km
 from .models import Store
 from .postcode_coverage_service import candidate_ready_for_promotion, verify_staged_candidate
+from .postcode_reconciliation import group_physical_candidates
 
 router = APIRouter()
 templates = Jinja2Templates(directory=__import__("pathlib").Path(__file__).resolve().parent / "templates")
@@ -70,6 +71,69 @@ def _address_geocode(candidate: StoreDiscoveryCandidate) -> dict | None:
     return min(rows, key=lambda row: row["distance_m"])
 
 
+def _coordinate_review_rows(
+    candidates: list[StoreDiscoveryCandidate],
+) -> tuple[list[dict], list[dict]]:
+    """Return one queue row per physical market, not one row per source record.
+
+    A physical branch may have both an official retailer row and an OSM row.
+    Verification is therefore aggregated across the group. For the details link
+    we prefer a member whose address and coordinates are already confirmed so a
+    ready market does not open on a stale duplicate source row.
+    """
+    rows: list[dict] = []
+    for group in group_physical_candidates(candidates):
+        address_verified = any(member.address_verified for member in group.members)
+        coordinates_verified = any(member.coordinates_verified for member in group.members)
+        official_source_verified = any(
+            member.official_source_verified or member.source.startswith("official:")
+            for member in group.members
+        )
+        preferred = next(
+            (
+                member
+                for member in group.members
+                if member.address_verified and member.coordinates_verified
+            ),
+            group.representative,
+        )
+        representative = group.representative
+        rows.append(
+            {
+                "id": preferred.id,
+                "retailer": representative.retailer,
+                "name": representative.name,
+                "address": representative.address,
+                "postal_code": representative.postal_code,
+                "city": representative.city,
+                "address_verified": address_verified,
+                "coordinates_verified": coordinates_verified,
+                "official_source_verified": official_source_verified,
+                "source_count": len(group.members),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            row["postal_code"] or "",
+            row["retailer"] or "",
+            row["name"] or "",
+            row["id"],
+        )
+    )
+    open_rows = [
+        row
+        for row in rows
+        if not row["address_verified"] or not row["coordinates_verified"]
+    ]
+    ready_rows = [
+        row
+        for row in rows
+        if row["address_verified"] and row["coordinates_verified"]
+    ]
+    return open_rows, ready_rows
+
+
 @router.get("/admin/coverage/coordinate-review")
 def coordinate_review_queue(
     request: Request,
@@ -88,14 +152,7 @@ def coordinate_review_queue(
         )
         .all()
     )
-    open_rows = [
-        row for row in candidates
-        if not row.address_verified or not row.coordinates_verified
-    ]
-    ready_rows = [
-        row for row in candidates
-        if row.address_verified and row.coordinates_verified
-    ]
+    open_rows, ready_rows = _coordinate_review_rows(candidates)
     return templates.TemplateResponse(
         "admin_candidate_coordinate_queue.html",
         {
