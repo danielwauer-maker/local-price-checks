@@ -26,7 +26,7 @@ from app.postcode_geometry import (
     load_bundled_postcode_geometries,
     postcode_feature,
 )
-from app.postcode_reconciliation import reconcile_postcode_coverage
+from app.postcode_reconciliation import reconcile_postcode_coverage, store_matches_candidate
 from app.retailer_store_sources import (
     RetailerSourceResult,
     RetailerStoreRecord,
@@ -235,7 +235,7 @@ def test_unrelated_existing_store_does_not_satisfy_promotion_requirement():
     db.close()
 
 
-def test_identity_matching_counts_preexisting_store_with_normalized_address():
+def test_identity_matching_recognizes_preexisting_store_without_implying_promotion():
     db = _db()
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
     expected = _candidate("expected", source="official:lidl", official_source_verified=True)
@@ -245,12 +245,14 @@ def test_identity_matching_counts_preexisting_store_with_normalized_address():
     )
     db.add_all([postcode, expected, existing])
     db.commit()
+    assert store_matches_candidate(existing, expected) is True
     summary = reconcile_postcode_coverage(db, postcode, source_results=_source())
-    assert summary.promoted == 1
+    assert summary.promoted == 0
+    assert summary.status == "verification_pending"
     db.close()
 
 
-def test_identity_matching_prefers_matching_external_store_id():
+def test_external_id_identity_match_does_not_imply_explicit_promotion():
     db = _db()
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
     expected = _candidate(
@@ -264,7 +266,10 @@ def test_identity_matching_prefers_matching_external_store_id():
     )
     db.add_all([postcode, expected, existing])
     db.commit()
-    assert reconcile_postcode_coverage(db, postcode, source_results=_source()).promoted == 1
+    assert store_matches_candidate(existing, expected) is True
+    summary = reconcile_postcode_coverage(db, postcode, source_results=_source())
+    assert summary.promoted == 0
+    assert summary.status == "verification_pending"
     db.close()
 
 

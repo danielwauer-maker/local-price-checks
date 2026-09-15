@@ -98,6 +98,49 @@ def test_fully_verified_postcode_is_not_downgraded_by_adapter_health():
     db.close()
 
 
+def test_matching_legacy_store_does_not_count_as_promoted_without_explicit_candidate_link():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="56305", city="Puderbach", enabled=True)
+    candidate = _candidate(
+        "official-lidl-unlinked",
+        source="official:lidl",
+        source_external_id="lidl-puderbach-legacy",
+        address_verified=True,
+        coordinates_verified=True,
+        official_source_verified=True,
+        status="verified",
+    )
+    legacy_store = Store(
+        retailer="Lidl",
+        name="Lidl Puderbach",
+        postal_code="56305",
+        city="Puderbach",
+        address="Urbacher Straße 31a",
+        latitude=50.592267,
+        longitude=7.608759,
+        external_id="lidl-puderbach-legacy",
+        active=True,
+        benchmark_verified=False,
+    )
+    db.add_all([postcode, candidate, legacy_store])
+    db.commit()
+
+    summary = reconcile_postcode_coverage(
+        db,
+        postcode,
+        source_results=_source("manual_verification_required"),
+    )
+
+    assert summary.found == 1
+    assert summary.address_verified == 1
+    assert summary.coordinates_verified == 1
+    assert summary.official_verified == 1
+    assert summary.promoted == 0
+    assert summary.status == "verification_pending"
+    assert summary.status_label == "Verifikation ausstehend"
+    db.close()
+
+
 def test_coordinate_queue_uses_one_card_per_physical_market_and_prefers_verified_member():
     official = _candidate(
         "official-lidl",
