@@ -98,7 +98,9 @@ def infer_validity(text: str, ref: date | None=None):
         a=parse_any_date(m.group(1),ref); b=parse_any_date(m.group(2),ref)
         if a and b:
             if b<a: b=b.replace(year=a.year+1)
-            if b.weekday()==6: b=b-timedelta(days=1)
+            # An explicit source range is authoritative. Do not silently turn
+            # a retailer-published Sunday end date into Saturday; REWE, for
+            # example, currently publishes weekly validity through Sunday.
             return a,b,"this_week_range",0.97
 
     m=WEEK_OFFERS_RANGE.search(text)
