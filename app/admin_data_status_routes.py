@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -15,10 +15,15 @@ from .db import get_db
 from .data_operations import build_data_operations
 from .models import CollectionRun
 from .production_readiness import (
-    build_multi_market_readiness,
     next_week_offer_counts,
     next_week_window,
     quality_metric_for_display,
+)
+from .readiness_scopes import (
+    ALL_TARGETS_SCOPE_KEY,
+    BETA_1_SCOPE_KEY,
+    DEFAULT_READINESS_SCOPE,
+    build_scoped_market_readiness,
 )
 
 BASE = Path(__file__).resolve().parent
@@ -26,10 +31,14 @@ templates = Jinja2Templates(directory=BASE / "templates")
 router = APIRouter()
 
 
-def _readiness_context(db: Session) -> dict:
-    """Build the operator-facing seven-market production readiness view."""
+def _readiness_context(
+    db: Session,
+    *,
+    scope_key: str = DEFAULT_READINESS_SCOPE,
+) -> dict:
+    """Build the operator-facing readiness view for the selected release scope."""
 
-    readiness = build_multi_market_readiness(db)
+    readiness = build_scoped_market_readiness(db, scope_key=scope_key)
     today = app_today()
     next_start, next_end = next_week_window(today)
     next_counts = next_week_offer_counts(db, today=today)
@@ -74,6 +83,8 @@ def _readiness_context(db: Session) -> dict:
         "stores": enriched_rows,
         "next_week_start": next_start,
         "next_week_end": next_end,
+        "beta_1_scope_key": BETA_1_SCOPE_KEY,
+        "all_targets_scope_key": ALL_TARGETS_SCOPE_KEY,
     }
 
 
@@ -93,15 +104,20 @@ def admin_data_status(request: Request, db: Session = Depends(get_db), actor: st
 @router.get("/admin/collector/readiness")
 def admin_production_readiness(
     request: Request,
+    scope: str = DEFAULT_READINESS_SCOPE,
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
+    try:
+        context = _readiness_context(db, scope_key=scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return templates.TemplateResponse(
         "admin_production_readiness.html",
         {
             "request": request,
             "actor": actor,
             "admin_section": "readiness",
-            **_readiness_context(db),
+            **context,
         },
     )
