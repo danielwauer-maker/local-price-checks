@@ -27,6 +27,7 @@ def test_admin_sidebar_contains_all_current_admin_features():
         "/admin/product-media-review",
         "/admin/lokero-controls",
         "/admin/users",
+        "/admin/backups",
         "/admin?tab=settings",
         "/admin?tab=audit",
         "/admin/support-export.zip",
@@ -59,6 +60,7 @@ def test_market_release_links_are_in_operator_workflow_order():
 def test_all_admin_workspaces_use_shared_sidebar():
     expected_sections = {
         "admin.html": "admin_sidebar.html",
+        "admin_backups.html": "admin_sidebar.html",
         "admin_collector.html": "admin_section = 'collector'",
         "admin_coverage.html": "admin_section = 'coverage'",
         "admin_candidate_coordinate_queue.html": "admin_section = 'coordinate_review'",
