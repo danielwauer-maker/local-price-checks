@@ -152,6 +152,103 @@ def parse_lidl_text(source,text,imgs=None):
         ))
     return out
 
+
+def _rewe_offer_period(row):
+    from ..clock import app_today
+    from .week_utils import classify_week, parse_any_date
+
+    valid_from=parse_any_date(str(getattr(row,'valid_from',None) or ''),app_today())
+    return classify_week(valid_from,app_today()) if valid_from else None
+
+
+def _collected_rewe_structured_offer(source,row):
+    block=str(row.get('source_text') or '')
+    q,u=size(block)
+    return CollectedOffer(
+        source.key,source.store_name,source.retailer,
+        str(row.get('product_name') or '')[:180],
+        str(row.get('category') or '') or cat(str(row.get('product_name') or '')),
+        float(row['price']),
+        regular_price=None,
+        unit_price=upr(block),unit_price_unit=upr_unit(block),quantity=q,unit=u,
+        valid_from=row.get('valid_from'),valid_to=row.get('valid_to'),
+        source_text=block,source_url=source.url,
+        image_url=row.get('image_url'),image_alt=row.get('image_alt'),
+        confidence=.99,
+    )
+
+
+def _merge_rewe_week_horizon(source,raw,ctype,fetch_mode,final_url,visible_text,imgs,offers):
+    from .rewe_week_horizon import (
+        append_rewe_audit_appendix,
+        parse_rewe_structured_weeks,
+        visible_next_week_is_published,
+    )
+
+    html=raw.decode('utf-8',errors='replace')
+    structured_rows,meta=parse_rewe_structured_weeks(html)
+    rendered=None
+
+    # During Sunday-Friday REWE explicitly says "Nächste Woche – Ab Samstag".
+    # Do not pay the browser cost or fabricate a future cohort in that state.
+    # Once the official page exposes a dated next-week range, capture the same
+    # page in Chromium so its structured network responses are available too.
+    if not meta.get('structured_found') and visible_next_week_is_published(visible_text):
+        rendered=browser_fetch(source.url,drain_offer_surface=True)
+        html=rendered.content.decode('utf-8',errors='replace')
+        structured_rows,meta=parse_rewe_structured_weeks(html)
+
+    coverage={period for period in (_rewe_offer_period(row) for row in offers) if period in {'current','next'}}
+    structured_by_period={
+        period:[row for row in structured_rows if row.get('period')==period]
+        for period in ('current','next')
+    }
+
+    warning_parts=[]
+    if meta.get('structured_found'):
+        warning_parts.extend(meta.get('errors') or [])
+        if meta.get('next_available') and not structured_by_period['next']:
+            warning_parts.append('rewe_next_week_available_but_empty')
+        if not structured_by_period['current']:
+            warning_parts.append('rewe_structured_current_empty')
+
+        existing={
+            (o.product_name.lower(),o.price,o.valid_from,o.quantity,o.unit)
+            for o in offers
+        }
+        for period in ('current','next'):
+            # Keep the proven visible-card parser as primary for whichever week
+            # the official page currently renders. Structured rows fill only a
+            # missing cohort, so this change cannot silently replace current QA.
+            if period in coverage:
+                continue
+            for row in structured_by_period[period]:
+                offer=_collected_rewe_structured_offer(source,row)
+                key=(offer.product_name.lower(),offer.price,offer.valid_from,offer.quantity,offer.unit)
+                if key not in existing:
+                    offers.append(offer);existing.add(key)
+
+        if structured_rows and (meta.get('next_available') or len(coverage)<2):
+            html=append_rewe_audit_appendix(html,structured_rows)
+            raw=html.encode('utf-8')
+            if rendered is not None:
+                ctype=rendered.content_type
+                fetch_mode=f"{rendered.mode}+rewe-structured-weeks"
+                final_url=rendered.final_url
+            else:
+                fetch_mode=f"{fetch_mode}+rewe-structured-weeks"
+    elif visible_next_week_is_published(visible_text):
+        warning_parts.append('rewe_next_week_published_but_not_captured')
+
+    diagnostics={
+        'rewe_current_offer_count':sum(1 for row in offers if _rewe_offer_period(row)=='current'),
+        'rewe_next_week_offer_count':sum(1 for row in offers if _rewe_offer_period(row)=='next'),
+        'rewe_structured_found':bool(meta.get('structured_found')),
+        'rewe_structured_next_available':bool(meta.get('next_available')),
+    }
+    return raw,ctype,fetch_mode,final_url,offers,';'.join(sorted(set(warning_parts))),diagnostics
+
+
 def collect_one(source):
     raw,ctype,fetch_mode,final_url=fetch_source(source); html=raw.decode('utf-8',errors='replace'); visible_text=visible(html); imgs=images(html,final_url or source.url)
     fn={'Netto Marken-Discount':parse_netto_text,'ALDI SÜD':parse_aldi_text,'EDEKA':parse_edeka_text,'REWE':parse_rewe_text,'Lidl':parse_lidl_text}.get(source.retailer)
@@ -163,10 +260,19 @@ def collect_one(source):
             k=(o.product_name.lower(),o.price,o.quantity,o.unit)
             if k not in existing:
                 offers.append(o);existing.add(k)
+    technical_warning=''
+    rewe_diagnostics={}
+    if source.retailer=='REWE':
+        raw,ctype,fetch_mode,final_url,offers,technical_warning,rewe_diagnostics=_merge_rewe_week_horizon(
+            source,raw,ctype,fetch_mode,final_url,visible_text,imgs,offers
+        )
     for o in offers:
         if o.unit_price is None:
             o.unit_price,o.unit_price_unit=compute_unit_price(o.app_price if o.app_price is not None else o.price,o.quantity,o.unit)
         elif not o.unit_price_unit:
             o.unit_price_unit=canonical_unit_price_unit(o.unit)
-    return {'source':source,'raw':raw,'content_type':ctype,'fetch_mode':fetch_mode,'final_url':final_url,'offers':offers,'status':'parsed' if offers else 'no_safe_offers'}
+    result={'source':source,'raw':raw,'content_type':ctype,'fetch_mode':fetch_mode,'final_url':final_url,'offers':offers,'status':'parsed' if offers else 'no_safe_offers'}
+    if technical_warning:result['technical_warning']=technical_warning
+    result.update(rewe_diagnostics)
+    return result
 def source_status():return [asdict(s) for s in SOURCES]

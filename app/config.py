@@ -23,6 +23,11 @@ class Settings:
     host: str = os.getenv("APP_HOST", "0.0.0.0")
     port: int = int(os.getenv("APP_PORT", "8000"))
     data_dir: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
+    backup_dir: Path = Path(os.getenv("BACKUP_DIR", str(BASE_DIR / "backups")))
+    backup_restore_restart: bool = _bool_env(
+        "BACKUP_RESTORE_RESTART",
+        os.getenv("APP_ENV", "development").strip().lower() == "production",
+    )
     database_url: str = os.getenv(
         "DATABASE_URL",
         DEFAULT_DATABASE_URL,

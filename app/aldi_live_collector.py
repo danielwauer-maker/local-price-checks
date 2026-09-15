@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from .aldi_structured_extractor import parse_aldi_offer_cards
+from .clock import app_today
 from .collection_quality import BenchmarkContext
 from .collection_service import CollectionError, collect_structured_for_store
 from .engine_v140.collectors import best_img, fetch_source, images, parse_aldi_text, visible
@@ -207,12 +208,20 @@ def _parse_day(value):
     return datetime.strptime(str(value), "%d.%m.%Y").date()
 
 
+def _next_week_horizon_end(current_day: date) -> date:
+    """Return the Sunday ending the calendar week after ``current_day``."""
+    next_monday = current_day + timedelta(days=7 - current_day.weekday())
+    return next_monday + timedelta(days=6)
+
+
 def _select_current_aldi_week_offers(rows, *, today: date | None = None):
-    """Keep exactly one offer window that is active today; ignore stale/future ALDI cards."""
+    """Require one active ALDI window and retain published offers through next week."""
     candidates = list(rows or [])
-    current_day = today or date.today()
+    current_day = today or app_today()
+    horizon_end = _next_week_horizon_end(current_day)
     active_by_window: dict[tuple[str, str], list] = {}
     available_windows: set[tuple[str, str]] = set()
+    selected_rows = []
 
     for row in candidates:
         if not _has_explicit_week_window(row):
@@ -235,6 +244,8 @@ def _select_current_aldi_week_offers(rows, *, today: date | None = None):
         available_windows.add(window)
         if valid_from <= current_day <= valid_to:
             active_by_window.setdefault(window, []).append(row)
+        if valid_to >= current_day and valid_from <= horizon_end:
+            selected_rows.append(row)
 
     if len(active_by_window) != 1:
         if not active_by_window:
@@ -247,42 +258,48 @@ def _select_current_aldi_week_offers(rows, *, today: date | None = None):
             f"{sorted(active_by_window)}"
         )
 
-    active_window, active_rows = next(iter(active_by_window.items()))
-    return active_rows, active_window, available_windows
+    active_window = next(iter(active_by_window))
+    return selected_rows, active_window, available_windows
 
 
 def _prune_stale_aldi_week_offers(db: Session, store: Store, safe_rows) -> int:
-    """Remove old current-week ALDI rows not reproduced by the safe parser."""
+    """Remove stale official ALDI rows independently for each well-covered offer window."""
     rows = list(safe_rows or [])
-    if len(rows) < 20:
-        return 0
-    windows = {(getattr(r, "valid_from", None), getattr(r, "valid_to", None)) for r in rows}
-    if len(windows) != 1:
-        return 0
-    valid_from_raw, valid_to_raw = next(iter(windows))
-    if not valid_from_raw or not valid_to_raw:
-        return 0
-    valid_from, valid_to = _parse_day(valid_from_raw), _parse_day(valid_to_raw)
-    safe_keys = {
-        (" ".join(str(r.product_name).lower().split()), round(float(r.price), 2))
-        for r in rows
-        if getattr(r, "product_name", None) and getattr(r, "price", None) is not None
-    }
-
-    candidates = (
-        db.query(Offer)
-        .join(MasterProduct, Offer.master_product_id == MasterProduct.id)
-        .filter(Offer.store_id == store.id, Offer.valid_from == valid_from, Offer.valid_to == valid_to)
-        .all()
-    )
-    stale = []
-    for offer in candidates:
-        source_url = offer.source_url or ""
-        if not (is_official_aldi_offer_url(source_url) or is_official_aldi_weekly_url(source_url)):
+    grouped: dict[tuple[str, str], list] = {}
+    for row in rows:
+        valid_from_raw = getattr(row, "valid_from", None)
+        valid_to_raw = getattr(row, "valid_to", None)
+        if not valid_from_raw or not valid_to_raw:
             continue
-        key = (" ".join(str(offer.product.name).lower().split()), round(float(offer.price), 2))
-        if key not in safe_keys:
-            stale.append(offer)
+        grouped.setdefault((str(valid_from_raw), str(valid_to_raw)), []).append(row)
+
+    stale = []
+    for (valid_from_raw, valid_to_raw), window_rows in grouped.items():
+        if len(window_rows) < 20:
+            continue
+        try:
+            valid_from, valid_to = _parse_day(valid_from_raw), _parse_day(valid_to_raw)
+        except (TypeError, ValueError):
+            continue
+        safe_keys = {
+            (" ".join(str(r.product_name).lower().split()), round(float(r.price), 2))
+            for r in window_rows
+            if getattr(r, "product_name", None) and getattr(r, "price", None) is not None
+        }
+
+        candidates = (
+            db.query(Offer)
+            .join(MasterProduct, Offer.master_product_id == MasterProduct.id)
+            .filter(Offer.store_id == store.id, Offer.valid_from == valid_from, Offer.valid_to == valid_to)
+            .all()
+        )
+        for offer in candidates:
+            source_url = offer.source_url or ""
+            if not (is_official_aldi_offer_url(source_url) or is_official_aldi_weekly_url(source_url)):
+                continue
+            key = (" ".join(str(offer.product.name).lower().split()), round(float(offer.price), 2))
+            if key not in safe_keys:
+                stale.append(offer)
 
     for offer in stale:
         db.query(OfferOccurrence).filter(OfferOccurrence.offer_id == offer.id).delete(synchronize_session=False)
@@ -370,7 +387,15 @@ def collect_aldi_web_for_store(
         if not deduped:
             raise CollectionError("ALDI SÜD lieferte keine sicher isolierten, datierten Angebotskarten")
 
-        current_offers, active_window, available_windows = _select_current_aldi_week_offers(deduped)
+        selected_offers, active_window, available_windows = _select_current_aldi_week_offers(deduped)
+        selected_windows = sorted(
+            {
+                (str(row.valid_from), str(row.valid_to))
+                for row in selected_offers
+                if _has_explicit_week_window(row)
+            }
+        )
+        discarded = len(deduped) - len(selected_offers)
 
         return {
             "source": resolved,
@@ -378,14 +403,16 @@ def collect_aldi_web_for_store(
             "content_type": content_type,
             "fetch_mode": fetch_mode,
             "final_url": final_url,
-            "offers": current_offers,
+            "offers": selected_offers,
             "status": "parsed",
             "aldi_scope": "regional_chain_stationary",
             "parser_mode": "structured_weekly_categories_v3",
             "weekly_pages_fetched": len(dict.fromkeys(fetched_pages)),
             "active_week": active_window,
             "available_week_windows": sorted(available_windows),
-            "noncurrent_offers_discarded": len(deduped) - len(current_offers),
+            "selected_week_windows": selected_windows,
+            "out_of_horizon_offers_discarded": discarded,
+            "noncurrent_offers_discarded": discarded,
             "technical_warning": "",
         }
 
