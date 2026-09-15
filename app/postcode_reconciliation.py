@@ -293,7 +293,7 @@ def reconcile_postcode_coverage(
     elif expected == 0 and found == 0 and not postcode_stores:
         status = "no_known_stores"
     elif (
-        additional_discovered
+        (found == 0 and bool(postcode_stores))
         or address_verified < found
         or coordinates_verified < found
         or official_verified < found
