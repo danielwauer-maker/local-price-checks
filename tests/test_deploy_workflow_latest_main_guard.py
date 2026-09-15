@@ -31,4 +31,4 @@ def test_production_deploy_uses_guarded_target_sha_for_release():
     deploy_section = workflow.split("- name: Deploy successful main commit", 1)[1]
     deploy_section = deploy_section.split("\n      - name:", 1)[0]
     assert "TARGET_SHA: ${{ steps.target.outputs.target_sha }}" in deploy_section
-    assert "run-production-release.sh '$TARGET_SHA'" in deploy_section
+    assert "bash /tmp/local-price-checks-release.sh '$TARGET_SHA'" in deploy_section
