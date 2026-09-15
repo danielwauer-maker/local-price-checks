@@ -30,6 +30,7 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ../backups/local-price-checks:/app/backups
     logging: *default-logging
     restart: unless-stopped
 
