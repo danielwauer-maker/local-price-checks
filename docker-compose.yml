@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -15,6 +21,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    logging: *default-logging
     restart: unless-stopped
 
   app:
@@ -23,6 +30,7 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    logging: *default-logging
     restart: unless-stopped
 
   frontend:
@@ -34,6 +42,7 @@ services:
         VITE_SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
     env_file:
       - .env
+    logging: *default-logging
     restart: unless-stopped
     depends_on:
       app:
@@ -45,6 +54,7 @@ services:
       - "127.0.0.1:8083:80"
     volumes:
       - ./deploy/localprices-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    logging: *default-logging
     restart: unless-stopped
     depends_on:
       app:
