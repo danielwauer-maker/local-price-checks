@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -55,6 +56,11 @@ def _to_collected_offer(store: Store, offer: WebOfferRecord) -> CollectedOffer:
     )
 
 
+def _next_week_window(today: date) -> tuple[date, date]:
+    next_monday = today + timedelta(days=7 - today.weekday())
+    return next_monday, next_monday + timedelta(days=6)
+
+
 def _validate_live_scope(store: Store, offers: list[WebOfferRecord], artifacts: dict) -> list[WebOfferRecord]:
     market_id = _market_id(store)
     mismatched = [
@@ -77,27 +83,43 @@ def _validate_live_scope(store: Store, offers: list[WebOfferRecord], artifacts: 
         )
 
     today = app_today()
+    _next_start, next_end = _next_week_window(today)
+    selected: list[WebOfferRecord] = []
     current: list[WebOfferRecord] = []
     invalid_period = 0
+    stale_period = 0
+
     for offer in offers:
         if offer.valid_from is None or offer.valid_to is None:
             invalid_period += 1
             continue
+        if offer.valid_to < offer.valid_from:
+            invalid_period += 1
+            continue
+        if offer.valid_to < today:
+            stale_period += 1
+            continue
         if offer.valid_from <= today <= offer.valid_to:
             current.append(offer)
-        else:
-            invalid_period += 1
+            selected.append(offer)
+            continue
+        if today < offer.valid_from <= next_end:
+            selected.append(offer)
 
     if invalid_period:
         raise CollectionError(
-            f"EDEKA Fellenzer enthält {invalid_period} nicht aktuell gebundene Angebote; "
+            f"EDEKA Fellenzer enthält {invalid_period} Angebote mit ungültigem Angebotszeitraum."
+        )
+    if stale_period:
+        raise CollectionError(
+            f"EDEKA Fellenzer enthält {stale_period} nicht aktuell gebundene Angebote; "
             f"Stichtag={today.isoformat()}."
         )
     if not current:
         raise CollectionError(
             f"EDEKA Fellenzer lieferte keine Angebote für {today.isoformat()}."
         )
-    return current
+    return selected
 
 
 def _collect_result(store: Store) -> dict:
@@ -132,9 +154,26 @@ def _collect_result(store: Store) -> dict:
     valid_offers = [offer for offer in audit.offers if offer.valid and offer.price is not None]
     if not valid_offers:
         raise CollectionError(f"EDEKA Web-Collector lieferte keine validen Angebote: {store.name}")
-    valid_offers = _validate_live_scope(store, valid_offers, artifacts)
+    selected_offers = _validate_live_scope(store, valid_offers, artifacts)
 
-    rows = [_to_collected_offer(store, offer) for offer in valid_offers]
+    today = app_today()
+    next_start, next_end = _next_week_window(today)
+    current_offer_count = sum(
+        1
+        for offer in selected_offers
+        if offer.valid_from is not None
+        and offer.valid_to is not None
+        and offer.valid_from <= today <= offer.valid_to
+    )
+    next_week_offer_count = sum(
+        1
+        for offer in selected_offers
+        if offer.valid_from is not None
+        and offer.valid_to is not None
+        and offer.valid_from <= next_end
+        and offer.valid_to >= next_start
+    )
+    rows = [_to_collected_offer(store, offer) for offer in selected_offers]
     return {
         "offers": rows,
         "fetch_mode": audit.collector_path,
@@ -143,7 +182,10 @@ def _collect_result(store: Store) -> dict:
         "audit_raw_count": audit.raw_count,
         "audit_duplicate_count": audit.duplicate_count,
         "market_id": _market_id(store),
-        "current_offer_count": len(rows),
+        "current_offer_count": current_offer_count,
+        "next_week_offer_count": next_week_offer_count,
+        "selected_offer_count": len(rows),
+        "out_of_horizon_offers_discarded": len(valid_offers) - len(selected_offers),
         "technical_warning": "" if audit.status == "success" else (audit.message or audit.status),
     }
 
