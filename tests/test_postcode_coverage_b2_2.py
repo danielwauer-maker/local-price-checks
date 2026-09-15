@@ -219,6 +219,36 @@ def test_reconciliation_can_be_complete_only_with_all_gates_and_promotion():
     db.close()
 
 
+def test_complete_onboarding_is_not_downgraded_by_adapter_source_health():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="56305", enabled=True)
+    candidate = _candidate(
+        "official-complete",
+        source="official:lidl",
+        address_verified=True,
+        coordinates_verified=True,
+        official_source_verified=True,
+        status="promoted",
+    )
+    store = Store(
+        retailer="Lidl", name="Lidl Complete", postal_code="56305", city="Puderbach",
+        address="Urbacher Straße 31a", latitude=50.592267, longitude=7.608759,
+        active=True, benchmark_verified=False,
+    )
+    db.add_all([postcode, candidate, store])
+    db.flush()
+    candidate.matched_store_id = store.id
+    db.commit()
+    summary = reconcile_postcode_coverage(
+        db,
+        postcode,
+        source_results=_source("manual_verification_required"),
+    )
+    assert summary.status == "complete"
+    assert summary.source_health_incomplete is True
+    db.close()
+
+
 def test_unrelated_existing_store_does_not_satisfy_promotion_requirement():
     db = _db()
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
@@ -270,14 +300,39 @@ def test_identity_matching_prefers_matching_external_store_id():
 
 @pytest.mark.parametrize(
     ("enabled", "source_status", "expected_status"),
-    ((False, "supported", "disabled"), (True, "source_unavailable", "source_unavailable"), (True, "supported", "no_expected_stores")),
+    (
+        (False, "supported", "disabled"),
+        (True, "source_unavailable", "no_known_stores"),
+        (True, "supported", "no_known_stores"),
+    ),
 )
 def test_reconciliation_statuses_do_not_claim_false_completeness(enabled, source_status, expected_status):
     db = _db()
     postcode = CoveragePostalCode(postal_code="12345", enabled=enabled)
     db.add(postcode)
     db.commit()
-    assert reconcile_postcode_coverage(db, postcode, source_results=_source(source_status)).status == expected_status
+    summary = reconcile_postcode_coverage(db, postcode, source_results=_source(source_status))
+    assert summary.status == expected_status
+    if enabled:
+        assert summary.source_health_incomplete is (source_status != "supported")
+    db.close()
+
+
+def test_empty_rollout_postcode_needs_no_manual_zero_market_override():
+    db = _db()
+    postcode = CoveragePostalCode(postal_code="57614", city="Steimel / Oberdreis", enabled=True)
+    db.add(postcode)
+    db.commit()
+    summary = reconcile_postcode_coverage(
+        db,
+        postcode,
+        source_results=_source("manual_verification_required"),
+    )
+    assert summary.expected == 0
+    assert summary.found == 0
+    assert summary.status == "no_known_stores"
+    assert summary.status_label == "Keine Märkte bekannt"
+    assert summary.source_health_incomplete is True
     db.close()
 
 
