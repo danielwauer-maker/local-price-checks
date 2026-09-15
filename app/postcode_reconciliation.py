@@ -251,6 +251,22 @@ def _group_matches_store(group: CandidateGroup, store: Store) -> bool:
     return any(store_matches_candidate(store, member) for member in group.members)
 
 
+def _group_is_explicitly_promoted(group: CandidateGroup, existing_store_ids: set[int]) -> bool:
+    """Count promotion only after the explicit Candidate -> Store workflow ran.
+
+    Heuristic identity matching is useful to reconcile legacy Store rows in the
+    admin UI, but it must never make a postcode look fully promoted. Promotion
+    is an explicit lifecycle transition: the candidate must be linked to a real
+    Store and marked ``promoted`` by ``promote_candidate_to_store``.
+    """
+    return any(
+        member.status == "promoted"
+        and member.matched_store_id is not None
+        and member.matched_store_id in existing_store_ids
+        for member in group.members
+    )
+
+
 def reconcile_postcode_coverage(
     db: Session,
     postcode: CoveragePostalCode,
@@ -272,8 +288,9 @@ def reconcile_postcode_coverage(
         any(row.official_source_verified or row.source.startswith("official:") for row in group.members)
         for group in groups
     )
+    existing_store_ids = {store.id for store in postcode_stores}
     promoted = sum(
-        any(_group_matches_store(group, store) for store in postcode_stores)
+        _group_is_explicitly_promoted(group, existing_store_ids)
         for group in groups
     )
 
