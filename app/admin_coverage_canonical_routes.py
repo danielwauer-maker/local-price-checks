@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from .admin_coverage_routes import safe_external_url
+from .admin_coverage_routes import _activation_rows_for_postcode, safe_external_url
 from .admin_routes import _admin
 from .coverage_models import CoveragePostalCode, CoverageRegion, StoreDiscoveryCandidate
 from .coverage_service import coverage_payload, stores_in_region
@@ -73,6 +73,13 @@ def canonical_coverage_admin(
         store.id: activation_overview(db, store)
         for store in postcode_stores
     }
+    activation_rows_by_postcode = {
+        postcode.postal_code: _activation_rows_for_postcode(
+            raw_candidates_by_postcode.get(postcode.postal_code, []),
+            stores_by_postcode.get(postcode.postal_code, []),
+        )
+        for postcode in postcodes
+    }
     safe_candidate_source_urls = {
         candidate.id: safe_external_url(candidate.source_url)
         for candidate in candidates
@@ -100,6 +107,7 @@ def canonical_coverage_admin(
             "postcodes": postcodes,
             "candidates_by_postcode": candidates_by_postcode,
             "stores_by_postcode": dict(stores_by_postcode),
+            "activation_rows_by_postcode": activation_rows_by_postcode,
             "activation_overviews": activation_overviews,
             "safe_candidate_source_urls": safe_candidate_source_urls,
             "coverage_summaries": summaries,

@@ -270,7 +270,11 @@ def test_identity_matching_prefers_matching_external_store_id():
 
 @pytest.mark.parametrize(
     ("enabled", "source_status", "expected_status"),
-    ((False, "supported", "disabled"), (True, "source_unavailable", "source_unavailable"), (True, "supported", "no_expected_stores")),
+    (
+        (False, "supported", "disabled"),
+        (True, "source_unavailable", "no_known_stores"),
+        (True, "supported", "no_known_stores"),
+    ),
 )
 def test_reconciliation_statuses_do_not_claim_false_completeness(enabled, source_status, expected_status):
     db = _db()

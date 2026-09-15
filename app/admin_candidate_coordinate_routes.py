@@ -15,6 +15,7 @@ from .db import get_db
 from .geo import haversine_km
 from .models import Store
 from .postcode_coverage_service import candidate_ready_for_promotion, verify_staged_candidate
+from .postcode_reconciliation import CandidateGroup, group_physical_candidates
 
 router = APIRouter()
 templates = Jinja2Templates(directory=__import__("pathlib").Path(__file__).resolve().parent / "templates")
@@ -70,6 +71,31 @@ def _address_geocode(candidate: StoreDiscoveryCandidate) -> dict | None:
     return min(rows, key=lambda row: row["distance_m"])
 
 
+def _queue_candidate(group: CandidateGroup) -> tuple[StoreDiscoveryCandidate, bool]:
+    """Return one actionable row per physical market.
+
+    A market is considered position-ready when at least one source row has both
+    address and coordinates confirmed. This prevents an already verified branch
+    from appearing again as an open task merely because an OSM/secondary source
+    row for the same physical store is still unverified.
+    """
+    complete_members = [
+        row for row in group.members
+        if row.address_verified and row.coordinates_verified
+    ]
+    pool = complete_members or group.members
+    target = max(
+        pool,
+        key=lambda row: (
+            int(bool(row.address_verified)) + int(bool(row.coordinates_verified)),
+            int(bool(row.official_source_verified)),
+            int(row.source.startswith("official:")),
+            int(row.matched_store_id is not None),
+        ),
+    )
+    return target, bool(complete_members)
+
+
 @router.get("/admin/coverage/coordinate-review")
 def coordinate_review_queue(
     request: Request,
@@ -88,14 +114,14 @@ def coordinate_review_queue(
         )
         .all()
     )
-    open_rows = [
-        row for row in candidates
-        if not row.address_verified or not row.coordinates_verified
-    ]
-    ready_rows = [
-        row for row in candidates
-        if row.address_verified and row.coordinates_verified
-    ]
+    open_rows: list[StoreDiscoveryCandidate] = []
+    ready_rows: list[StoreDiscoveryCandidate] = []
+    for group in group_physical_candidates(candidates):
+        row, ready = _queue_candidate(group)
+        (ready_rows if ready else open_rows).append(row)
+
+    open_rows.sort(key=lambda row: (row.postal_code, row.retailer, row.name, row.id))
+    ready_rows.sort(key=lambda row: (row.postal_code, row.retailer, row.name, row.id))
     return templates.TemplateResponse(
         "admin_candidate_coordinate_queue.html",
         {

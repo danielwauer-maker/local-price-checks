@@ -281,30 +281,25 @@ def reconcile_postcode_coverage(
     additional_discovered = max(0, found - expected)
 
     results = source_results or retailer_source_results(postcode.postal_code)
-    incomplete_sources = any(
-        result.status in {"manual_verification_required", "source_unavailable"} for result in results
-    )
 
+    # The postcode rollout state answers whether physical markets are known and
+    # verified. Retailer adapter/source-health is intentionally diagnostic only:
+    # an adapter that still requires manual verification must not downgrade a
+    # postcode whose physical markets have already passed all identity gates.
     if not postcode.enabled:
         status = "disabled"
-    elif audited_target == 0 and not groups and not postcode_stores:
-        status = "no_known_stores"
     elif missing_expected:
         status = "incomplete"
-    elif expected == 0 and found == 0 and incomplete_sources:
-        status = "source_unavailable"
-    elif expected == 0 and found == 0:
-        status = "no_expected_stores"
+    elif expected == 0 and found == 0 and not postcode_stores:
+        status = "no_known_stores"
     elif (
-        additional_discovered
+        (found == 0 and bool(postcode_stores))
         or address_verified < found
         or coordinates_verified < found
         or official_verified < found
         or promoted < found
     ):
         status = "verification_pending"
-    elif incomplete_sources:
-        status = "source_unavailable"
     else:
         status = "complete"
 
