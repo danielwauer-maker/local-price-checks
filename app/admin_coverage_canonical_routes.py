@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from .admin_coverage_routes import safe_external_url
+from .admin_coverage_routes import _activation_reconciliation, safe_external_url
 from .admin_routes import _admin
 from .coverage_models import CoveragePostalCode, CoverageRegion, StoreDiscoveryCandidate
 from .coverage_service import coverage_payload, stores_in_region
@@ -69,6 +69,16 @@ def canonical_coverage_admin(
     for store in postcode_stores:
         stores_by_postcode[store.postal_code].append(store)
 
+    activation_pending_by_postcode: dict[str, list[dict]] = {}
+    activation_orphan_store_ids: dict[str, set[int]] = {}
+    for postal_code in postcode_values:
+        pending_rows, orphan_store_ids = _activation_reconciliation(
+            raw_candidates_by_postcode.get(postal_code, []),
+            stores_by_postcode.get(postal_code, []),
+        )
+        activation_pending_by_postcode[postal_code] = pending_rows
+        activation_orphan_store_ids[postal_code] = orphan_store_ids
+
     activation_overviews = {
         store.id: activation_overview(db, store)
         for store in postcode_stores
@@ -100,6 +110,8 @@ def canonical_coverage_admin(
             "postcodes": postcodes,
             "candidates_by_postcode": candidates_by_postcode,
             "stores_by_postcode": dict(stores_by_postcode),
+            "activation_pending_by_postcode": activation_pending_by_postcode,
+            "activation_orphan_store_ids": activation_orphan_store_ids,
             "activation_overviews": activation_overviews,
             "safe_candidate_source_urls": safe_candidate_source_urls,
             "coverage_summaries": summaries,
