@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  {% if operation.status in ['running','restart'] %}<meta http-equiv="refresh" content="5">{% endif %}
+  <title>Spareno Admin · Backups</title>
+  <style>
+    :root{--bg:#f6f7f2;--card:#fff;--green:#087b4f;--green2:#4c963d;--text:#17231c;--muted:#66756d;--line:#e1e7df;--warn:#d97706;--danger:#c0392b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}a{color:inherit;text-decoration:none}.wrap{max-width:1500px;margin:auto;padding:20px}.top{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:18px}.brand{font-size:24px;font-weight:800}.sub,.small{color:var(--muted)}.small{font-size:12px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(20,40,28,.05)}.stat{padding:16px}.stat b{display:block;font-size:25px}.card{padding:16px;margin-top:16px}.card h2{margin:0 0 12px;font-size:18px}.notice{padding:12px 14px;border-radius:12px;background:#fff4d8;border:1px solid #f0d28a;margin-bottom:16px}.ok{background:#e7f6ec;border-color:#bfe2ca}.danger-note{background:#faece9;border-color:#efc6bf}.btn{display:inline-block;border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer;background:var(--green);color:#fff}.btn.secondary{background:#edf5e8;color:#165a3b}.btn.danger{background:#fae9e6;color:#a33b2c}.btn:disabled{opacity:.55;cursor:not-allowed}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);text-transform:uppercase}.scroll{overflow:auto}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#edf5e8}.pill.manual{background:#e7f6ec;color:#086b43}.pill.pre-restore{background:#fff0cf;color:#9a5a00}.pill.failed{background:#fae9e6;color:#a33b2c}.progress{height:10px;border-radius:999px;background:#e5ebe6;overflow:hidden;margin-top:8px}.progress span{display:block;height:100%;background:var(--green)}input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}.restore-box{margin-top:8px;padding:12px;border:1px solid #efc6bf;border-radius:12px;background:#fff9f7}.restore-grid{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.history{display:grid;gap:8px}.history-row{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fafcf9}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all}
+    @media(max-width:900px){.grid{grid-template-columns:1fr 1fr}.restore-grid{grid-template-columns:1fr}.wrap{padding:12px}}@media(max-width:560px){.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+{% include 'admin_sidebar.html' %}
+<div class="wrap">
+  <div class="top"><div><div class="brand">Backups & Wiederherstellung</div><div class="sub">Produktive Spareno-Datenbank sichern und kontrolliert wiederherstellen</div></div><div class="small">Angemeldet: {{ actor }}</div></div>
+
+  <div class="notice"><b>Speicherziel:</b> Die Backups werden im Container unter <span class="mono">{{ backup_dir }}</span> abgelegt. In Produktion ist dieses Verzeichnis auf <span class="mono">/opt/backups/local-price-checks</span> gebunden und liegt damit auf dem Hetzner-Volume.</div>
+  <div class="notice danger-note"><b>Wichtig:</b> Diese Backups schützen vor Bedienfehlern, beschädigten Daten und einer versehentlichen Datenbankänderung. Da Produktivdaten und Backup-Verzeichnis derzeit auf demselben Hetzner-Volume liegen, ersetzen sie noch kein unabhängiges Offsite-Backup.</div>
+
+  {% if page_error %}<div class="notice danger-note"><b>Backup-Verzeichnis nicht verfügbar:</b> {{ page_error }}</div>{% endif %}
+  {% if not supported %}<div class="notice danger-note"><b>Nicht verfügbar:</b> Die Admin-Konsole unterstützt aktuell nur SQLite. Aktiver Datenbanktyp: {{ backend }}</div>{% endif %}
+
+  {% if storage %}
+  <div class="grid">
+    <div class="stat"><span class="small">Backups</span><b>{{ storage.count }}</b></div>
+    <div class="stat"><span class="small">Backup-Speicher</span><b>{{ storage.backup_label }}</b></div>
+    <div class="stat"><span class="small">Freier Volume-Speicher</span><b>{{ storage.free_label }}</b></div>
+    <div class="stat"><span class="small">Datenbank</span><b style="font-size:20px">{{ backend|upper }}</b></div>
+  </div>
+  {% endif %}
+
+  {% if operation.status != 'idle' %}
+  <div class="card">
+    <h2>Aktuelle Operation</h2>
+    <div><b>{{ operation.message or operation.kind }}</b></div>
+    {% if operation.backup_name %}<div class="small mono">{{ operation.backup_name }}</div>{% endif %}
+    <div class="progress"><span style="width:{{ operation.progress or 0 }}%"></span></div>
+    <div class="small" style="margin-top:6px">{{ operation.progress or 0 }} % · Status: {{ operation.status }}</div>
+    {% if operation.error %}<div class="notice danger-note" style="margin-top:12px;margin-bottom:0">{{ operation.error }}</div>{% endif %}
+    {% if operation.status=='restart' %}<p class="small">Der App-Container beendet sich kontrolliert und startet durch Docker automatisch neu. Während weniger Sekunden kann die Admin-Seite kurz nicht erreichbar sein.</p>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Neues Datenbank-Backup</h2>
+    <p>Erstellt einen konsistenten SQLite-Snapshot der laufenden Datenbank. Das Backup wird anschließend per SQLite-Integritätsprüfung und SHA-256-Prüfsumme verifiziert.</p>
+    <form method="post" action="/admin/backups/create"><button class="btn" {% if not supported or operation.status in ['running','restart'] %}disabled{% endif %}>Backup jetzt erstellen</button></form>
+    <p class="small">Die Erstellung läuft im Hintergrund. Bei der derzeitigen Datenbankgröße kann das einige Zeit dauern; die Anwendung bleibt währenddessen erreichbar.</p>
+  </div>
+
+  <div class="card">
+    <h2>Vorhandene Backups</h2>
+    <div class="scroll"><table>
+      <tr><th>Erstellt</th><th>Typ</th><th>Größe</th><th>Schema</th><th>Prüfsumme</th><th>Wiederherstellen</th></tr>
+      {% for backup in backups %}
+      <tr>
+        <td>{{ backup.created_at }}</td>
+        <td><span class="pill {{ backup.kind }}">{{ 'Manuell' if backup.kind=='manual' else ('Sicherheitsbackup' if backup.kind=='pre-restore' else backup.kind) }}</span></td>
+        <td>{{ backup.size_label }}</td>
+        <td class="mono">{{ backup.alembic_revision or '–' }}</td>
+        <td class="mono">{{ (backup.sha256[:12] ~ '…') if backup.sha256 else 'keine Metadaten' }}</td>
+        <td>
+          <details>
+            <summary class="btn danger">Wiederherstellen</summary>
+            <div class="restore-box">
+              <b>Achtung: produktive Daten werden ersetzt.</b>
+              <p class="small">Vor der Wiederherstellung erzeugt Spareno automatisch ein zusätzliches Sicherheitsbackup des aktuellen Zustands. Die eigentliche Dateiersetzung erfolgt erst beim kontrollierten Neustart des App-Containers und damit ohne offene SQLite-Verbindungen.</p>
+              <form method="post" action="/admin/backups/restore">
+                <input type="hidden" name="backup_name" value="{{ backup.name }}">
+                <div class="restore-grid"><label>Zur Bestätigung exakt <b>{{ restore_confirmation }}</b> eingeben<input name="confirmation" autocomplete="off" required></label><button class="btn danger" {% if not supported or operation.status in ['running','restart'] %}disabled{% endif %}>Backup wiederherstellen</button></div>
+              </form>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="6">Noch keine verwalteten Backups vorhanden.</td></tr>{% endfor %}
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2>Restore-Historie</h2>
+    <div class="history">
+      {% for event in restore_history %}
+      <div class="history-row"><b>{{ event.event or event.status }}</b> · {{ event.completed_at or event.failed_at or event.requested_at or '' }}<br><span class="small mono">{{ event.backup_name or '' }}</span>{% if event.error %}<br><span class="small" style="color:var(--danger)">{{ event.error }}</span>{% endif %}</div>
+      {% else %}<div class="small">Noch keine Wiederherstellung durchgeführt.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+</body>
+</html>
