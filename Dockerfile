@@ -22,11 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY . .
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/backups
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-CMD ["uvicorn","app.api_main:app","--host","0.0.0.0","--port","8000"]
+CMD ["sh","-c","python -m app.backup_bootstrap && exec uvicorn app.api_main:app --host 0.0.0.0 --port 8000"]
