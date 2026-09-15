@@ -18,6 +18,7 @@ from .profile_routes import router as profile_router
 from .push_routes import router as push_router
 from .realtime_routes import router as realtime_router
 from .admin_routes import router as admin_router
+from .admin_backup_routes import router as admin_backup_router
 from .admin_users_routes import router as admin_users_router
 from .admin_data_status_routes import router as admin_data_status_router
 from .admin_media_routes import router as admin_media_router
@@ -159,6 +160,7 @@ app.include_router(push_router)
 # Register the event-driven list stream before the legacy polling route with the same path.
 app.include_router(realtime_router)
 app.include_router(admin_router)
+app.include_router(admin_backup_router)
 app.include_router(admin_users_router)
 app.include_router(admin_data_status_router)
 app.include_router(admin_media_router)
