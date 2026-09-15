@@ -32,7 +32,12 @@ from .postcode_coverage_service import (
     verify_staged_candidate,
 )
 from .postcode_geometry import OSM_ATTRIBUTION, OSM_LICENSE_URL, import_postcode_geometry, postcode_feature
-from .postcode_reconciliation import deduplicate_candidates, reconcile_postcode_coverage
+from .postcode_reconciliation import (
+    deduplicate_candidates,
+    group_physical_candidates,
+    reconcile_postcode_coverage,
+    store_matches_candidate,
+)
 from .retailer_store_sources import stage_official_store_candidates
 from .web_collector import collect_store_from_web
 
@@ -85,6 +90,59 @@ def _load_germany_postcode_geojson() -> dict:
     return payload
 
 
+def _activation_rows_for_postcode(
+    candidates: list[StoreDiscoveryCandidate],
+    stores: list[Store],
+) -> list[dict]:
+    """Build one activation row per physical market plus explicit orphan stores.
+
+    Discovery candidates and promoted Store rows are separate lifecycle objects.
+    The admin cockpit must show both layers together so a discovered market never
+    disappears merely because it has not been promoted yet, while pre-existing
+    stores without a current discovery identity are surfaced as reconciliation
+    problems instead of being silently mixed into the happy path.
+    """
+    rows: list[dict] = []
+    matched_store_ids: set[int] = set()
+    for group in group_physical_candidates(candidates):
+        explicit_ids = {
+            member.matched_store_id
+            for member in group.members
+            if member.matched_store_id is not None
+        }
+        matches = [
+            store
+            for store in stores
+            if store.id not in matched_store_ids
+            and any(store_matches_candidate(store, member) for member in group.members)
+        ]
+        matches.sort(key=lambda store: (store.id not in explicit_ids, store.retailer, store.name, store.id))
+        store = matches[0] if matches else None
+        if store is not None:
+            matched_store_ids.add(store.id)
+        rows.append(
+            {
+                "candidate": group.representative,
+                "store": store,
+                "orphan_store": False,
+                "source_count": len(group.members),
+            }
+        )
+
+    for store in stores:
+        if store.id in matched_store_ids:
+            continue
+        rows.append(
+            {
+                "candidate": None,
+                "store": store,
+                "orphan_store": True,
+                "source_count": 0,
+            }
+        )
+    return rows
+
+
 @router.get("/admin/coverage/postcodes/germany-geojson")
 def germany_postcode_geojson(actor: str = Depends(_admin)):
     try:
@@ -134,6 +192,13 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         store.id: activation_overview(db, store)
         for store in postcode_stores
     }
+    activation_rows_by_postcode = {
+        postcode.postal_code: _activation_rows_for_postcode(
+            raw_candidates_by_postcode.get(postcode.postal_code, []),
+            stores_by_postcode.get(postcode.postal_code, []),
+        )
+        for postcode in postcodes
+    }
     safe_candidate_source_urls = {
         candidate.id: safe_external_url(candidate.source_url)
         for candidate in candidates
@@ -157,6 +222,7 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "postcodes": postcodes,
         "candidates_by_postcode": candidates_by_postcode,
         "stores_by_postcode": stores_by_postcode,
+        "activation_rows_by_postcode": activation_rows_by_postcode,
         "activation_overviews": activation_overviews,
         "safe_candidate_source_urls": safe_candidate_source_urls,
         "coverage_summaries": summaries,
