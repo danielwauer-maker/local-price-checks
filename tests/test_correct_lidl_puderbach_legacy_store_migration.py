@@ -341,7 +341,7 @@ def test_repair_moves_verified_lidl_puderbach_history_to_canonical_store(monkeyp
         assert canonical_state == ("promoted", True, None)
 
 
-def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
+def test_repair_fails_closed_if_previous_rollback_removed_canonical_store(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, _ = _schema()
@@ -358,36 +358,23 @@ def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
         connection.execute(stores.delete().where(stores.c.id == 16))
 
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
-        migration.upgrade()
 
-        rows = connection.execute(
-            sa.select(
-                stores.c.id,
-                stores.c.name,
-                stores.c.address,
-                stores.c.external_id,
-                stores.c.benchmark_verified,
-            ).order_by(stores.c.id)
-        ).all()
-        assert rows == [
-            (
-                16,
-                "Lidl Puderbach",
-                "Urbacherstraße L264",
-                "lidl-puderbach-urbacherstr-l264",
-                False,
-            )
-        ]
+        with pytest.raises(RuntimeError, match="canonical Store 16 is missing"):
+            migration.upgrade()
+
+        # Fail closed: the legacy row and candidate evidence remain untouched so
+        # an operator can repair the missing canonical identity explicitly.
+        assert connection.execute(
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
+        ).scalar_one() == 1
+        assert connection.execute(
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 16)
+        ).scalar_one() == 0
         official = connection.execute(
             sa.select(candidates.c.matched_store_id, candidates.c.status)
             .where(candidates.c.id == 2)
         ).one()
-        assert official == (16, "promoted")
-        stale = connection.execute(
-            sa.select(candidates.c.matched_store_id, candidates.c.status)
-            .where(candidates.c.id == 1)
-        ).one()
-        assert stale == (None, "rejected")
+        assert official == (None, "verified")
 
 
 def test_repair_fails_closed_if_legacy_store_has_unknown_business_data(monkeypatch):
