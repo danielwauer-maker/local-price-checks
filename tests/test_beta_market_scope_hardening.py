@@ -296,8 +296,14 @@ def test_production_like_rewe_source_url_and_float_drift_resolve_one_pin():
     assert official.longitude == pytest.approx(store.longitude)
 
 
-def test_missing_or_ambiguous_coordinate_evidence_fails_closed():
+def test_missing_coordinate_evidence_isolated_and_reported():
     db = _db()
-    with pytest.raises(RuntimeError, match="no unique reviewed coordinate evidence"):
-        stage_official_store_candidates(db, "65606")
+
+    created, updated, results = stage_official_store_candidates(db, "65606")
+
+    assert (created, updated) == (0, 0)
+    rewe = next(result for result in results if result.retailer == "REWE")
+    assert rewe.status == "partial_failure"
+    assert "rewe-market-241184" in rewe.note
+    assert "no unique reviewed coordinate evidence" in rewe.note
     assert db.query(StoreDiscoveryCandidate).count() == 0
