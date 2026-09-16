@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Any, Mapping
 
 from .coverage_models import StoreDiscoveryCandidate
@@ -21,6 +22,7 @@ IDENTITY_FIELDS: tuple[str, ...] = (
 )
 
 _SOURCE_DRIFT_MARKER = "[source-refresh-drift]"
+_COORDINATE_ABS_TOLERANCE = 1e-6
 
 
 def candidate_identity_is_locked(candidate: StoreDiscoveryCandidate) -> bool:
@@ -46,6 +48,20 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _identity_value_changed(field: str, old: Any, new: Any) -> bool:
+    if field in {"latitude", "longitude"} and old is not None and new is not None:
+        try:
+            return not math.isclose(
+                float(old),
+                float(new),
+                rel_tol=0.0,
+                abs_tol=_COORDINATE_ABS_TOLERANCE,
+            )
+        except (TypeError, ValueError):
+            return old != new
+    return old != new
+
+
 def refresh_candidate_from_source(
     candidate: StoreDiscoveryCandidate,
     values: Mapping[str, Any],
@@ -62,7 +78,8 @@ def refresh_candidate_from_source(
     identity_changes = {
         field: (getattr(candidate, field), values[field])
         for field in IDENTITY_FIELDS
-        if field in values and getattr(candidate, field) != values[field]
+        if field in values
+        and _identity_value_changed(field, getattr(candidate, field), values[field])
     }
     locked = candidate_identity_is_locked(candidate)
 
