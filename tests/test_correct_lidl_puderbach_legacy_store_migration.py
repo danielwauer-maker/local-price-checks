@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import importlib.util
 from pathlib import Path
 
@@ -29,12 +30,15 @@ def _schema(*, with_business_reference: bool = False):
         "stores",
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False, unique=True),
         sa.Column("retailer", sa.String(80), nullable=False),
         sa.Column("postal_code", sa.String(10)),
         sa.Column("city", sa.String(120)),
         sa.Column("address", sa.String(255)),
+        sa.Column("latitude", sa.Float),
+        sa.Column("longitude", sa.Float),
         sa.Column("external_id", sa.String(255)),
+        sa.Column("source_url", sa.Text),
         sa.Column("benchmark_verified", sa.Boolean, nullable=False, default=False),
         sa.Column("active", sa.Boolean, nullable=False, default=True),
     )
@@ -45,9 +49,14 @@ def _schema(*, with_business_reference: bool = False):
         sa.Column("matched_store_id", sa.Integer, sa.ForeignKey("stores.id")),
         sa.Column("retailer", sa.String(80), nullable=False),
         sa.Column("postal_code", sa.String(10), nullable=False),
+        sa.Column("name", sa.String(180), nullable=False),
         sa.Column("address", sa.String(255)),
+        sa.Column("city", sa.String(120), nullable=False),
+        sa.Column("latitude", sa.Float, nullable=False),
+        sa.Column("longitude", sa.Float, nullable=False),
         sa.Column("source", sa.String(80), nullable=False),
         sa.Column("source_external_id", sa.String(255)),
+        sa.Column("source_url", sa.Text),
         sa.Column("status", sa.String(30)),
         sa.Column("address_verified", sa.Boolean, nullable=False, default=False),
         sa.Column("coordinates_verified", sa.Boolean, nullable=False, default=False),
@@ -59,7 +68,7 @@ def _schema(*, with_business_reference: bool = False):
         "store_activation_states",
         metadata,
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False, unique=True),
         sa.Column("lifecycle_status", sa.String(30), nullable=False),
         sa.Column("identity_verified", sa.Boolean, nullable=False, default=False),
         sa.Column("manually_suspended", sa.Boolean, nullable=False, default=False),
@@ -67,6 +76,8 @@ def _schema(*, with_business_reference: bool = False):
         sa.Column("last_error", sa.Text),
         sa.Column("published_at", sa.DateTime),
         sa.Column("suspended_at", sa.DateTime),
+        sa.Column("created_at", sa.DateTime, nullable=False),
+        sa.Column("updated_at", sa.DateTime, nullable=False),
     )
     business = None
     if with_business_reference:
@@ -80,6 +91,7 @@ def _schema(*, with_business_reference: bool = False):
 
 
 def _seed(connection, stores, candidates, activation):
+    now = datetime.utcnow()
     connection.execute(
         stores.insert(),
         [
@@ -90,7 +102,10 @@ def _seed(connection, stores, candidates, activation):
                 "postal_code": "56305",
                 "city": "Puderbach",
                 "address": "Urbacher Straße 31a",
+                "latitude": 50.592267,
+                "longitude": 7.6085,
                 "external_id": "node/123",
+                "source_url": None,
                 "benchmark_verified": False,
                 "active": True,
             },
@@ -101,7 +116,10 @@ def _seed(connection, stores, candidates, activation):
                 "postal_code": "56305",
                 "city": "Puderbach",
                 "address": "Urbacherstraße L264",
+                "latitude": 50.592225,
+                "longitude": 7.6085,
                 "external_id": "lidl-puderbach-urbacherstr-l264",
+                "source_url": "https://www.lidl.de/filialen/puderbach",
                 "benchmark_verified": False,
                 "active": True,
             },
@@ -115,9 +133,14 @@ def _seed(connection, stores, candidates, activation):
                 "matched_store_id": 16,
                 "retailer": "Lidl",
                 "postal_code": "56305",
+                "name": "Lidl",
                 "address": "Urbacher Straße 31a",
+                "city": "Puderbach",
+                "latitude": 50.592267,
+                "longitude": 7.6085,
                 "source": "osm",
                 "source_external_id": "node/123",
+                "source_url": None,
                 "status": "promoted",
                 "address_verified": True,
                 "coordinates_verified": True,
@@ -129,9 +152,14 @@ def _seed(connection, stores, candidates, activation):
                 "matched_store_id": 16,
                 "retailer": "Lidl",
                 "postal_code": "56305",
+                "name": "Lidl Puderbach",
                 "address": "Urbacherstraße L264",
+                "city": "Puderbach",
+                "latitude": 50.592225,
+                "longitude": 7.6085,
                 "source": "official:lidl",
                 "source_external_id": "lidl-puderbach-urbacherstr-l264",
+                "source_url": "https://www.lidl.de/filialen/puderbach",
                 "status": "promoted",
                 "address_verified": True,
                 "coordinates_verified": True,
@@ -149,6 +177,8 @@ def _seed(connection, stores, candidates, activation):
                 "lifecycle_status": "promoted",
                 "identity_verified": False,
                 "manually_suspended": False,
+                "created_at": now,
+                "updated_at": now,
             },
             {
                 "id": 2,
@@ -156,6 +186,8 @@ def _seed(connection, stores, candidates, activation):
                 "lifecycle_status": "promoted",
                 "identity_verified": True,
                 "manually_suspended": False,
+                "created_at": now,
+                "updated_at": now,
             },
         ],
     )
@@ -198,6 +230,63 @@ def test_repair_removes_legacy_store_rejects_wrong_alias_and_normalizes_canonica
         assert activation_links == [16]
 
 
+def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
+    migration = _load_migration()
+    engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
+    metadata, stores, candidates, activation, _ = _schema()
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        _seed(connection, stores, candidates, activation)
+        connection.execute(activation.delete().where(activation.c.store_id == 16))
+        connection.execute(
+            candidates.update()
+            .where(candidates.c.matched_store_id == 16)
+            .values(matched_store_id=None, status="verified")
+        )
+        connection.execute(stores.delete().where(stores.c.id == 16))
+
+        monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
+        migration.upgrade()
+
+        rows = connection.execute(
+            sa.select(
+                stores.c.id,
+                stores.c.name,
+                stores.c.address,
+                stores.c.external_id,
+                stores.c.benchmark_verified,
+            ).order_by(stores.c.id)
+        ).all()
+        assert rows == [
+            (
+                16,
+                "Lidl Puderbach",
+                "Urbacherstraße L264",
+                "lidl-puderbach-urbacherstr-l264",
+                False,
+            )
+        ]
+        official = connection.execute(
+            sa.select(candidates.c.matched_store_id, candidates.c.status)
+            .where(candidates.c.id == 2)
+        ).one()
+        assert official == (16, "promoted")
+        stale = connection.execute(
+            sa.select(candidates.c.matched_store_id, candidates.c.status)
+            .where(candidates.c.id == 1)
+        ).one()
+        assert stale == (None, "rejected")
+        state = connection.execute(
+            sa.select(
+                activation.c.store_id,
+                activation.c.lifecycle_status,
+                activation.c.identity_verified,
+            )
+        ).one()
+        assert state == (16, "promoted", True)
+
+
 def test_repair_fails_closed_if_legacy_store_has_business_data(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -220,30 +309,23 @@ def test_repair_fails_closed_if_legacy_store_has_business_data(monkeypatch):
         ).scalar_one() == 1
 
 
-def test_repair_fails_closed_if_canonical_store_is_missing(monkeypatch):
+def test_repair_fails_closed_without_exact_official_candidate(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, _ = _schema()
     metadata.create_all(engine)
 
     with engine.begin() as connection:
-        connection.execute(
-            stores.insert().values(
-                id=8,
-                name="Lidl Puderbach",
-                retailer="Lidl",
-                postal_code="56305",
-                city="Puderbach",
-                address="Urbacher Straße 31a",
-                external_id="node/123",
-                benchmark_verified=False,
-                active=True,
-            )
-        )
+        _seed(connection, stores, candidates, activation)
+        connection.execute(candidates.delete().where(candidates.c.id == 2))
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
 
-        with pytest.raises(RuntimeError, match="Canonical Store 16 is missing"):
+        with pytest.raises(RuntimeError, match="exactly one official Lidl L264"):
             migration.upgrade()
+
+        assert connection.execute(
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
+        ).scalar_one() == 1
 
 
 def test_repair_refuses_to_reject_official_source_at_legacy_address(monkeypatch):
