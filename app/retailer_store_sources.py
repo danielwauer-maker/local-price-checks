@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import math
 from typing import Iterable, Protocol
@@ -327,47 +327,78 @@ def stage_official_store_candidates(
     postal_code: str,
     adapters: Iterable[RetailerStoreSourceAdapter] | None = None,
 ) -> tuple[int, int, tuple[RetailerSourceResult, ...]]:
+    """Stage curated identities without one bad market blocking its siblings.
+
+    Every retailer/market record runs in its own SAVEPOINT. A coordinate or
+    refresh failure is reported in that retailer's returned source result while
+    successful records are still committed. This keeps fail-closed identity
+    validation at market level without making an entire postcode all-or-nothing.
+    """
     created = updated = 0
     selected = tuple(default_retailer_adapters() if adapters is None else adapters)
     results = retailer_source_results(postal_code, selected)
     adapters_by_retailer = {adapter.retailer: adapter for adapter in selected}
+    issues: dict[str, list[str]] = {}
+
     for result in results:
         adapter = adapters_by_retailer[result.retailer]
         for record in result.stores:
             if record.postal_code != postal_code:
                 continue
-            key = _official_candidate_key(adapter.key, record)
-            row = db.query(StoreDiscoveryCandidate).filter_by(discovery_key=key).first()
-            latitude, longitude = _record_coordinates(db, record)
-            values = {
-                "postal_code": record.postal_code,
-                "retailer": record.retailer,
-                "name": record.name,
-                "address": record.address,
-                "city": record.city,
-                "latitude": latitude,
-                "longitude": longitude,
-                "source": f"official:{adapter.key}",
-                # source_identifier is internal provenance, never a retailer ID.
-                "source_external_id": record.external_id,
-                "source_url": record.source_url,
-            }
-            if row is None:
-                row = StoreDiscoveryCandidate(
-                    discovery_key=key,
-                    official_source_verified=True,
-                    verification_note="Einzelmarkt aus offizieller Händlerseite; PLZ-Vollständigkeit separat prüfen.",
-                    **values,
+            try:
+                with db.begin_nested():
+                    key = _official_candidate_key(adapter.key, record)
+                    row = db.query(StoreDiscoveryCandidate).filter_by(discovery_key=key).first()
+                    latitude, longitude = _record_coordinates(db, record)
+                    values = {
+                        "postal_code": record.postal_code,
+                        "retailer": record.retailer,
+                        "name": record.name,
+                        "address": record.address,
+                        "city": record.city,
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "source": f"official:{adapter.key}",
+                        # source_identifier is internal provenance, never a retailer ID.
+                        "source_external_id": record.external_id,
+                        "source_url": record.source_url,
+                    }
+                    if row is None:
+                        row = StoreDiscoveryCandidate(
+                            discovery_key=key,
+                            official_source_verified=True,
+                            verification_note=(
+                                "Einzelmarkt aus offizieller Händlerseite; "
+                                "PLZ-Vollständigkeit separat prüfen."
+                            ),
+                            **values,
+                        )
+                        db.add(row)
+                        created += 1
+                    else:
+                        refresh_candidate_from_source(
+                            row,
+                            values,
+                            reset_verification_on_identity_change=True,
+                        )
+                        row.official_source_verified = True
+                        updated += 1
+                    db.flush()
+            except Exception as exc:
+                issues.setdefault(result.retailer, []).append(
+                    f"{record.source_identifier}: {type(exc).__name__}: {exc}"
                 )
-                db.add(row)
-                created += 1
-            else:
-                refresh_candidate_from_source(
-                    row,
-                    values,
-                    reset_verification_on_identity_change=True,
-                )
-                row.official_source_verified = True
-                updated += 1
+
     db.commit()
-    return created, updated, results
+
+    enriched_results: list[RetailerSourceResult] = []
+    for result in results:
+        retailer_issues = issues.get(result.retailer, [])
+        if not retailer_issues:
+            enriched_results.append(result)
+            continue
+        issue_note = "Staging-Fehler: " + " | ".join(retailer_issues)
+        note = f"{result.note} {issue_note}".strip()
+        enriched_results.append(replace(result, status="partial_failure", note=note))
+
+    return created, updated, tuple(enriched_results)
