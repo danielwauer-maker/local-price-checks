@@ -173,3 +173,33 @@ def test_new_seed_store_still_uses_bootstrap_defaults():
     assert lidl.longitude == pytest.approx(7.608542)
     assert lidl.external_id == "lidl-puderbach-urbacherstr-l264"
     db.close()
+
+
+def test_seed_reuses_renamed_store_by_strong_retailer_identity():
+    db = _db()
+    existing = Store(
+        retailer="REWE",
+        name="REWE Straßenhaus",
+        postal_code="56587",
+        city="Straßenhaus",
+        address="Kirschbüchel 2",
+        latitude=50.5407,
+        longitude=7.5187,
+        active=False,
+        benchmark_verified=False,
+        external_id="1940425",
+    )
+    db.add(existing)
+    db.commit()
+    existing_id = existing.id
+
+    seed_stores(db)
+
+    rows = db.query(Store).filter(
+        Store.retailer == "REWE",
+        Store.postal_code == "56587",
+        Store.external_id == "1940425",
+    ).order_by(Store.id).all()
+    assert [row.id for row in rows] == [existing_id]
+    assert rows[0].name == "REWE Straßenhaus"
+    db.close()
