@@ -8,12 +8,13 @@ This deliberately narrow, fail-closed production repair corrects the historic
 Lidl identity at Urbacher Straße 31a. The retailer-backed branch is the market
 at Urbacherstr. L264 with external ID ``lidl-puderbach-urbacherstr-l264``.
 
-Revision 20260916_01 may already have removed the temporary Store 16 while
-resetting its candidates for a manual retest. This follow-up therefore supports
-both safe states: it either keeps an existing canonical Store 16 or recreates it
-from the exact verified official Lidl candidate after the stale Store 8 has
-passed all dependency/publication checks. No business data is moved between
-stores. Wrong 31a discovery provenance is retained as rejected audit history.
+Production evidence showed that the stale Store 8 already owns historic Lidl
+Puderbach collection data from August 2026 while canonical Store 16 owns none.
+Those known history rows are therefore reassigned to Store 16 before Store 8 is
+removed. Unknown dependencies, mixed canonical history, publication history or
+unexpected collector identities still abort the migration. Historic prospect
+file paths intentionally remain unchanged because they point to immutable files.
+Wrong 31a discovery provenance is retained as rejected audit history.
 """
 
 from __future__ import annotations
@@ -43,6 +44,14 @@ CANONICAL_NAME = "Lidl Puderbach"
 _SAFE_WORKFLOW_TABLES = {
     "store_activation_states",
     "store_discovery_candidates",
+}
+_MOVABLE_HISTORY_TABLES = {
+    "offers",
+    "normal_price_observations",
+    "collection_runs",
+    "collection_quality_snapshots",
+    "prospects",
+    "prospect_archives",
 }
 
 
@@ -236,6 +245,98 @@ def _assert_no_unexpected_legacy_candidate_links(rows) -> None:
         )
 
 
+def _validate_history_for_reassignment(bind, legacy_counts: dict[str, int]) -> None:
+    unexpected = {
+        table_name: count
+        for table_name, count in legacy_counts.items()
+        if table_name not in _SAFE_WORKFLOW_TABLES
+        and table_name not in _MOVABLE_HISTORY_TABLES
+    }
+    if unexpected:
+        details = ", ".join(
+            f"{name}={count}" for name, count in sorted(unexpected.items())
+        )
+        raise RuntimeError(
+            "Legacy Store 8 has unknown business-data dependencies; refusing reassignment: "
+            + details
+        )
+
+    canonical_counts = _store_reference_counts(bind, CANONICAL_STORE_ID)
+    mixed = {
+        name: count
+        for name, count in canonical_counts.items()
+        if name in _MOVABLE_HISTORY_TABLES and count
+    }
+    if mixed:
+        details = ", ".join(f"{name}={count}" for name, count in sorted(mixed.items()))
+        raise RuntimeError(
+            "Canonical Store 16 already owns business history; refusing automatic merge: "
+            + details
+        )
+
+    run_keys = bind.execute(
+        sa.text(
+            "SELECT DISTINCT source_key FROM collection_runs WHERE store_id = :store_id"
+        ),
+        {"store_id": LEGACY_STORE_ID},
+    ).scalars().all()
+    unexpected_run_keys = [
+        key for key in run_keys if not str(key or "").startswith("lidl_puderbach:")
+    ]
+    if unexpected_run_keys:
+        raise RuntimeError(
+            "Legacy Store 8 has collection history outside the verified Lidl Puderbach source: "
+            + ", ".join(repr(key) for key in unexpected_run_keys)
+        )
+
+    retailer_checks = (
+        ("normal_price_observations", "retailer"),
+        ("collection_quality_snapshots", "retailer"),
+        ("prospect_archives", "retailer"),
+    )
+    for table_name, column_name in retailer_checks:
+        bad = bind.execute(
+            sa.text(
+                f"""
+                SELECT COUNT(*) FROM {table_name}
+                WHERE store_id = :store_id
+                  AND lower(trim(coalesce({column_name}, ''))) != 'lidl'
+                """
+            ),
+            {"store_id": LEGACY_STORE_ID},
+        ).scalar_one()
+        if int(bad):
+            raise RuntimeError(
+                f"Legacy Store 8 has {table_name} rows for a non-Lidl retailer; refusing reassignment"
+            )
+
+
+def _move_legacy_history(bind, legacy_counts: dict[str, int]) -> None:
+    # Store 16 is required to have zero rows in each of these tables before this
+    # runs, so their store-scoped uniqueness constraints cannot collide.
+    for table_name in (
+        "offers",
+        "normal_price_observations",
+        "collection_runs",
+        "collection_quality_snapshots",
+        "prospects",
+        "prospect_archives",
+    ):
+        if not legacy_counts.get(table_name):
+            continue
+        result = bind.execute(
+            sa.text(
+                f"UPDATE {table_name} SET store_id = :canonical_id WHERE store_id = :legacy_id"
+            ),
+            {"canonical_id": CANONICAL_STORE_ID, "legacy_id": LEGACY_STORE_ID},
+        )
+        if result.rowcount not in {-1, legacy_counts[table_name]}:
+            raise RuntimeError(
+                f"Unexpected reassignment count for {table_name}: "
+                f"expected {legacy_counts[table_name]}, got {result.rowcount}"
+            )
+
+
 def _reject_stale_candidates(bind, stale) -> None:
     for row in stale:
         bind.execute(
@@ -338,7 +439,6 @@ def upgrade() -> None:
     legacy = _load_store(bind, LEGACY_STORE_ID)
     canonical = _load_store(bind, CANONICAL_STORE_ID)
 
-    # Fresh/empty installations have no production-specific rows to repair.
     if legacy is None and canonical is None:
         return
 
@@ -354,31 +454,26 @@ def upgrade() -> None:
                 f"{official['matched_store_id']}"
             )
 
+    legacy_counts: dict[str, int] = {}
     if legacy is not None:
         _assert_legacy_identity(legacy)
         _validate_legacy_activation_state(bind)
         _assert_no_unexpected_legacy_candidate_links(rows)
 
-        counts = _store_reference_counts(bind, LEGACY_STORE_ID)
-        blockers = {
-            table_name: count
-            for table_name, count in counts.items()
-            if table_name not in _SAFE_WORKFLOW_TABLES
-        }
-        if blockers:
-            details = ", ".join(
-                f"{name}={count}" for name, count in sorted(blockers.items())
-            )
+        if canonical is None:
             raise RuntimeError(
-                "Legacy Store 8 has business-data dependencies and cannot be deleted safely: "
-                + details
+                "Legacy Store 8 owns historic business data but canonical Store 16 is missing; "
+                "refusing to recreate-and-merge automatically"
             )
 
-    # Keep provenance before deleting either workflow linkage. Rejected rows are
-    # excluded from live physical-market grouping by application code.
+        legacy_counts = _store_reference_counts(bind, LEGACY_STORE_ID)
+        _validate_history_for_reassignment(bind, legacy_counts)
+
+    # Reject wrong discovery provenance before removing the stale store link.
     _reject_stale_candidates(bind, stale)
 
     if legacy is not None:
+        _move_legacy_history(bind, legacy_counts)
         bind.execute(
             sa.text("DELETE FROM store_activation_states WHERE store_id = :store_id"),
             {"store_id": LEGACY_STORE_ID},
@@ -389,8 +484,7 @@ def upgrade() -> None:
         )
 
     if canonical is None:
-        # 20260916_01 may have removed this pre-public test Store. Recreate only
-        # from the exact, fully verified official retailer candidate.
+        # Only reachable on installations where no legacy history exists.
         _create_canonical_store_from_candidate(bind, official)
     else:
         _ensure_canonical_name_is_free(bind)
