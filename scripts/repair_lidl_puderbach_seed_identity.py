@@ -206,7 +206,8 @@ def main() -> int:
             and _close(repaired["longitude"], desired["longitude"])
             and repaired["source_url"] == desired["source_url"]
         ):
-            _abort(f"Post-repair verification failed: {dict(repaired) if repaired else None!r}")
+            rendered = dict(repaired) if repaired is not None else None
+            _abort(f"Post-repair verification failed: {rendered!r}")
 
         print("action=applied")
         print("repaired_store=", dict(repaired))
