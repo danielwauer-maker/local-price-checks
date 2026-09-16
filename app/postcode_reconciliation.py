@@ -29,8 +29,6 @@ STATUS_PRESENTATION = {
 AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
     # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
     "57610": 5,
-    # Manually checked: no supported grocery market in this postcode area.
-    "56316": 0,
 }
 
 _GENERIC_MARKET_WORDS = {
