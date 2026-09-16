@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 import math
 from typing import Iterable, Protocol
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -261,15 +262,59 @@ def _official_candidate_key(adapter_key: str, record: RetailerStoreRecord) -> st
     return sha256(raw).hexdigest()
 
 
+def _is_direct_official_store_page(row, record: RetailerStoreRecord) -> bool:
+    """Return true only for a retailer-owned, store-specific page we can trust for pin evidence.
+
+    ALDI's curated inventory proves branch existence via a broad official PDF,
+    while discovery may already carry the retailer's exact branch page.  That
+    exact branch page is stronger coordinate evidence than a stale bootstrap
+    Store row at the same address.  The rule is intentionally narrow so a
+    generic retailer directory cannot silently resolve conflicting pins.
+    """
+    if record.retailer != "ALDI SÜD":
+        return False
+    source_url = (getattr(row, "source_url", None) or "").strip()
+    if not source_url:
+        return False
+    try:
+        parsed = urlsplit(source_url)
+    except ValueError:
+        return False
+    return (
+        (parsed.hostname or "").casefold() == "filialen.aldi-sued.de"
+        and bool(parsed.path.strip("/"))
+        and addresses_match(getattr(row, "address", None), record.address)
+    )
+
+
+def _consistent_coordinate_pair(rows) -> tuple[float, float] | None:
+    pairs = [
+        (float(row.latitude), float(row.longitude))
+        for row in rows
+        if row.latitude is not None and row.longitude is not None
+    ]
+    if not pairs:
+        return None
+    preferred = pairs[0]
+    if all(
+        math.isclose(lat, preferred[0], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+        and math.isclose(lon, preferred[1], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+        for lat, lon in pairs[1:]
+    ):
+        return preferred
+    return None
+
+
 def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float, float]:
     """Resolve missing official coordinates from reviewed local identity data.
 
     Curated identity data must not invent a pin. Strong evidence is an exact
     retailer ID, an exact reviewed address, or (for records with a real retailer
     ID) the same store-specific official source URL. Store rows are preferred
-    over discovery rows so an already published Store keeps its canonical pin.
-    Sub-meter float precision drift is treated as one coordinate observation;
-    genuinely conflicting pins still fail closed.
+    when evidence is consistent. If exact-address rows conflict for ALDI SÜD,
+    one internally consistent set of direct official branch-page candidates may
+    resolve the conflict. Generic directories/PDFs never do. Genuinely
+    conflicting reviewed evidence still fails closed.
     """
     if record.latitude is not None and record.longitude is not None:
         return float(record.latitude), float(record.longitude)
@@ -301,20 +346,20 @@ def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float
         )
     ]
     evidence = exact or rows
+    resolved = _consistent_coordinate_pair(evidence)
+    if resolved is not None:
+        return resolved
+
+    direct_official_rows = [row for row in exact if _is_direct_official_store_page(row, record)]
+    resolved_direct = _consistent_coordinate_pair(direct_official_rows)
+    if resolved_direct is not None:
+        return resolved_direct
+
     coordinate_pairs = [
         (float(row.latitude), float(row.longitude))
         for row in evidence
         if row.latitude is not None and row.longitude is not None
     ]
-    if coordinate_pairs:
-        preferred = coordinate_pairs[0]
-        if all(
-            math.isclose(lat, preferred[0], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
-            and math.isclose(lon, preferred[1], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
-            for lat, lon in coordinate_pairs[1:]
-        ):
-            return preferred
-
     raise RuntimeError(
         "Official source has no unique reviewed coordinate evidence for "
         f"{record.retailer} {record.postal_code} {record.address!r}; "
