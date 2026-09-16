@@ -46,8 +46,8 @@ def _candidate(key: str, *, source: str = "osm", **overrides):
     values = {
         "discovery_key": key,
         "postal_code": "56305",
-        "retailer": "Lidl",
-        "name": "Lidl Puderbach",
+        "retailer": "EDEKA",
+        "name": "EDEKA Puderbach",
         "address": "Urbacher Straße 31a",
         "city": "Puderbach",
         "latitude": 50.592267,
@@ -204,7 +204,7 @@ def test_reconciliation_can_be_complete_only_with_all_gates_and_promotion():
         official_source_verified=True, status="promoted",
     )
     store = Store(
-        retailer="Lidl", name="Lidl Complete", postal_code="56305", city="Puderbach",
+        retailer="EDEKA", name="EDEKA Complete", postal_code="56305", city="Puderbach",
         address="Urbacher Straße 31a", latitude=50.592267, longitude=7.608759,
         active=True, benchmark_verified=False,
     )
@@ -240,7 +240,7 @@ def test_identity_matching_recognizes_preexisting_store_without_implying_promoti
     postcode = CoveragePostalCode(postal_code="56305", enabled=True)
     expected = _candidate("expected", source="official:lidl", official_source_verified=True)
     existing = Store(
-        retailer="Lidl", name="Lidl Puderbach", postal_code="56305", city="Puderbach",
+        retailer="EDEKA", name="EDEKA Puderbach", postal_code="56305", city="Puderbach",
         address="Urbacherstr. 31a", latitude=50.592267, longitude=7.608759, active=True,
     )
     db.add_all([postcode, expected, existing])
@@ -260,7 +260,7 @@ def test_external_id_identity_match_does_not_imply_explicit_promotion():
         official_source_verified=True,
     )
     existing = Store(
-        retailer="Lidl", name="Lidl Puderbach", postal_code="56305", city="Puderbach",
+        retailer="EDEKA", name="EDEKA Puderbach", postal_code="56305", city="Puderbach",
         address="Historische Adresse 1", latitude=50.592267, longitude=7.608759,
         external_id="lidl-56305", active=True,
     )

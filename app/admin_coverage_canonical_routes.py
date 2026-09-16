@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .admin_coverage_routes import _activation_rows_for_postcode, safe_external_url
 from .admin_routes import _admin
+from .beta_market_scope import BETA_RETAILERS, is_beta_retailer
 from .coverage_models import CoveragePostalCode, CoverageRegion, StoreDiscoveryCandidate
 from .coverage_service import coverage_payload, stores_in_region
 from .db import get_db
@@ -115,6 +116,8 @@ def canonical_coverage_admin(
             "osm_attribution": OSM_ATTRIBUTION,
             "osm_license_url": OSM_LICENSE_URL,
             "candidate_ready_for_promotion": candidate_ready_for_promotion,
+            "beta_retailers": BETA_RETAILERS,
+            "is_beta_retailer": is_beta_retailer,
             "result": result,
         },
     )

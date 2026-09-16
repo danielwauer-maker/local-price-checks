@@ -64,10 +64,11 @@ def test_puderbach_official_and_osm_rows_collapse_to_two_physical_markets():
     assert {row.discovery_key for row in visible} == {"edeka-official", "lidl-official"}
 
     summary = reconcile_postcode_coverage(db, postcode, source_results=_sources())
-    assert summary.expected == 2
-    assert summary.found == 2
-    assert summary.official_verified == 2
+    assert summary.expected == 1
+    assert summary.found == 1
+    assert summary.official_verified == 1
     assert summary.additional_discovered == 0
+    assert summary.outside_beta_found == 1
     db.close()
 
 
