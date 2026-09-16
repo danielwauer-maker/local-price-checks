@@ -19,7 +19,7 @@ def _db():
     return sessionmaker(bind=engine, future=True)()
 
 
-def _seed(db):
+def _seed(db, *, active: bool = False):
     for spec in REPAIRS:
         store = Store(
             id=spec.store_id,
@@ -30,7 +30,7 @@ def _seed(db):
             address=spec.old_address,
             latitude=50.0 + spec.store_id / 100,
             longitude=7.0,
-            active=True,
+            active=active,
             benchmark_verified=True,
             external_id=spec.old_external_id,
             source_url="https://www.openstreetmap.org/",
@@ -68,19 +68,26 @@ def _seed(db):
     db.commit()
 
 
-def test_dry_run_changes_nothing():
+def test_dry_run_changes_nothing_and_reports_inactive_public_projection():
     db = _db()
-    _seed(db)
-    before = [(row.id, row.external_id, row.address, row.source_url) for row in db.query(Store).order_by(Store.id)]
-    repair_beta_rewe_identities(db, apply=False)
-    after = [(row.id, row.external_id, row.address, row.source_url) for row in db.query(Store).order_by(Store.id)]
+    _seed(db, active=False)
+    before = [
+        (row.id, row.active, row.external_id, row.address, row.source_url)
+        for row in db.query(Store).order_by(Store.id)
+    ]
+    reports = repair_beta_rewe_identities(db, apply=False)
+    after = [
+        (row.id, row.active, row.external_id, row.address, row.source_url)
+        for row in db.query(Store).order_by(Store.id)
+    ]
     assert after == before
+    assert all(report["legacy_inactive_public_projection"] for report in reports)
     assert all(row.matched_store_id is None for row in db.query(StoreDiscoveryCandidate))
 
 
-def test_apply_preserves_ids_publication_runs_and_is_idempotent():
+def test_apply_preserves_ids_publication_runs_restores_active_and_is_idempotent():
     db = _db()
-    _seed(db)
+    _seed(db, active=False)
     activation_before = {
         row.store_id: (row.lifecycle_status, row.last_test_run_id, row.published_at)
         for row in db.query(StoreActivationState)
@@ -93,6 +100,8 @@ def test_apply_preserves_ids_publication_runs_and_is_idempotent():
     assert [row.id for row in db.query(Store).order_by(Store.id)] == [11, 12]
     for spec in REPAIRS:
         store = db.get(Store, spec.store_id)
+        assert store.active is True
+        assert store.benchmark_verified is True
         assert (store.external_id, store.address, store.source_url) == (
             spec.external_id, spec.address, spec.source_url
         )
@@ -108,12 +117,20 @@ def test_apply_preserves_ids_publication_runs_and_is_idempotent():
     assert run_ids_before == [row.id for row in db.query(CollectionRun).order_by(CollectionRun.id)]
 
 
+def test_already_active_public_store_remains_supported():
+    db = _db()
+    _seed(db, active=True)
+    repair_beta_rewe_identities(db, apply=True)
+    assert all(db.get(Store, spec.store_id).active for spec in REPAIRS)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
         ("retailer", "PENNY", "unexpected retailer"),
         ("postal_code", "00000", "unexpected postcode"),
         ("external_id", "unknown", "outside the reviewed states"),
+        ("benchmark_verified", False, "no longer benchmark/public verified"),
     ),
 )
 def test_unknown_initial_store_state_aborts(field, value, message):
@@ -124,6 +141,17 @@ def test_unknown_initial_store_state_aborts(field, value, message):
     with pytest.raises(RuntimeError, match=message):
         repair_beta_rewe_identities(db, apply=True)
     assert db.get(Store, 12).external_id == REPAIRS[1].old_external_id
+
+
+def test_missing_publication_proof_aborts_inactive_store():
+    db = _db()
+    _seed(db, active=False)
+    state = db.query(StoreActivationState).filter_by(store_id=11).one()
+    state.published_at = None
+    db.commit()
+    with pytest.raises(RuntimeError, match="activation state is not reviewed-public"):
+        repair_beta_rewe_identities(db, apply=True)
+    assert db.get(Store, 11).active is False
 
 
 def test_missing_store_aborts_without_touching_other_store():

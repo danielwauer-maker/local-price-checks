@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import math
 from typing import Iterable, Protocol
 
 from sqlalchemy.orm import Session
@@ -20,6 +21,8 @@ SUPPORTED_RETAILERS: tuple[str, ...] = (
     "EDEKA",
     "PENNY",
 )
+
+_COORDINATE_EVIDENCE_TOLERANCE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -259,11 +262,14 @@ def _official_candidate_key(adapter_key: str, record: RetailerStoreRecord) -> st
 
 
 def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float, float]:
-    """Resolve missing official coordinates from existing local identity data.
+    """Resolve missing official coordinates from reviewed local identity data.
 
-    Curated identity data must not invent a pin.  We accept a unique coordinate
-    pair from the same retailer/postcode, preferring exact external ID/address
-    matches.  Ambiguous or missing evidence aborts the refresh transaction.
+    Curated identity data must not invent a pin. Strong evidence is an exact
+    retailer ID, an exact reviewed address, or (for records with a real retailer
+    ID) the same store-specific official source URL. Store rows are preferred
+    over discovery rows so an already published Store keeps its canonical pin.
+    Sub-meter float precision drift is treated as one coordinate observation;
+    genuinely conflicting pins still fail closed.
     """
     if record.latitude is not None and record.longitude is not None:
         return float(record.latitude), float(record.longitude)
@@ -278,28 +284,42 @@ def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float
         Store.postal_code == record.postal_code,
     ).all()
 
+    rows = [*stores, *candidates]
+    record_source_url = (record.source_url or "").strip()
     exact = [
-        row for row in [*candidates, *stores]
+        row for row in rows
         if (
             record.external_id
             and getattr(row, "source_external_id", None) == record.external_id
         )
         or (record.external_id and getattr(row, "external_id", None) == record.external_id)
         or addresses_match(getattr(row, "address", None), record.address)
+        or (
+            record.external_id
+            and record_source_url
+            and (getattr(row, "source_url", None) or "").strip() == record_source_url
+        )
     ]
-    evidence = exact or [*candidates, *stores]
-    coordinate_pairs = {
+    evidence = exact or rows
+    coordinate_pairs = [
         (float(row.latitude), float(row.longitude))
         for row in evidence
         if row.latitude is not None and row.longitude is not None
-    }
-    if len(coordinate_pairs) != 1:
-        raise RuntimeError(
-            "Official source has no unique reviewed coordinate evidence for "
-            f"{record.retailer} {record.postal_code} {record.address!r}; "
-            f"found {len(coordinate_pairs)} coordinate pairs"
-        )
-    return next(iter(coordinate_pairs))
+    ]
+    if coordinate_pairs:
+        preferred = coordinate_pairs[0]
+        if all(
+            math.isclose(lat, preferred[0], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+            and math.isclose(lon, preferred[1], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+            for lat, lon in coordinate_pairs[1:]
+        ):
+            return preferred
+
+    raise RuntimeError(
+        "Official source has no unique reviewed coordinate evidence for "
+        f"{record.retailer} {record.postal_code} {record.address!r}; "
+        f"found {len(coordinate_pairs)} coordinate rows"
+    )
 
 
 def stage_official_store_candidates(
