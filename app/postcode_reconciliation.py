@@ -181,11 +181,12 @@ def _representative_quality(candidate: StoreDiscoveryCandidate) -> tuple[int, in
 def group_physical_candidates(candidates: list[StoreDiscoveryCandidate]) -> list[CandidateGroup]:
     """Collapse source duplicates while keeping distinct physical branches.
 
-    Official retailer rows are preferred as representatives. OSM/secondary rows
-    are attached to the strongest matching branch using address, branch name,
-    street and close-coordinate evidence. This intentionally keeps raw source
-    rows in the database; it only defines the admin/workflow view.
+    Rejected provenance rows remain stored for auditability but no longer count
+    as live discovery evidence. All other source rows keep the established
+    physical-market dedupe rules so weak aliases can still support one known
+    branch without becoming separate admin-visible markets.
     """
+    candidates = [row for row in candidates if row.status != "rejected"]
     official = [row for row in candidates if row.source.startswith("official:")]
     secondary = [row for row in candidates if not row.source.startswith("official:")]
     groups = [CandidateGroup(row, [row]) for row in official]

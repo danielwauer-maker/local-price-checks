@@ -157,6 +157,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled data repair recognized: roll back accidental Lidl Puderbach promotion."
+  elif grep -Fxq 'migrations/versions/20260916_02_correct_lidl_puderbach_legacy_store.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^migrations/versions/20260916_02_correct_lidl_puderbach_legacy_store\.py$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled data repair recognized: remove stale Lidl Puderbach legacy identity."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
