@@ -197,7 +197,7 @@ def test_rollback_fails_closed_on_business_data_dependency(monkeypatch):
         ).scalar_one() == 1
 
 
-def test_rollback_requires_concrete_physical_identity_evidence(monkeypatch):
+def test_rollback_is_noop_when_rows_are_proven_to_be_distinct_physical_branches(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, _ = _schema()
@@ -212,9 +212,11 @@ def test_rollback_requires_concrete_physical_identity_evidence(monkeypatch):
         )
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
 
-        with pytest.raises(RuntimeError, match="same physical Lidl branch"):
-            migration.upgrade()
+        migration.upgrade()
 
         assert connection.execute(
-            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 16)
-        ).scalar_one() == 1
+            sa.select(stores.c.id).order_by(stores.c.id)
+        ).scalars().all() == [8, 16]
+        assert connection.execute(
+            sa.select(candidates.c.matched_store_id).order_by(candidates.c.id)
+        ).scalars().all() == [16, 16]
