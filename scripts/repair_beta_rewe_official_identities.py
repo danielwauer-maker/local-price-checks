@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fail-closed in-place repair for the reviewed public REWE stores 11 and 12.
 
-Run without arguments for read-only validation.  ``--apply`` changes only the
-canonical Store identity and links the already staged official candidate.  No
-Store or history row is created, moved, or deleted.
+Run without arguments for read-only validation. ``--apply`` changes only the
+canonical Store identity, restores the legacy public ``active`` projection when
+there is durable publication proof, and links the already staged official
+candidate. No Store or history row is created, moved, or deleted.
 """
 
 from __future__ import annotations
@@ -103,7 +104,7 @@ def _activation(db: Session, store_id: int):
 
 def _history_counts(db: Session, store_id: int) -> dict[str, int]:
     """Count every registered table that has a direct FK to stores.id."""
-    # Inspect through the Session's current connection.  Opening a second
+    # Inspect through the Session's current connection. Opening a second
     # inspector connection can interfere with an in-memory SQLite transaction.
     schema = inspect(db.connection())
     counts: dict[str, int] = {}
@@ -143,8 +144,8 @@ def _validate(db: Session, spec: RepairSpec):
     }
     if (store["external_id"], store["address"]) not in allowed_identities:
         _abort(f"Store {spec.store_id} identity is outside the reviewed states: {dict(store)!r}")
-    if not bool(store["active"]) or not bool(store["benchmark_verified"]):
-        _abort(f"Store {spec.store_id} is no longer an active public store")
+    if not bool(store["benchmark_verified"]):
+        _abort(f"Store {spec.store_id} is no longer benchmark/public verified")
 
     activation = _activation(db, spec.store_id)
     if activation is None:
@@ -156,6 +157,12 @@ def _validate(db: Session, spec: RepairSpec):
         and not bool(activation["manually_suspended"])
     ):
         _abort(f"Store {spec.store_id} activation state is not reviewed-public: {dict(activation)!r}")
+
+    # Historical releases could leave Store.active=0 even though publication is
+    # durably recorded in StoreActivationState and benchmark_verified stayed set.
+    # That exact projection mismatch is repairable; any missing publication
+    # evidence above still aborts before we touch the row.
+    legacy_inactive_public_projection = not bool(store["active"])
 
     candidate = _official_candidate(db, spec)
     if candidate["matched_store_id"] not in {None, spec.store_id}:
@@ -172,17 +179,18 @@ def _validate(db: Session, spec: RepairSpec):
         and candidate["longitude"] is not None
     ):
         _abort(f"Official candidate {candidate['id']} is outside reviewed identity: {dict(candidate)!r}")
-    return store, activation, candidate
+    return store, activation, candidate, legacy_inactive_public_projection
 
 
 def _repair_beta_rewe_identities(db: Session, *, apply: bool = False) -> list[dict]:
     reports: list[dict] = []
     for spec in REPAIRS:
-        store, activation, candidate = _validate(db, spec)
+        store, activation, candidate, legacy_inactive_public_projection = _validate(db, spec)
         history_before = _history_counts(db, spec.store_id)
         activation_before = dict(activation)
         already_correct = (
-            store["external_id"] == spec.external_id
+            bool(store["active"])
+            and store["external_id"] == spec.external_id
             and store["address"] == spec.address
             and store["source_url"] == spec.source_url
             and candidate["matched_store_id"] == spec.store_id
@@ -194,6 +202,7 @@ def _repair_beta_rewe_identities(db: Session, *, apply: bool = False) -> list[di
             "store_id": spec.store_id,
             "before": dict(store),
             "candidate_id": candidate["id"],
+            "legacy_inactive_public_projection": legacy_inactive_public_projection,
             "already_correct": already_correct,
         })
         if not apply or already_correct:
@@ -203,7 +212,7 @@ def _repair_beta_rewe_identities(db: Session, *, apply: bool = False) -> list[di
             text(
                 """UPDATE stores
                    SET address = :address, external_id = :external_id,
-                       source_url = :source_url
+                       source_url = :source_url, active = 1
                    WHERE id = :store_id"""
             ),
             {
@@ -227,20 +236,24 @@ def _repair_beta_rewe_identities(db: Session, *, apply: bool = False) -> list[di
                 "candidate_id": candidate["id"],
                 "verification_note": (
                     "Offizielle REWE-Identität geprüft; vorhandener Pin des bereits "
-                    "öffentlichen Store wurde unverändert übernommen, da die "
+                    "veröffentlichten Store wurde unverändert übernommen, da die "
                     "Marktseite keine offiziellen Koordinaten veröffentlicht."
                 ),
             },
         )
         db.flush()
 
-        repaired, activation_after, repaired_candidate = _validate(db, spec)
+        repaired, activation_after, repaired_candidate, projection_mismatch_after = _validate(db, spec)
+        if projection_mismatch_after:
+            _abort(f"Store {spec.store_id} active/public projection was not restored")
         if _history_counts(db, spec.store_id) != history_before:
             _abort(f"Store {spec.store_id} history/FK row counts changed unexpectedly")
         if dict(activation_after) != activation_before:
             _abort(f"Store {spec.store_id} activation/publication state changed")
         if not (
-            repaired["external_id"] == spec.external_id
+            bool(repaired["active"])
+            and bool(repaired["benchmark_verified"])
+            and repaired["external_id"] == spec.external_id
             and repaired["address"] == spec.address
             and repaired["source_url"] == spec.source_url
             and repaired_candidate["matched_store_id"] == spec.store_id
