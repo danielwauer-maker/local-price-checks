@@ -6,6 +6,7 @@ from typing import Iterable, Protocol
 
 from sqlalchemy.orm import Session
 
+from .candidate_source_refresh import refresh_candidate_from_source
 from .coverage_models import StoreDiscoveryCandidate
 
 
@@ -127,9 +128,9 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         address="Urbacherstraße L264",
         postal_code="56305",
         city="Puderbach",
-        latitude=50.5980,
-        longitude=7.6150,
-        external_id=None,
+        latitude=50.592225,
+        longitude=7.608542,
+        external_id="lidl-puderbach-urbacherstr-l264",
         source_url="https://www.lidl.de/s/de-DE/filialen/puderbach/urbacherstr-l264/",
         source_identifier="lidl-puderbach-urbacherstr-l264",
     ),
@@ -139,8 +140,8 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         address="Urbacher Straße 35",
         postal_code="56305",
         city="Puderbach",
-        latitude=50.6000,
-        longitude=7.6110,
+        latitude=50.591497,
+        longitude=7.607809,
         external_id="071378",
         source_url="https://www.edeka.de/maerkte/071378/",
         source_identifier="edeka-market-071378",
@@ -231,13 +232,11 @@ def stage_official_store_candidates(
                 db.add(row)
                 created += 1
             else:
-                identity_changed = any(getattr(row, field) != value for field, value in values.items())
-                for field, value in values.items():
-                    setattr(row, field, value)
-                if identity_changed:
-                    row.address_verified = False
-                    row.coordinates_verified = False
-                    row.status = "discovered"
+                refresh_candidate_from_source(
+                    row,
+                    values,
+                    reset_verification_on_identity_change=True,
+                )
                 row.official_source_verified = True
                 updated += 1
     db.commit()
