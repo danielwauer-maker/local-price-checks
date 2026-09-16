@@ -300,19 +300,41 @@ def discover_postcode(postal_code: str, db: Session = Depends(get_db), actor: st
     postcode = db.query(CoveragePostalCode).filter_by(postal_code=postal_code).first()
     if postcode is None or not postcode.enabled:
         raise HTTPException(400, "PLZ ist nicht freigegeben")
+
+    result_parts = [f"postcode-discover:{postal_code}"]
     try:
-        # Refresh discovery first so curated sources without published pins can
-        # reuse unique, current local coordinate evidence in the same action.
+        # OSM and official retailer staging are intentionally independent. A
+        # temporary Overpass failure must not block reviewed official identities.
         created, updated = stage_postcode_candidates(db, postal_code)
-        official_created, official_updated, _ = stage_official_store_candidates(db, postal_code)
-        result = (
-            f"postcode-discover:{postal_code}:osm-new={created}:osm-updated={updated}:"
-            f"official-new={official_created}:official-updated={official_updated}"
-        )
+        result_parts.extend((f"osm-new={created}", f"osm-updated={updated}"))
     except Exception as exc:
         db.rollback()
-        result = f"postcode-discover:{postal_code}:failed={type(exc).__name__}"
-    return RedirectResponse(f"/admin/coverage?result={result}", status_code=303)
+        result_parts.append(f"osm-failed={type(exc).__name__}")
+
+    try:
+        official_created, official_updated, source_results = stage_official_store_candidates(
+            db, postal_code
+        )
+        result_parts.extend((
+            f"official-new={official_created}",
+            f"official-updated={official_updated}",
+        ))
+        partial = [result.retailer for result in source_results if result.status == "partial_failure"]
+        unavailable = [
+            result.retailer for result in source_results if result.status == "source_unavailable"
+        ]
+        if partial:
+            result_parts.append(f"official-partial={','.join(partial)}")
+        if unavailable:
+            result_parts.append(f"official-unavailable={','.join(unavailable)}")
+    except Exception as exc:
+        db.rollback()
+        result_parts.append(f"official-failed={type(exc).__name__}")
+
+    return RedirectResponse(
+        f"/admin/coverage?result={':'.join(result_parts)}",
+        status_code=303,
+    )
 
 
 @router.post("/admin/coverage/candidates/{candidate_id}/verify")
