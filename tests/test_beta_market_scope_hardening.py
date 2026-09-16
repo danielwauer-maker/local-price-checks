@@ -90,7 +90,7 @@ def test_non_beta_market_remains_visible_but_does_not_block_complete(
     db.add(pc)
     db.commit()
 
-    summary = reconcile_postcode_coverage(db, pc, source_results=())
+    summary = reconcile_postcode_coverage(db, pc)
     assert (summary.expected, summary.found, summary.promoted) == (1, 1, 1)
     assert summary.outside_beta_found == 1
     assert summary.status == "complete"
@@ -118,9 +118,34 @@ def test_expected_and_found_count_only_official_beta_groups(postcode, retailers,
             official_source_verified=True,
         ))
     db.commit()
-    summary = reconcile_postcode_coverage(db, pc, source_results=())
+    summary = reconcile_postcode_coverage(db, pc)
     assert (summary.expected, summary.found) == (expected, expected)
     assert summary.outside_beta_found == len(retailers) - expected
+
+
+def test_expected_beta_targets_do_not_depend_on_successful_official_staging():
+    db = _db()
+    pc = CoveragePostalCode(postal_code="56587", city="Straßenhaus", enabled=True)
+    db.add(pc)
+    db.add(_candidate(
+        "aldi-osm-56587",
+        "ALDI SÜD",
+        postal_code="56587",
+        city="Oberhonnefeld-Gierend",
+        address="Über dem Stellweg 5",
+        latitude=50.5400,
+        longitude=7.5100,
+    ))
+    db.commit()
+
+    summary = reconcile_postcode_coverage(db, pc)
+
+    # Curated beta inventory has REWE Dennis Weirich + ALDI SÜD here even if
+    # the official candidate rows have not been staged yet.
+    assert summary.expected == 2
+    assert summary.found == 1
+    assert summary.missing_expected == 1
+    assert summary.status == "incomplete"
 
 
 @pytest.mark.parametrize(
@@ -271,8 +296,14 @@ def test_production_like_rewe_source_url_and_float_drift_resolve_one_pin():
     assert official.longitude == pytest.approx(store.longitude)
 
 
-def test_missing_or_ambiguous_coordinate_evidence_fails_closed():
+def test_missing_coordinate_evidence_isolated_and_reported():
     db = _db()
-    with pytest.raises(RuntimeError, match="no unique reviewed coordinate evidence"):
-        stage_official_store_candidates(db, "65606")
+
+    created, updated, results = stage_official_store_candidates(db, "65606")
+
+    assert (created, updated) == (0, 0)
+    rewe = next(result for result in results if result.retailer == "REWE")
+    assert rewe.status == "partial_failure"
+    assert "rewe-market-241184" in rewe.note
+    assert "no unique reviewed coordinate evidence" in rewe.note
     assert db.query(StoreDiscoveryCandidate).count() == 0

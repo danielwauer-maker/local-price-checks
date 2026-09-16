@@ -261,6 +261,27 @@ def _group_is_explicitly_promoted(group: CandidateGroup, existing_store_ids: set
     )
 
 
+def _expected_beta_market_count(results: tuple[RetailerSourceResult, ...]) -> int:
+    """Count reviewed beta targets independently from candidate staging success.
+
+    Coverage must not lower its expectation merely because staging an official
+    candidate failed or has not run yet. The curated retailer inventory is the
+    product-level source of truth for the current beta target set.
+    """
+    identities: set[tuple[str, str]] = set()
+    for result in results:
+        if not is_beta_retailer(result.retailer):
+            continue
+        for store in result.stores:
+            identity = (
+                store.external_id
+                or store.source_identifier
+                or f"{normalize_identity_text(store.city)}|{normalize_identity_text(store.address)}"
+            )
+            identities.add((result.retailer, identity))
+    return len(identities)
+
+
 def reconcile_postcode_coverage(
     db: Session,
     postcode: CoveragePostalCode,
@@ -274,7 +295,14 @@ def reconcile_postcode_coverage(
     postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
     beta_stores = [store for store in postcode_stores if is_beta_retailer(store.retailer)]
 
-    expected = sum(group.has_official_source for group in beta_groups)
+    # `source_results` is an injectable diagnostics/presentation input used by
+    # tests and admin callers. It must never redefine the product-level beta
+    # target inventory. Always derive `expected` from the real curated source
+    # inventory for the postcode, while returning the injected diagnostics when
+    # one was supplied.
+    inventory_results = retailer_source_results(postcode.postal_code)
+    results = source_results if source_results is not None else inventory_results
+    expected = _expected_beta_market_count(inventory_results)
     found = len(beta_groups)
 
     address_verified = sum(any(row.address_verified for row in group.members) for group in beta_groups)
@@ -291,8 +319,6 @@ def reconcile_postcode_coverage(
 
     missing_expected = max(0, expected - found)
     additional_discovered = max(0, found - expected)
-
-    results = source_results or retailer_source_results(postcode.postal_code)
 
     # The postcode rollout state answers whether physical markets are known and
     # verified. Retailer adapter/source-health is intentionally diagnostic only:
