@@ -113,24 +113,6 @@ def _street_key(address: str | None) -> str:
     return "".join(cleaned)
 
 
-def _address_locators(address: str | None) -> set[str]:
-    """Return concrete house/road locators used to reject false proximity aliases.
-
-    Examples: ``31a`` -> ``31a``, ``20-22`` -> ``20`` + ``22`` and road
-    designators such as ``L264`` -> ``264``. If two otherwise similar source
-    rows both carry concrete but disjoint locators, proximity or a shared street
-    name is not enough evidence to collapse them into one physical market.
-    """
-    locators: set[str] = set()
-    for word in _words(address):
-        road = re.fullmatch(r"[blks](\d+[a-z]?)", word)
-        if road:
-            locators.add(road.group(1))
-        elif re.fullmatch(r"\d+[a-z]?", word):
-            locators.add(word)
-    return locators
-
-
 def _candidate_match_score(left: StoreDiscoveryCandidate, right: StoreDiscoveryCandidate) -> float:
     """Return a confidence score that two source rows describe one branch.
 
@@ -146,29 +128,10 @@ def _candidate_match_score(left: StoreDiscoveryCandidate, right: StoreDiscoveryC
         return 0.0
 
     score = 0.0
-    same_explicit_store = (
-        left.matched_store_id is not None
-        and left.matched_store_id == right.matched_store_id
-    )
-    if same_explicit_store:
+    if left.matched_store_id is not None and left.matched_store_id == right.matched_store_id:
         score = max(score, 1200.0)
     if addresses_match(left.address, right.address):
         score = max(score, 1000.0)
-
-    # Explicit lifecycle linkage or an exact normalized address is stronger than
-    # address formatting differences. Otherwise, conflicting concrete locators
-    # are identity evidence that the rows must stay separate. This prevents a
-    # nearby weak OSM alias such as 31a from hijacking an official L264 branch.
-    left_locators = _address_locators(left.address)
-    right_locators = _address_locators(right.address)
-    if (
-        not same_explicit_store
-        and score < 1000.0
-        and left_locators
-        and right_locators
-        and left_locators.isdisjoint(right_locators)
-    ):
-        return 0.0
 
     left_branch = _branch_tokens(left)
     right_branch = _branch_tokens(right)
@@ -218,11 +181,10 @@ def _representative_quality(candidate: StoreDiscoveryCandidate) -> tuple[int, in
 def group_physical_candidates(candidates: list[StoreDiscoveryCandidate]) -> list[CandidateGroup]:
     """Collapse source duplicates while keeping distinct physical branches.
 
-    Rejected provenance rows remain stored for auditability but do not
-    participate in physical-market grouping. Official retailer rows are
-    preferred as representatives. OSM/secondary rows are attached to the
-    strongest matching branch using address, branch name, street and
-    close-coordinate evidence.
+    Rejected provenance rows remain stored for auditability but no longer count
+    as live discovery evidence. All other source rows keep the established
+    physical-market dedupe rules so weak aliases can still support one known
+    branch without becoming separate admin-visible markets.
     """
     candidates = [row for row in candidates if row.status != "rejected"]
     official = [row for row in candidates if row.source.startswith("official:")]
