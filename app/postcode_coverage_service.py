@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
+from .candidate_source_refresh import refresh_candidate_from_source
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .config import settings
 from .coverage_service import normalize_retailer
@@ -155,12 +156,18 @@ def stage_postcode_candidates(db: Session, postal_code: str) -> tuple[int, int]:
             db.add(row)
             created += 1
         else:
-            for field in (
-                "postal_code", "retailer", "name", "address", "city", "latitude",
-                "longitude", "source_external_id", "source_url",
-            ):
-                setattr(row, field, item[field])
-            row.updated_at = datetime.utcnow()
+            values = {
+                field: item[field]
+                for field in (
+                    "postal_code", "retailer", "name", "address", "city", "latitude",
+                    "longitude", "source_external_id", "source_url",
+                )
+            }
+            refresh_candidate_from_source(
+                row,
+                values,
+                reset_verification_on_identity_change=False,
+            )
             updated += 1
     db.commit()
     return created, updated
