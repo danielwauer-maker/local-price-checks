@@ -356,8 +356,6 @@ def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
             .values(matched_store_id=None, status="verified")
         )
         connection.execute(stores.delete().where(stores.c.id == 16))
-        # No historic business rows exist in this compatibility state.
-        connection.execute(stores.delete().where(stores.c.id == 8))
 
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
         migration.upgrade()
