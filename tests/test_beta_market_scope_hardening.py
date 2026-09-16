@@ -214,6 +214,63 @@ def test_rewe_market_pages_use_generic_offer_url_normalization(market_url, offer
     assert source.url == offer_url
 
 
+def test_production_like_rewe_source_url_and_float_drift_resolve_one_pin():
+    db = _db()
+    market_url = "https://www.rewe.de/marktseite/brechen-niederbrechen/240076/rewe-markt-in-den-wallgaerten-1/"
+    store = Store(
+        id=12,
+        retailer="REWE",
+        name="REWE Brechen",
+        postal_code="65611",
+        city="Brechen",
+        address="In den Wallgärten 4-8",
+        latitude=50.362197,
+        longitude=8.15777,
+        active=False,
+        benchmark_verified=True,
+        external_id="way/28653743",
+        source_url=market_url,
+    )
+    candidate = _candidate(
+        "brechten-osm",
+        "REWE",
+        postal_code="65611",
+        city="Brechen",
+        address="In den Wallgärten 4-8",
+        latitude=50.3621967,
+        longitude=8.1577705,
+        source_external_id="way/28653743",
+        source_url=market_url,
+        matched_store_id=12,
+        status="promoted",
+        address_verified=True,
+        coordinates_verified=True,
+        official_source_verified=True,
+    )
+    aldi = _candidate(
+        "brechten-aldi-osm",
+        "ALDI SÜD",
+        postal_code="65611",
+        city="Brechen",
+        address="Kapellenstraße 88",
+        latitude=50.3593728,
+        longitude=8.1831378,
+    )
+    db.add_all([store, candidate, aldi])
+    db.commit()
+
+    stage_official_store_candidates(db, "65611")
+
+    official = db.query(StoreDiscoveryCandidate).filter_by(
+        retailer="REWE",
+        postal_code="65611",
+        source_external_id="240076",
+    ).one()
+    assert official.address == "In den Wallgärten 1"
+    assert official.latitude == pytest.approx(store.latitude)
+    assert official.longitude == pytest.approx(store.longitude)
+
+
 def test_missing_or_ambiguous_coordinate_evidence_fails_closed():
     db = _db()
     with pytest.raises(RuntimeError, match="no unique reviewed coordinate evidence"):
