@@ -109,7 +109,7 @@ CHANGED_FILES="$(git diff --name-only "$DIFF_BASE" "$TARGET_SHA")"
 printf 'Deploying %s -> %s (checkout %s -> %s)\n' "$DIFF_BASE" "$TARGET_SHA" "$OLD_SHA" "$TARGET_SHA"
 printf '%s\n' "$CHANGED_FILES"
 
-SCHEMA_FILES="$(grep -E '^(alembic\.ini|alembic/|migrations/|app/.+migration|app/models\.py$|app/[^/]*_models\.py$)' <<<"$CHANGED_FILES" || true)"
+SCHEMA_FILES="$(grep -E '^(alembic\.ini|alembic/|migrations/|app/.+migration|app/sqlite_alembic\.py$|app/models\.py$|app/[^/]*_models\.py$)' <<<"$CHANGED_FILES" || true)"
 CONTROLLED_SCHEMA_RELEASE=0
 
 if [[ -n "$SCHEMA_FILES" ]]; then
@@ -161,6 +161,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^migrations/versions/20260916_02_correct_lidl_puderbach_legacy_store\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled data repair recognized: remove stale Lidl Puderbach legacy identity."
+  elif grep -Fxq 'app/sqlite_alembic.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^app/sqlite_alembic\.py$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled migration runner update recognized: apply pending reviewed Alembic revisions."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
