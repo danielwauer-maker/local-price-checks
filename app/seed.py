@@ -24,6 +24,52 @@ STORES = [
 ]
 
 
+def _normalise_seed_address(value: str | None) -> str:
+    return " ".join((value or "").strip().casefold().split())
+
+
+def _existing_store_for_seed(db, *, retailer: str, name: str, postal_code: str, address: str, external_id: str | None):
+    """Resolve an existing bootstrap market by strong physical identity.
+
+    Store names are presentation data and may change over time.  A renamed seed
+    must therefore not create a second Store for the same retailer branch.  An
+    exact retailer/name match remains the first choice; retailer IDs are the
+    strongest fallback, followed by one unique same-retailer/address match.
+
+    Existing duplicate rows are deliberately not merged here.  Returning a
+    deterministic row merely prevents startup seeding from amplifying an
+    already-known data-quality problem; cleanup remains an explicit operation.
+    """
+    exact_name = db.query(Store).filter(
+        Store.retailer == retailer,
+        Store.name == name,
+    ).order_by(Store.id).first()
+    if exact_name is not None:
+        return exact_name
+
+    if external_id:
+        id_matches = db.query(Store).filter(
+            Store.retailer == retailer,
+            Store.postal_code == postal_code,
+            Store.external_id == external_id,
+        ).order_by(Store.id).all()
+        if id_matches:
+            return id_matches[0]
+
+    address_key = _normalise_seed_address(address)
+    address_matches = [
+        store
+        for store in db.query(Store).filter(
+            Store.retailer == retailer,
+            Store.postal_code == postal_code,
+        ).order_by(Store.id).all()
+        if _normalise_seed_address(store.address) == address_key
+    ]
+    if len(address_matches) == 1:
+        return address_matches[0]
+    return None
+
+
 def seed_stores(db):
     """Seed bootstrap stores without mutating established market identity.
 
@@ -42,7 +88,14 @@ def seed_stores(db):
     from .market_activation import activation_state
 
     for retailer, name, pc, city, address, lat, lon, verified, external_id in STORES:
-        store = db.query(Store).filter(Store.name == name).first()
+        store = _existing_store_for_seed(
+            db,
+            retailer=retailer,
+            name=name,
+            postal_code=pc,
+            address=address,
+            external_id=external_id,
+        )
         created = store is None
         if created:
             store = Store(
