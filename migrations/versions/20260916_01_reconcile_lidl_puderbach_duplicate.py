@@ -4,11 +4,12 @@ Revision ID: 20260916_01
 Revises: 20260910_01
 Create Date: 2026-09-16
 
-This deliberately narrow, fail-closed data repair returns the production test
-case to the state from immediately before the faulty ``Markt übernehmen`` click:
-legacy Store 8 remains, accidental Store 16 is removed, and its discovery rows
-are reset to the verified/unpromoted state. The fixed promotion workflow can
-then be exercised again and must reuse Store 8 instead of creating a new Store.
+This deliberately narrow, fail-closed data repair originally assumed Store 16
+was a duplicate of legacy Store 8. Production evidence later proved these rows
+represent different physical identities: Store 8 is stale 31a history while
+Store 16 is the official L264 branch. Therefore this revision now performs the
+old rollback only when same-branch evidence is actually present. Otherwise it
+is a safe no-op and lets revision 20260916_02 perform the canonical repair.
 """
 
 from __future__ import annotations
@@ -136,7 +137,7 @@ def _validate_accidental_activation_state(bind) -> None:
         raise RuntimeError("Accidental Store 16 contains collector error history")
 
 
-def _validate_physical_identity_evidence(bind, legacy) -> None:
+def _same_physical_identity(bind, legacy) -> bool:
     rows = bind.execute(
         sa.text(
             """
@@ -156,23 +157,7 @@ def _validate_physical_identity_evidence(bind, legacy) -> None:
         and _normalize(row["retailer"]) == _normalize(EXPECTED_RETAILER)
     ]
     if not accidental_candidates:
-        raise RuntimeError(
-            "Accidental Store 16 has no explicitly linked Lidl discovery evidence"
-        )
-
-    legacy_external_id = (legacy["external_id"] or "").strip()
-    same_identity = any(
-        _addresses_match(legacy["address"], row["address"])
-        or (
-            legacy_external_id
-            and (row["source_external_id"] or "").strip() == legacy_external_id
-        )
-        for row in accidental_candidates
-    )
-    if not same_identity:
-        raise RuntimeError(
-            "Store 16 cannot be proven to represent the same physical Lidl branch as Store 8"
-        )
+        return False
 
     for row in accidental_candidates:
         if (
@@ -182,6 +167,16 @@ def _validate_physical_identity_evidence(bind, legacy) -> None:
             raise RuntimeError(
                 f"Candidate {row['id']} linked to Store 16 belongs to a different market"
             )
+
+    legacy_external_id = (legacy["external_id"] or "").strip()
+    return any(
+        _addresses_match(legacy["address"], row["address"])
+        or (
+            legacy_external_id
+            and (row["source_external_id"] or "").strip() == legacy_external_id
+        )
+        for row in accidental_candidates
+    )
 
 
 def upgrade() -> None:
@@ -198,13 +193,18 @@ def upgrade() -> None:
     _assert_expected_store(legacy, store_id=LEGACY_STORE_ID)
     _assert_expected_store(accidental, store_id=ACCIDENTAL_STORE_ID)
 
+    # Production evidence proved Store 8 (stale 31a identity) and Store 16
+    # (official L264 identity) are distinct. In that case this historical
+    # rollback must not remove Store 16; revision 20260916_02 owns the repair.
+    if not _same_physical_identity(bind, legacy):
+        return
+
     if bool(accidental["benchmark_verified"]):
         raise RuntimeError(
             "Accidental Store 16 is public/benchmark-verified; refusing rollback"
         )
 
     _validate_accidental_activation_state(bind)
-    _validate_physical_identity_evidence(bind, legacy)
 
     counts = _store_reference_counts(bind, ACCIDENTAL_STORE_ID)
     blockers = {
@@ -219,8 +219,6 @@ def upgrade() -> None:
             + details
         )
 
-    # Restore the physical candidate group to its pre-promotion state. Verified
-    # candidates remain verified; weaker source rows return to discovered.
     bind.execute(
         sa.text(
             """
