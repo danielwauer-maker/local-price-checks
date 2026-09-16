@@ -79,6 +79,50 @@ def _schema(*, with_business_reference: bool = False):
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("updated_at", sa.DateTime, nullable=False),
     )
+
+    # Minimal production-shaped history tables used by the migration. Keeping
+    # them in every test ensures the fail-closed reflection path is exercised.
+    sa.Table(
+        "offers",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+    )
+    sa.Table(
+        "normal_price_observations",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id")),
+        sa.Column("retailer", sa.String(80)),
+    )
+    sa.Table(
+        "collection_runs",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+        sa.Column("source_key", sa.String(80), nullable=False),
+    )
+    sa.Table(
+        "collection_quality_snapshots",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+        sa.Column("retailer", sa.String(80), nullable=False),
+    )
+    sa.Table(
+        "prospects",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+    )
+    sa.Table(
+        "prospect_archives",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("store_id", sa.Integer, sa.ForeignKey("stores.id"), nullable=False),
+        sa.Column("retailer", sa.String(80), nullable=False),
+    )
+
     business = None
     if with_business_reference:
         business = sa.Table(
@@ -230,6 +274,73 @@ def test_repair_removes_legacy_store_rejects_wrong_alias_and_normalizes_canonica
         assert activation_links == [16]
 
 
+def test_repair_moves_verified_lidl_puderbach_history_to_canonical_store(monkeypatch):
+    migration = _load_migration()
+    engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
+    metadata, stores, candidates, activation, _ = _schema()
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        _seed(connection, stores, candidates, activation)
+        connection.execute(metadata.tables["offers"].insert().values(id=1, store_id=8))
+        connection.execute(
+            metadata.tables["normal_price_observations"].insert().values(
+                id=1, store_id=8, retailer="Lidl"
+            )
+        )
+        connection.execute(
+            metadata.tables["collection_runs"].insert().values(
+                id=10, store_id=8, source_key="lidl_puderbach:web"
+            )
+        )
+        connection.execute(
+            metadata.tables["collection_quality_snapshots"].insert().values(
+                id=10, store_id=8, retailer="Lidl"
+            )
+        )
+        connection.execute(metadata.tables["prospects"].insert().values(id=10, store_id=8))
+        connection.execute(
+            metadata.tables["prospect_archives"].insert().values(
+                id=10, store_id=8, retailer="Lidl"
+            )
+        )
+
+        monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
+        migration.upgrade()
+
+        assert connection.execute(
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
+        ).scalar_one() == 0
+        assert connection.execute(
+            sa.select(stores.c.name).where(stores.c.id == 16)
+        ).scalar_one() == "Lidl Puderbach"
+
+        for table_name in (
+            "offers",
+            "normal_price_observations",
+            "collection_runs",
+            "collection_quality_snapshots",
+            "prospects",
+            "prospect_archives",
+        ):
+            table = metadata.tables[table_name]
+            assert connection.execute(
+                sa.select(sa.func.count()).select_from(table).where(table.c.store_id == 8)
+            ).scalar_one() == 0
+            assert connection.execute(
+                sa.select(sa.func.count()).select_from(table).where(table.c.store_id == 16)
+            ).scalar_one() == 1
+
+        canonical_state = connection.execute(
+            sa.select(
+                activation.c.lifecycle_status,
+                activation.c.identity_verified,
+                activation.c.last_test_run_id,
+            ).where(activation.c.store_id == 16)
+        ).one()
+        assert canonical_state == ("promoted", True, None)
+
+
 def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -245,6 +356,8 @@ def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
             .values(matched_store_id=None, status="verified")
         )
         connection.execute(stores.delete().where(stores.c.id == 16))
+        # No historic business rows exist in this compatibility state.
+        connection.execute(stores.delete().where(stores.c.id == 8))
 
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
         migration.upgrade()
@@ -277,17 +390,9 @@ def test_repair_recreates_canonical_store_after_previous_rollback(monkeypatch):
             .where(candidates.c.id == 1)
         ).one()
         assert stale == (None, "rejected")
-        state = connection.execute(
-            sa.select(
-                activation.c.store_id,
-                activation.c.lifecycle_status,
-                activation.c.identity_verified,
-            )
-        ).one()
-        assert state == (16, "promoted", True)
 
 
-def test_repair_fails_closed_if_legacy_store_has_business_data(monkeypatch):
+def test_repair_fails_closed_if_legacy_store_has_unknown_business_data(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, business = _schema(
@@ -301,12 +406,30 @@ def test_repair_fails_closed_if_legacy_store_has_business_data(monkeypatch):
         connection.execute(business.insert().values(id=1, store_id=8))
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
 
-        with pytest.raises(RuntimeError, match="business-data dependencies"):
+        with pytest.raises(RuntimeError, match="unknown business-data dependencies"):
             migration.upgrade()
 
         assert connection.execute(
             sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
         ).scalar_one() == 1
+
+
+def test_repair_fails_closed_if_canonical_store_already_has_history(monkeypatch):
+    migration = _load_migration()
+    engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
+    metadata, stores, candidates, activation, _ = _schema()
+    metadata.create_all(engine)
+
+    with engine.begin() as connection:
+        _seed(connection, stores, candidates, activation)
+        connection.execute(metadata.tables["offers"].insert(), [
+            {"id": 1, "store_id": 8},
+            {"id": 2, "store_id": 16},
+        ])
+        monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
+
+        with pytest.raises(RuntimeError, match="already owns business history"):
+            migration.upgrade()
 
 
 def test_repair_fails_closed_without_exact_official_candidate(monkeypatch):
