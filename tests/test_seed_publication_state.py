@@ -1,5 +1,6 @@
 from datetime import datetime
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -41,6 +42,23 @@ def test_seed_does_not_overwrite_existing_publication_decision():
     db.refresh(store)
 
     assert store.benchmark_verified is True
+    db.close()
+
+
+def test_seed_does_not_overwrite_existing_operator_market_identity():
+    db = _db()
+    store = _fellenzer(db, benchmark_verified=False)
+    store.latitude = 50.612345
+    store.longitude = 7.623456
+    store.external_id = "operator-verified-market-id"
+    db.commit()
+
+    seed_stores(db)
+    db.refresh(store)
+
+    assert store.latitude == pytest.approx(50.612345)
+    assert store.longitude == pytest.approx(7.623456)
+    assert store.external_id == "operator-verified-market-id"
     db.close()
 
 
@@ -134,13 +152,24 @@ def test_seed_never_reactivates_manually_suspended_store():
     db.close()
 
 
-def test_new_seed_store_still_uses_bootstrap_verification_default():
+def test_new_seed_store_still_uses_bootstrap_defaults():
     db = _db()
 
     seed_stores(db)
 
     rewe = db.query(Store).filter_by(name="REWE:XL Hundertmark").one()
     edeka = db.query(Store).filter_by(name="EDEKA Fellenzer").one()
+    lidl = db.query(Store).filter_by(name="Lidl Puderbach").one()
+
     assert rewe.benchmark_verified is True
+    assert rewe.external_id == "321019"
+    assert rewe.latitude == pytest.approx(50.5474)
+    assert rewe.longitude == pytest.approx(7.6506)
+
     assert edeka.benchmark_verified is False
+
+    assert lidl.address == "Urbacherstraße L264"
+    assert lidl.latitude == pytest.approx(50.592225)
+    assert lidl.longitude == pytest.approx(7.608542)
+    assert lidl.external_id == "lidl-puderbach-urbacherstr-l264"
     db.close()
