@@ -153,6 +153,12 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^migrations/versions/20260910_01_br1d_product_media_library\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: BR-1D product media library metadata."
+  elif grep -Fxq 'app/sqlite_alembic.py' <<<"$SCHEMA_FILES" \
+    && grep -Fxq 'migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate.py' <<<"$SCHEMA_FILES" \
+    && grep -Fxq 'migrations/versions/20260916_02_correct_lidl_puderbach_legacy_store.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(app/sqlite_alembic\.py|migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate\.py|migrations/versions/20260916_02_correct_lidl_puderbach_legacy_store\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled migration bundle recognized: Lidl Puderbach repair + reviewed Alembic target."
   elif grep -Fxq 'migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate.py' <<<"$SCHEMA_FILES" \
     && ! grep -Evq '^migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
