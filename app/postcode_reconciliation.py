@@ -6,6 +6,7 @@ import unicodedata
 
 from sqlalchemy.orm import Session
 
+from .beta_market_scope import is_beta_retailer
 from .coverage_models import CoveragePostalCode, StoreDiscoveryCandidate
 from .geo import haversine_km
 from .models import Store
@@ -22,13 +23,6 @@ STATUS_PRESENTATION = {
     "source_unavailable": ("Händlerquelle unvollständig", "red"),
     "no_expected_stores": ("Keine erwarteten Märkte", "gray"),
     "no_known_stores": ("Keine Märkte bekannt", "green"),
-}
-
-# Manually audited rollout targets. These override only the expected market
-# count. The visible/found count is still derived from unique physical markets.
-AUDITED_EXPECTED_MARKET_COUNTS: dict[str, int] = {
-    # 2x REWE + Lidl + ALDI SÜD + Netto Marken-Discount
-    "57610": 5,
 }
 
 _GENERIC_MARKET_WORDS = {
@@ -57,6 +51,7 @@ class PostcodeCoverageSummary:
     promoted: int
     missing_expected: int
     additional_discovered: int
+    outside_beta_found: int
     status: str
     status_label: str
     status_color: str
@@ -274,23 +269,24 @@ def reconcile_postcode_coverage(
 ) -> PostcodeCoverageSummary:
     candidates = db.query(StoreDiscoveryCandidate).filter_by(postal_code=postcode.postal_code).all()
     groups = group_physical_candidates(candidates)
+    beta_groups = [group for group in groups if is_beta_retailer(group.representative.retailer)]
+    outside_beta_groups = [group for group in groups if not is_beta_retailer(group.representative.retailer)]
     postcode_stores = db.query(Store).filter(Store.postal_code == postcode.postal_code).all()
+    beta_stores = [store for store in postcode_stores if is_beta_retailer(store.retailer)]
 
-    baseline_expected = sum(group.has_official_source for group in groups)
-    audited_target = AUDITED_EXPECTED_MARKET_COUNTS.get(postcode.postal_code)
-    expected = max(baseline_expected, audited_target) if audited_target is not None else baseline_expected
-    found = len(groups)
+    expected = sum(group.has_official_source for group in beta_groups)
+    found = len(beta_groups)
 
-    address_verified = sum(any(row.address_verified for row in group.members) for group in groups)
-    coordinates_verified = sum(any(row.coordinates_verified for row in group.members) for group in groups)
+    address_verified = sum(any(row.address_verified for row in group.members) for group in beta_groups)
+    coordinates_verified = sum(any(row.coordinates_verified for row in group.members) for group in beta_groups)
     official_verified = sum(
         any(row.official_source_verified or row.source.startswith("official:") for row in group.members)
-        for group in groups
+        for group in beta_groups
     )
-    existing_store_ids = {store.id for store in postcode_stores}
+    existing_store_ids = {store.id for store in beta_stores}
     promoted = sum(
         _group_is_explicitly_promoted(group, existing_store_ids)
-        for group in groups
+        for group in beta_groups
     )
 
     missing_expected = max(0, expected - found)
@@ -306,10 +302,10 @@ def reconcile_postcode_coverage(
         status = "disabled"
     elif missing_expected:
         status = "incomplete"
-    elif expected == 0 and found == 0 and not postcode_stores:
+    elif expected == 0 and found == 0 and not beta_stores:
         status = "no_known_stores"
     elif (
-        (found == 0 and bool(postcode_stores))
+        (found == 0 and bool(beta_stores))
         or address_verified < found
         or coordinates_verified < found
         or official_verified < found
@@ -332,6 +328,7 @@ def reconcile_postcode_coverage(
         promoted=promoted,
         missing_expected=missing_expected,
         additional_discovered=additional_discovered,
+        outside_beta_found=len(outside_beta_groups),
         status=status,
         status_label=label,
         status_color=color,

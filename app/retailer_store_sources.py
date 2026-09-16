@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from .candidate_source_refresh import refresh_candidate_from_source
 from .coverage_models import StoreDiscoveryCandidate
+from .models import Store
+from .postcode_coverage_service import addresses_match
 
 
 SUPPORTED_RETAILERS: tuple[str, ...] = (
@@ -27,8 +29,8 @@ class RetailerStoreRecord:
     address: str
     postal_code: str
     city: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
     external_id: str | None
     source_url: str
     source_identifier: str
@@ -123,6 +125,68 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         source_identifier="rewe-market-240052",
     ),
     RetailerStoreRecord(
+        retailer="REWE",
+        name="REWE Dennis Weirich",
+        address="Kirschbüchel 2",
+        postal_code="56587",
+        city="Straßenhaus",
+        # Existing reviewed bootstrap/collection identity; REWE's market page
+        # confirms the address and ID but does not publish a coordinate pair.
+        latitude=50.5407,
+        longitude=7.5187,
+        external_id="1940425",
+        source_url="https://www.rewe.de/marktseite/strassenhaus/1940425/rewe-markt-kirschbuechel-2/",
+        source_identifier="rewe-market-1940425",
+    ),
+    RetailerStoreRecord(
+        retailer="REWE",
+        name="REWE Brotweg 1",
+        address="Brotweg 1",
+        postal_code="65606",
+        city="Villmar",
+        latitude=None,
+        longitude=None,
+        external_id="241184",
+        source_url="https://www.rewe.de/marktseite/villmar/241184/rewe-markt-brotweg-1/",
+        source_identifier="rewe-market-241184",
+    ),
+    RetailerStoreRecord(
+        retailer="REWE",
+        name="REWE In den Wallgärten 1",
+        address="In den Wallgärten 1",
+        postal_code="65611",
+        city="Brechen",
+        latitude=None,
+        longitude=None,
+        external_id="240076",
+        source_url="https://www.rewe.de/marktseite/brechen-niederbrechen/240076/rewe-markt-in-den-wallgaerten-1/",
+        source_identifier="rewe-market-240076",
+    ),
+    # ALDI SÜD's official environmental declaration lists these branches but
+    # does not publish a retailer branch ID or coordinates.  Coordinates are
+    # therefore resolved from an existing matching Store/Candidate at staging
+    # time and the external ID intentionally remains NULL.
+    *(
+        RetailerStoreRecord(
+            retailer="ALDI SÜD",
+            name=f"ALDI SÜD {city}",
+            address=address,
+            postal_code=postal_code,
+            city=city,
+            latitude=None,
+            longitude=None,
+            external_id=None,
+            source_url="https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            source_identifier=f"aldi-sued-{postal_code}-{slug}",
+        )
+        for postal_code, city, address, slug in (
+            ("56269", "Dierdorf", "Königsberger Straße 50", "koenigsberger-strasse-50"),
+            ("56587", "Oberhonnefeld-Gierend", "Über dem Stellweg 5", "ueber-dem-stellweg-5"),
+            ("57610", "Altenkirchen", "Kölner Straße 30a", "koelner-strasse-30a"),
+            ("65611", "Brechen", "Kapellenstraße 88", "kapellenstrasse-88"),
+        )
+    ),
+    RetailerStoreRecord(
         retailer="Lidl",
         name="Lidl Puderbach",
         address="Urbacherstraße L264",
@@ -194,6 +258,50 @@ def _official_candidate_key(adapter_key: str, record: RetailerStoreRecord) -> st
     return sha256(raw).hexdigest()
 
 
+def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float, float]:
+    """Resolve missing official coordinates from existing local identity data.
+
+    Curated identity data must not invent a pin.  We accept a unique coordinate
+    pair from the same retailer/postcode, preferring exact external ID/address
+    matches.  Ambiguous or missing evidence aborts the refresh transaction.
+    """
+    if record.latitude is not None and record.longitude is not None:
+        return float(record.latitude), float(record.longitude)
+
+    candidates = db.query(StoreDiscoveryCandidate).filter(
+        StoreDiscoveryCandidate.retailer == record.retailer,
+        StoreDiscoveryCandidate.postal_code == record.postal_code,
+        StoreDiscoveryCandidate.status != "rejected",
+    ).all()
+    stores = db.query(Store).filter(
+        Store.retailer == record.retailer,
+        Store.postal_code == record.postal_code,
+    ).all()
+
+    exact = [
+        row for row in [*candidates, *stores]
+        if (
+            record.external_id
+            and getattr(row, "source_external_id", None) == record.external_id
+        )
+        or (record.external_id and getattr(row, "external_id", None) == record.external_id)
+        or addresses_match(getattr(row, "address", None), record.address)
+    ]
+    evidence = exact or [*candidates, *stores]
+    coordinate_pairs = {
+        (float(row.latitude), float(row.longitude))
+        for row in evidence
+        if row.latitude is not None and row.longitude is not None
+    }
+    if len(coordinate_pairs) != 1:
+        raise RuntimeError(
+            "Official source has no unique reviewed coordinate evidence for "
+            f"{record.retailer} {record.postal_code} {record.address!r}; "
+            f"found {len(coordinate_pairs)} coordinate pairs"
+        )
+    return next(iter(coordinate_pairs))
+
+
 def stage_official_store_candidates(
     db: Session,
     postal_code: str,
@@ -210,16 +318,18 @@ def stage_official_store_candidates(
                 continue
             key = _official_candidate_key(adapter.key, record)
             row = db.query(StoreDiscoveryCandidate).filter_by(discovery_key=key).first()
+            latitude, longitude = _record_coordinates(db, record)
             values = {
                 "postal_code": record.postal_code,
                 "retailer": record.retailer,
                 "name": record.name,
                 "address": record.address,
                 "city": record.city,
-                "latitude": record.latitude,
-                "longitude": record.longitude,
+                "latitude": latitude,
+                "longitude": longitude,
                 "source": f"official:{adapter.key}",
-                "source_external_id": record.external_id or record.source_identifier,
+                # source_identifier is internal provenance, never a retailer ID.
+                "source_external_id": record.external_id,
                 "source_url": record.source_url,
             }
             if row is None:

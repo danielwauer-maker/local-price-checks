@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .admin_routes import _admin
 from .admin_collector_routes import _run_store_collection_background
+from .beta_market_scope import BETA_RETAILERS, is_beta_retailer
 from .coverage_models import CoveragePostalCode, CoverageRegion, StoreDiscoveryCandidate
 from .coverage_service import coverage_payload, region_center, stores_in_region, upsert_discovered_stores
 from .db import get_db
@@ -230,6 +231,8 @@ def coverage_admin(request: Request, result: str = "", db: Session = Depends(get
         "osm_attribution": OSM_ATTRIBUTION,
         "osm_license_url": OSM_LICENSE_URL,
         "candidate_ready_for_promotion": candidate_ready_for_promotion,
+        "beta_retailers": BETA_RETAILERS,
+        "is_beta_retailer": is_beta_retailer,
         "result": result,
     })
 
@@ -298,8 +301,10 @@ def discover_postcode(postal_code: str, db: Session = Depends(get_db), actor: st
     if postcode is None or not postcode.enabled:
         raise HTTPException(400, "PLZ ist nicht freigegeben")
     try:
-        official_created, official_updated, _ = stage_official_store_candidates(db, postal_code)
+        # Refresh discovery first so curated sources without published pins can
+        # reuse unique, current local coordinate evidence in the same action.
         created, updated = stage_postcode_candidates(db, postal_code)
+        official_created, official_updated, _ = stage_official_store_candidates(db, postal_code)
         result = (
             f"postcode-discover:{postal_code}:osm-new={created}:osm-updated={updated}:"
             f"official-new={official_created}:official-updated={official_updated}"

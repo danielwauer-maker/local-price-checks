@@ -21,7 +21,7 @@ def _db():
     return sessionmaker(bind=engine, future=True)()
 
 
-def _candidate(key: str, *, retailer: str = "Lidl", address: str = "Urbacher Straße 31a", **overrides):
+def _candidate(key: str, *, retailer: str = "EDEKA", address: str = "Urbacher Straße 31a", **overrides):
     values = {
         "discovery_key": key,
         "postal_code": "56305",
@@ -69,8 +69,8 @@ def test_fully_verified_postcode_is_not_downgraded_by_adapter_health():
         status="promoted",
     )
     store = Store(
-        retailer="Lidl",
-        name="Lidl Puderbach",
+        retailer="EDEKA",
+        name="EDEKA Puderbach",
         postal_code="56305",
         city="Puderbach",
         address="Urbacher Straße 31a",
@@ -111,8 +111,8 @@ def test_matching_legacy_store_does_not_count_as_promoted_without_explicit_candi
         status="verified",
     )
     legacy_store = Store(
-        retailer="Lidl",
-        name="Lidl Puderbach",
+        retailer="EDEKA",
+        name="EDEKA Puderbach",
         postal_code="56305",
         city="Puderbach",
         address="Urbacher Straße 31a",
@@ -217,3 +217,6 @@ def test_coverage_activation_ui_explains_next_steps_and_uses_found_as_promotion_
     assert "Nächster Schritt: Quality Gate prüfen." in template
     assert "Nächster Schritt: Markt veröffentlichen." in template
     assert "Promoted: ${p.promoted}/${p.found}" in template
+    assert "Beta-Zielmarkt" in template
+    assert "Außerhalb Beta" in template
+    assert "Beta-Onboarding-Kennzahlen" in template
