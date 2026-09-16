@@ -345,6 +345,7 @@ def stage_official_store_candidates(
         for record in result.stores:
             if record.postal_code != postal_code:
                 continue
+            action: str | None = None
             try:
                 with db.begin_nested():
                     key = _official_candidate_key(adapter.key, record)
@@ -374,7 +375,7 @@ def stage_official_store_candidates(
                             **values,
                         )
                         db.add(row)
-                        created += 1
+                        action = "created"
                     else:
                         refresh_candidate_from_source(
                             row,
@@ -382,8 +383,12 @@ def stage_official_store_candidates(
                             reset_verification_on_identity_change=True,
                         )
                         row.official_source_verified = True
-                        updated += 1
+                        action = "updated"
                     db.flush()
+                if action == "created":
+                    created += 1
+                elif action == "updated":
+                    updated += 1
             except Exception as exc:
                 issues.setdefault(result.retailer, []).append(
                     f"{record.source_identifier}: {type(exc).__name__}: {exc}"
