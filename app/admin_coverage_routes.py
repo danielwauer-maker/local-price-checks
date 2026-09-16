@@ -300,18 +300,44 @@ def discover_postcode(postal_code: str, db: Session = Depends(get_db), actor: st
     postcode = db.query(CoveragePostalCode).filter_by(postal_code=postal_code).first()
     if postcode is None or not postcode.enabled:
         raise HTTPException(400, "PLZ ist nicht freigegeben")
+
+    # OSM refresh and curated official staging are independent evidence sources.
+    # A temporary discovery failure must never prevent already-reviewed official
+    # retailer records from being staged. Each phase therefore owns its own
+    # rollback boundary and diagnostic status.
+    created = updated = 0
+    osm_error: str | None = None
     try:
-        # Refresh discovery first so curated sources without published pins can
-        # reuse unique, current local coordinate evidence in the same action.
         created, updated = stage_postcode_candidates(db, postal_code)
-        official_created, official_updated, _ = stage_official_store_candidates(db, postal_code)
-        result = (
-            f"postcode-discover:{postal_code}:osm-new={created}:osm-updated={updated}:"
-            f"official-new={official_created}:official-updated={official_updated}"
-        )
     except Exception as exc:
         db.rollback()
-        result = f"postcode-discover:{postal_code}:failed={type(exc).__name__}"
+        osm_error = type(exc).__name__
+
+    official_created = official_updated = 0
+    official_error: str | None = None
+    official_partial = 0
+    try:
+        official_created, official_updated, source_results = stage_official_store_candidates(db, postal_code)
+        official_partial = sum(result.status == "partial_failure" for result in source_results)
+    except Exception as exc:
+        db.rollback()
+        official_error = type(exc).__name__
+
+    parts = [f"postcode-discover:{postal_code}"]
+    if osm_error:
+        parts.append(f"osm-failed={osm_error}")
+    else:
+        parts.extend((f"osm-new={created}", f"osm-updated={updated}"))
+    if official_error:
+        parts.append(f"official-failed={official_error}")
+    else:
+        parts.extend((
+            f"official-new={official_created}",
+            f"official-updated={official_updated}",
+        ))
+        if official_partial:
+            parts.append(f"official-partial={official_partial}")
+    result = ":".join(parts)
     return RedirectResponse(f"/admin/coverage?result={result}", status_code=303)
 
 
