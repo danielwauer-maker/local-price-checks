@@ -46,6 +46,9 @@ def _schema(*, with_business_reference: bool = False):
         sa.Column("address", sa.String(255)),
         sa.Column("source_external_id", sa.String(255)),
         sa.Column("status", sa.String(30)),
+        sa.Column("address_verified", sa.Boolean, nullable=False, default=False),
+        sa.Column("coordinates_verified", sa.Boolean, nullable=False, default=False),
+        sa.Column("official_source_verified", sa.Boolean, nullable=False, default=False),
         sa.Column("updated_at", sa.DateTime),
     )
     activation = sa.Table(
@@ -107,6 +110,9 @@ def _seed(connection, stores, candidates, activation):
                 "address": "Urbacher Straße 31a",
                 "source_external_id": "node/123",
                 "status": "promoted",
+                "address_verified": True,
+                "coordinates_verified": True,
+                "official_source_verified": True,
             },
             {
                 "id": 2,
@@ -116,15 +122,9 @@ def _seed(connection, stores, candidates, activation):
                 "address": "Urbacherstraße L264",
                 "source_external_id": "lidl-puderbach-urbacherstr-l264",
                 "status": "promoted",
-            },
-            {
-                "id": 3,
-                "matched_store_id": 8,
-                "retailer": "Lidl",
-                "postal_code": "56305",
-                "address": "Urbacher Straße 31a",
-                "source_external_id": "legacy-map-row",
-                "status": "verified",
+                "address_verified": True,
+                "coordinates_verified": True,
+                "official_source_verified": True,
             },
         ],
     )
@@ -149,7 +149,7 @@ def _seed(connection, stores, candidates, activation):
     )
 
 
-def test_duplicate_store_is_removed_and_workflow_evidence_is_relinked(monkeypatch):
+def test_accidental_store_is_removed_and_candidates_return_to_pre_promotion_state(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, _ = _schema()
@@ -163,18 +163,19 @@ def test_duplicate_store_is_removed_and_workflow_evidence_is_relinked(monkeypatc
         remaining = connection.execute(
             sa.select(stores.c.id).order_by(stores.c.id)
         ).scalars().all()
-        assert remaining == [16]
-        candidate_links = connection.execute(
-            sa.select(candidates.c.matched_store_id).order_by(candidates.c.id)
-        ).scalars().all()
-        assert candidate_links == [16, 16, 16]
+        assert remaining == [8]
+        candidate_rows = connection.execute(
+            sa.select(candidates.c.matched_store_id, candidates.c.status)
+            .order_by(candidates.c.id)
+        ).all()
+        assert candidate_rows == [(None, "verified"), (None, "verified")]
         activation_links = connection.execute(
             sa.select(activation.c.store_id).order_by(activation.c.store_id)
         ).scalars().all()
-        assert activation_links == [16]
+        assert activation_links == [8]
 
 
-def test_duplicate_repair_fails_closed_on_business_data_dependency(monkeypatch):
+def test_rollback_fails_closed_on_business_data_dependency(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, business = _schema(
@@ -185,18 +186,18 @@ def test_duplicate_repair_fails_closed_on_business_data_dependency(monkeypatch):
 
     with engine.begin() as connection:
         _seed(connection, stores, candidates, activation)
-        connection.execute(business.insert().values(id=1, store_id=8))
+        connection.execute(business.insert().values(id=1, store_id=16))
         monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
 
         with pytest.raises(RuntimeError, match="business-data dependencies"):
             migration.upgrade()
 
         assert connection.execute(
-            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 16)
         ).scalar_one() == 1
 
 
-def test_duplicate_repair_requires_concrete_physical_identity_evidence(monkeypatch):
+def test_rollback_requires_concrete_physical_identity_evidence(monkeypatch):
     migration = _load_migration()
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     metadata, stores, candidates, activation, _ = _schema()
@@ -215,5 +216,5 @@ def test_duplicate_repair_requires_concrete_physical_identity_evidence(monkeypat
             migration.upgrade()
 
         assert connection.execute(
-            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 8)
+            sa.select(sa.func.count()).select_from(stores).where(stores.c.id == 16)
         ).scalar_one() == 1
