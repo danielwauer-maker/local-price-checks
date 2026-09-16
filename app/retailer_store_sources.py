@@ -5,6 +5,7 @@ from hashlib import sha256
 import math
 from typing import Iterable, Protocol
 
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .candidate_source_refresh import refresh_candidate_from_source
@@ -166,9 +167,11 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         source_identifier="rewe-market-240076",
     ),
     # ALDI SÜD's official environmental declaration lists these branches but
-    # does not publish a retailer branch ID or coordinates.  Coordinates are
-    # therefore resolved from an existing matching Store/Candidate at staging
-    # time and the external ID intentionally remains NULL.
+    # does not publish a retailer branch ID or coordinates. Coordinates are
+    # therefore resolved from reviewed local evidence at staging time and the
+    # external ID intentionally remains NULL. Where a concrete official branch
+    # page is known, keep that stronger identity provenance on the record; the
+    # page confirms branch/address identity, not the coordinate pair itself.
     *(
         RetailerStoreRecord(
             retailer="ALDI SÜD",
@@ -179,14 +182,38 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
             latitude=None,
             longitude=None,
             external_id=None,
-            source_url="https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            source_url=source_url,
             source_identifier=f"aldi-sued-{postal_code}-{slug}",
         )
-        for postal_code, city, address, slug in (
-            ("56269", "Dierdorf", "Königsberger Straße 50", "koenigsberger-strasse-50"),
-            ("56587", "Oberhonnefeld-Gierend", "Über dem Stellweg 5", "ueber-dem-stellweg-5"),
-            ("57610", "Altenkirchen", "Kölner Straße 30a", "koelner-strasse-30a"),
-            ("65611", "Brechen", "Kapellenstraße 88", "kapellenstrasse-88"),
+        for postal_code, city, address, slug, source_url in (
+            (
+                "56269",
+                "Dierdorf",
+                "Königsberger Straße 50",
+                "koenigsberger-strasse-50",
+                "https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            ),
+            (
+                "56587",
+                "Oberhonnefeld-Gierend",
+                "Über dem Stellweg 5",
+                "ueber-dem-stellweg-5",
+                "https://filialen.aldi-sued.de/rheinland-pfalz/oberhonnefeld-gierend/ueber-dem-stellweg-5",
+            ),
+            (
+                "57610",
+                "Altenkirchen",
+                "Kölner Straße 30a",
+                "koelner-strasse-30a",
+                "https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            ),
+            (
+                "65611",
+                "Brechen",
+                "Kapellenstraße 88",
+                "kapellenstrasse-88",
+                "https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            ),
         )
     ),
     RetailerStoreRecord(
@@ -261,15 +288,48 @@ def _official_candidate_key(adapter_key: str, record: RetailerStoreRecord) -> st
     return sha256(raw).hexdigest()
 
 
+def _unique_coordinates(
+    rows: Iterable[Store | StoreDiscoveryCandidate],
+    *,
+    record: RetailerStoreRecord,
+    evidence_label: str,
+) -> tuple[float, float] | None:
+    coordinate_pairs = [
+        (float(row.latitude), float(row.longitude))
+        for row in rows
+        if row.latitude is not None and row.longitude is not None
+    ]
+    if not coordinate_pairs:
+        return None
+
+    preferred = coordinate_pairs[0]
+    if all(
+        math.isclose(lat, preferred[0], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+        and math.isclose(lon, preferred[1], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
+        for lat, lon in coordinate_pairs[1:]
+    ):
+        return preferred
+
+    raise RuntimeError(
+        "Official source has no unique reviewed coordinate evidence for "
+        f"{record.retailer} {record.postal_code} {record.address!r} "
+        f"at tier {evidence_label}; conflicting {len(coordinate_pairs)} coordinate rows"
+    )
+
+
 def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float, float]:
     """Resolve missing official coordinates from reviewed local identity data.
 
-    Curated identity data must not invent a pin. Strong evidence is an exact
-    retailer ID, an exact reviewed address, or (for records with a real retailer
-    ID) the same store-specific official source URL. Store rows are preferred
-    over discovery rows so an already published Store keeps its canonical pin.
-    Sub-meter float precision drift is treated as one coordinate observation;
-    genuinely conflicting pins still fail closed.
+    Curated source data must never invent a pin. Evidence is first restricted to
+    the concrete physical identity (retailer ID, exact reviewed address or a
+    store-specific official URL when a real retailer ID exists). Within that
+    identity, already public/benchmark-verified Stores stay canonical.
+
+    A reviewed/locked candidate is next strongest. A current discovery candidate
+    that matches both the exact address and the same store-specific official URL
+    may outrank an inactive, unverified legacy Store: the URL corroborates which
+    branch the candidate represents, while its coordinates still come from the
+    discovery row. Conflicts inside the selected evidence tier remain fail-closed.
     """
     if record.latitude is not None and record.longitude is not None:
         return float(record.latitude), float(record.longitude)
@@ -284,42 +344,88 @@ def _record_coordinates(db: Session, record: RetailerStoreRecord) -> tuple[float
         Store.postal_code == record.postal_code,
     ).all()
 
-    rows = [*stores, *candidates]
     record_source_url = (record.source_url or "").strip()
-    exact = [
-        row for row in rows
+
+    def identity_match(row: Store | StoreDiscoveryCandidate) -> bool:
+        return bool(
+            (
+                record.external_id
+                and getattr(row, "source_external_id", None) == record.external_id
+            )
+            or (
+                record.external_id
+                and getattr(row, "external_id", None) == record.external_id
+            )
+            or addresses_match(getattr(row, "address", None), record.address)
+            or (
+                record.external_id
+                and record_source_url
+                and (getattr(row, "source_url", None) or "").strip() == record_source_url
+            )
+        )
+
+    exact_stores = [row for row in stores if identity_match(row)]
+    exact_candidates = [row for row in candidates if identity_match(row)]
+    if not exact_stores and not exact_candidates:
+        raise RuntimeError(
+            "Official source has no unique reviewed coordinate evidence for "
+            f"{record.retailer} {record.postal_code} {record.address!r}; no identity-matched rows"
+        )
+
+    canonical_stores = [
+        row for row in exact_stores
+        if bool(row.benchmark_verified)
+    ]
+    accepted_candidates = [
+        row for row in exact_candidates
         if (
-            record.external_id
-            and getattr(row, "source_external_id", None) == record.external_id
-        )
-        or (record.external_id and getattr(row, "external_id", None) == record.external_id)
-        or addresses_match(getattr(row, "address", None), record.address)
-        or (
-            record.external_id
-            and record_source_url
-            and (getattr(row, "source_url", None) or "").strip() == record_source_url
+            row.matched_store_id is not None
+            or row.status in {"verified", "promoted"}
+            or row.address_verified
+            or row.coordinates_verified
         )
     ]
-    evidence = exact or rows
-    coordinate_pairs = [
-        (float(row.latitude), float(row.longitude))
-        for row in evidence
-        if row.latitude is not None and row.longitude is not None
+    source_confirmed_candidates = [
+        row for row in exact_candidates
+        if (
+            record_source_url
+            and (row.source_url or "").strip() == record_source_url
+            and addresses_match(row.address, record.address)
+        )
     ]
-    if coordinate_pairs:
-        preferred = coordinate_pairs[0]
-        if all(
-            math.isclose(lat, preferred[0], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
-            and math.isclose(lon, preferred[1], rel_tol=0.0, abs_tol=_COORDINATE_EVIDENCE_TOLERANCE)
-            for lat, lon in coordinate_pairs[1:]
-        ):
-            return preferred
+
+    for label, evidence in (
+        ("canonical_store", canonical_stores),
+        ("accepted_candidate", accepted_candidates),
+        ("source_confirmed_candidate", source_confirmed_candidates),
+        ("identity_match", [*exact_stores, *exact_candidates]),
+    ):
+        resolved = _unique_coordinates(
+            evidence,
+            record=record,
+            evidence_label=label,
+        )
+        if resolved is not None:
+            return resolved
 
     raise RuntimeError(
         "Official source has no unique reviewed coordinate evidence for "
-        f"{record.retailer} {record.postal_code} {record.address!r}; "
-        f"found {len(coordinate_pairs)} coordinate rows"
+        f"{record.retailer} {record.postal_code} {record.address!r}; no coordinate rows"
     )
+
+
+def _safe_staging_error(exc: Exception) -> str:
+    """Return an operator-useful staging error without leaking SQL or parameters."""
+    if isinstance(exc, IntegrityError):
+        return "IntegrityError: Datenbank-Constraint verletzt"
+    if isinstance(exc, SQLAlchemyError):
+        return f"{type(exc).__name__}: Datenbankfehler"
+    message = str(exc).strip()
+    if isinstance(exc, RuntimeError) and message.startswith("Official source has "):
+        return f"RuntimeError: {message}"
+    if isinstance(exc, ValueError) and message:
+        return f"ValueError: {message[:240]}"
+    return type(exc).__name__
 
 
 def stage_official_store_candidates(
@@ -345,6 +451,7 @@ def stage_official_store_candidates(
         for record in result.stores:
             if record.postal_code != postal_code:
                 continue
+            staged_action: str | None = None
             try:
                 with db.begin_nested():
                     key = _official_candidate_key(adapter.key, record)
@@ -374,7 +481,7 @@ def stage_official_store_candidates(
                             **values,
                         )
                         db.add(row)
-                        created += 1
+                        staged_action = "created"
                     else:
                         refresh_candidate_from_source(
                             row,
@@ -382,11 +489,15 @@ def stage_official_store_candidates(
                             reset_verification_on_identity_change=True,
                         )
                         row.official_source_verified = True
-                        updated += 1
+                        staged_action = "updated"
                     db.flush()
+                if staged_action == "created":
+                    created += 1
+                elif staged_action == "updated":
+                    updated += 1
             except Exception as exc:
                 issues.setdefault(result.retailer, []).append(
-                    f"{record.source_identifier}: {type(exc).__name__}: {exc}"
+                    f"{record.name} [{record.source_identifier}]: {_safe_staging_error(exc)}"
                 )
 
     db.commit()
