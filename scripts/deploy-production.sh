@@ -153,6 +153,10 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     && ! grep -Evq '^migrations/versions/20260910_01_br1d_product_media_library\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled schema release recognized: BR-1D product media library metadata."
+  elif grep -Fxq 'migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^migrations/versions/20260916_01_reconcile_lidl_puderbach_duplicate\.py$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled data repair recognized: roll back accidental Lidl Puderbach promotion."
   else
     echo "ERROR: database/schema-related change detected outside the approved controlled release."
     printf '%s\n' "$SCHEMA_FILES"
