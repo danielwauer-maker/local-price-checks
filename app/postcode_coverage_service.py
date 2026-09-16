@@ -326,7 +326,12 @@ def candidate_ready_for_promotion(candidate: StoreDiscoveryCandidate) -> bool:
 
 
 def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
-    """Create/update a Store only after all identity gates have passed."""
+    """Create/update a Store only after all identity gates have passed.
+
+    Promotion is a physical-market operation, not a single-source-row operation.
+    If an existing Store already matches another source row in the same physical
+    candidate group, reuse that Store instead of creating a duplicate.
+    """
     candidate = db.get(StoreDiscoveryCandidate, candidate_id)
     if candidate is None:
         raise ValueError("Marktkandidat nicht gefunden")
@@ -339,7 +344,54 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
     if conflict.blocked:
         raise ValueError(conflict.reason or "Möglicher physischer Doppelmarkt")
 
+    # Local import avoids a module cycle: postcode_reconciliation imports the
+    # normalization helpers from this module.
+    from .postcode_reconciliation import group_physical_candidates, store_matches_candidate
+
+    postcode_candidates = db.query(StoreDiscoveryCandidate).filter_by(
+        postal_code=candidate.postal_code
+    ).all()
+    physical_members = [candidate]
+    for group in group_physical_candidates(postcode_candidates):
+        if any(member.id == candidate.id for member in group.members):
+            physical_members = group.members
+            break
+
     store = db.get(Store, candidate.matched_store_id) if candidate.matched_store_id else None
+    if store is None:
+        explicit_ids = {
+            member.matched_store_id
+            for member in physical_members
+            if member.matched_store_id is not None
+        }
+        explicit_stores = [
+            row for row in db.query(Store).filter(Store.id.in_(explicit_ids)).all()
+        ] if explicit_ids else []
+        if len(explicit_stores) > 1:
+            raise ValueError("Mehrdeutige Store-Zuordnung im selben physischen Markt")
+        if explicit_stores:
+            store = explicit_stores[0]
+
+    if store is None:
+        postcode_stores = db.query(Store).filter(
+            Store.retailer == candidate.retailer,
+            Store.postal_code == candidate.postal_code,
+        ).all()
+        physical_matches = [
+            row
+            for row in postcode_stores
+            if any(store_matches_candidate(row, member) for member in physical_members)
+        ]
+        if len(physical_matches) > 1:
+            raise ValueError(
+                "Mehrere bestehende Stores passen zu diesem physischen Markt; "
+                "bitte Marktidentitäten zuerst bereinigen"
+            )
+        if physical_matches:
+            store = physical_matches[0]
+
+    # Keep the historical single-row matching as a conservative fallback for
+    # data sets where no secondary discovery member exists.
     if store is None and candidate.source_external_id:
         store = db.query(Store).filter(
             Store.retailer == candidate.retailer,
@@ -408,9 +460,16 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
         if not store.source_url:
             store.source_url = candidate.source_url
 
+    now = datetime.utcnow()
+    for member in physical_members:
+        member.matched_store_id = store.id
+        if candidate_ready_for_promotion(member):
+            member.status = "promoted"
+        member.updated_at = now
+
     candidate.matched_store_id = store.id
     candidate.status = "promoted"
-    candidate.updated_at = datetime.utcnow()
+    candidate.updated_at = now
     from .market_activation import register_promoted_store
 
     register_promoted_store(db, store, candidate)
