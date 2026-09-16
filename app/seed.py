@@ -10,23 +10,32 @@ STORES = [
     ("ALDI SÜD", "ALDI SÜD Dierdorf", "56269", "Dierdorf", "Königsberger Str. 50", 50.5490, 7.6558, True, None),
     ("ALDI SÜD", "ALDI SÜD Oberhonnefeld-Gierend", "56587", "Oberhonnefeld-Gierend", "Über dem Stellweg 5", 50.5550, 7.5200, True, None),
     ("EDEKA", "EDEKA Fellenzer", "56305", "Puderbach", "Urbacher Str. 35", 50.6000, 7.6110, False, "071378"),
-    ("Lidl", "Lidl Puderbach", "56305", "Puderbach", "Urbacher Straße L264", 50.5980, 7.6150, False, None),
+    (
+        "Lidl",
+        "Lidl Puderbach",
+        "56305",
+        "Puderbach",
+        "Urbacherstraße L264",
+        50.592225,
+        7.608542,
+        False,
+        "lidl-puderbach-urbacherstr-l264",
+    ),
 ]
 
 
 def seed_stores(db):
-    """Seed initial demo stores without overwriting operator publication decisions.
+    """Seed bootstrap stores without mutating established market identity.
 
-    ``verified`` is only a bootstrap default for a newly created store. Existing
-    stores may have passed the activation/quality workflow since the original
-    seed was written, so startup must never reset ``benchmark_verified`` from
-    this static list.
+    Static seed data is only authoritative when a store is first created. Once
+    a store exists, operator/discovery workflows own its physical identity,
+    including coordinates and external retailer IDs. Startup must therefore not
+    overwrite those fields from this bootstrap list.
 
-    Older versions did exactly that. Recover only a narrow, auditable legacy
-    inconsistency for stores that have durable proof of a previous explicit
-    publication. ``published_at`` is that proof. A store that merely passed the
-    quality gate but was never explicitly published must stay unpublished.
-    Manually suspended or inactive markets are never re-enabled by this repair.
+    Existing stores may still need one narrow compatibility repair for an old
+    publication-state bug. ``published_at`` is durable proof that publication
+    happened explicitly; only that lifecycle projection is repaired here.
+    Manually suspended or inactive markets are never re-enabled.
     """
     # Local import avoids making the lightweight seed module responsible for
     # market-activation model registration during module import.
@@ -42,14 +51,13 @@ def seed_stores(db):
                 postal_code=pc,
                 city=city,
                 address=address,
+                latitude=lat,
+                longitude=lon,
+                external_id=external_id,
                 benchmark_verified=verified,
             )
             db.add(store)
             db.flush()
-
-        store.latitude = lat
-        store.longitude = lon
-        store.external_id = external_id
 
         if not created:
             state = activation_state(db, store.id)
