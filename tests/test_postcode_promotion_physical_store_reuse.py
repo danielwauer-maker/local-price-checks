@@ -44,7 +44,7 @@ def _candidate(
     )
 
 
-def test_conflicting_specific_sibling_address_does_not_reuse_legacy_store():
+def test_promotion_reuses_store_matching_sibling_source_of_same_physical_market():
     db = _db()
     official = _candidate(
         "official",
@@ -53,7 +53,7 @@ def test_conflicting_specific_sibling_address_does_not_reuse_legacy_store():
         address="Urbacherstraße L264",
         lat=50.592225,
     )
-    weak_osm = _candidate(
+    osm = _candidate(
         "osm",
         source="osm",
         external_id="node/123",
@@ -72,32 +72,24 @@ def test_conflicting_specific_sibling_address_does_not_reuse_legacy_store():
         benchmark_verified=False,
         external_id="node/123",
     )
-    db.add_all([official, weak_osm, legacy_store])
+    db.add_all([official, osm, legacy_store])
     db.commit()
     legacy_id = legacy_store.id
 
-    groups = group_physical_candidates([official, weak_osm])
-    assert len(groups) == 2
-
     promoted = promote_candidate_to_store(db, official.id)
 
-    assert promoted.id != legacy_id
-    assert promoted.address == "Urbacherstraße L264"
-    assert promoted.external_id == "lidl-puderbach-urbacherstr-l264"
-    assert db.query(Store).count() == 2
-
-    db.refresh(legacy_store)
+    assert promoted.id == legacy_id
+    assert db.query(Store).count() == 1
     db.refresh(official)
-    db.refresh(weak_osm)
-    assert legacy_store.address == "Urbacher Straße 31a"
-    assert official.matched_store_id == promoted.id
+    db.refresh(osm)
+    assert official.matched_store_id == legacy_id
     assert official.status == "promoted"
-    assert weak_osm.matched_store_id is None
-    assert weak_osm.status == "verified"
+    assert osm.matched_store_id == legacy_id
     db.close()
 
 
-def test_rejected_secondary_candidate_does_not_participate_in_physical_grouping():
+def test_rejected_wrong_sibling_is_excluded_and_cannot_reuse_legacy_store():
+    db = _db()
     official = _candidate(
         "official",
         source="official:lidl",
@@ -105,19 +97,44 @@ def test_rejected_secondary_candidate_does_not_participate_in_physical_grouping(
         address="Urbacherstraße L264",
         lat=50.592225,
     )
-    rejected = _candidate(
+    rejected_osm = _candidate(
         "osm",
         source="osm",
         external_id="node/123",
-        address="Urbacherstraße L264",
-        lat=50.592225,
+        address="Urbacher Straße 31a",
+        lat=50.592267,
         status="rejected",
     )
+    legacy_store = Store(
+        retailer="Lidl",
+        name="Lidl Puderbach",
+        postal_code="56305",
+        city="Puderbach",
+        address="Urbacher Straße 31a",
+        latitude=50.592267,
+        longitude=7.6085,
+        active=True,
+        benchmark_verified=False,
+        external_id="node/123",
+    )
+    db.add_all([official, rejected_osm, legacy_store])
+    db.commit()
+    legacy_id = legacy_store.id
 
-    groups = group_physical_candidates([official, rejected])
-
+    groups = group_physical_candidates([official, rejected_osm])
     assert len(groups) == 1
     assert groups[0].members == [official]
+
+    promoted = promote_candidate_to_store(db, official.id)
+
+    assert promoted.id != legacy_id
+    assert promoted.address == "Urbacherstraße L264"
+    assert promoted.external_id == "lidl-puderbach-urbacherstr-l264"
+    assert db.query(Store).count() == 2
+    db.refresh(rejected_osm)
+    assert rejected_osm.matched_store_id is None
+    assert rejected_osm.status == "rejected"
+    db.close()
 
 
 def test_compatible_address_range_can_still_collapse_secondary_alias():
@@ -155,7 +172,7 @@ def test_promotion_fails_closed_when_two_existing_stores_match_one_physical_grou
         "osm",
         source="osm",
         external_id="node/123",
-        address="Urbacherstraße L264",
+        address="Urbacher Straße 31a",
         lat=50.592267,
     )
     official_address_store = Store(
@@ -175,7 +192,7 @@ def test_promotion_fails_closed_when_two_existing_stores_match_one_physical_grou
         name="Lidl Puderbach Alt B",
         postal_code="56305",
         city="Puderbach",
-        address="Urbacherstraße L264",
+        address="Urbacher Straße 31a",
         latitude=50.592267,
         longitude=7.6085,
         active=True,
