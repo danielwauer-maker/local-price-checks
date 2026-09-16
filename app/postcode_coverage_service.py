@@ -7,6 +7,7 @@ import unicodedata
 from typing import Any
 
 import httpx
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .candidate_source_refresh import refresh_candidate_from_source
@@ -332,6 +333,57 @@ def candidate_ready_for_promotion(candidate: StoreDiscoveryCandidate) -> bool:
     )
 
 
+def _direct_store_reference_count(db: Session, store_id: int) -> int:
+    """Count direct FK references to one Store without changing any data.
+
+    This is used only when promotion finds multiple identity-equivalent legacy
+    Store rows. A unique history-bearing row is safer to reuse than a zero-history
+    duplicate, while genuinely ambiguous histories still fail closed.
+    """
+    schema = inspect(db.connection())
+    total = 0
+    for table_name in schema.get_table_names():
+        for fk in schema.get_foreign_keys(table_name):
+            if fk.get("referred_table") != "stores":
+                continue
+            columns = fk.get("constrained_columns") or []
+            referred_columns = fk.get("referred_columns") or []
+            if len(columns) != 1 or referred_columns != ["id"]:
+                continue
+            column_name = columns[0]
+            total += int(
+                db.execute(
+                    text(
+                        f'SELECT COUNT(*) FROM "{table_name}" '
+                        f'WHERE "{column_name}" = :store_id'
+                    ),
+                    {"store_id": store_id},
+                ).scalar_one()
+            )
+    return total
+
+
+def _canonical_historical_store(db: Session, stores: list[Store]) -> Store | None:
+    """Return a unique history-bearing Store when all sibling duplicates are empty."""
+    if len(stores) == 1:
+        return stores[0]
+    reference_counts = {
+        store.id: _direct_store_reference_count(db, store.id)
+        for store in stores
+    }
+    history_bearing = [store for store in stores if reference_counts[store.id] > 0]
+    if len(history_bearing) != 1:
+        return None
+    canonical = history_bearing[0]
+    if any(
+        reference_counts[store.id] > 0
+        for store in stores
+        if store.id != canonical.id
+    ):
+        return None
+    return canonical
+
+
 def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
     """Create/update a Store only after all identity gates have passed.
 
@@ -390,11 +442,13 @@ def promote_candidate_to_store(db: Session, candidate_id: int) -> Store:
             if any(store_matches_candidate(row, member) for member in physical_members)
         ]
         if len(physical_matches) > 1:
-            raise ValueError(
-                "Mehrere bestehende Stores passen zu diesem physischen Markt; "
-                "bitte Marktidentitäten zuerst bereinigen"
-            )
-        if physical_matches:
+            store = _canonical_historical_store(db, physical_matches)
+            if store is None:
+                raise ValueError(
+                    "Mehrere bestehende Stores passen zu diesem physischen Markt; "
+                    "Historienlage ist nicht eindeutig und muss manuell geprüft werden"
+                )
+        elif physical_matches:
             store = physical_matches[0]
 
     # Keep the historical single-row matching as a conservative fallback for
