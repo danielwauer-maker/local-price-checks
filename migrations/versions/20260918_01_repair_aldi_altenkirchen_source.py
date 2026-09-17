@@ -9,11 +9,12 @@ branch page for discovery provenance and separated identity provenance from the
 regional offer collector. Store 17 had already been promoted before that fix,
 so its persisted ``stores.source_url`` was intentionally left untouched.
 
-This migration repairs only that known stale metadata value. It is deliberately
-fail-closed: exactly one ALDI SÜD Store at Kölner Straße 30a / 57610
-Altenkirchen must exist and its current source must be either the known obsolete
-PDF or the already-correct target URL. No Store identity, coordinates, external
-ID, publication state, offer data or collection history is changed.
+This migration repairs only that known stale metadata value. A fresh database
+that has no ALDI SÜD Store in postcode 57610 is a safe no-op. If an ALDI SÜD
+row does exist in 57610, however, exactly one row must match Kölner Straße 30a /
+Altenkirchen and its current source must be either the known obsolete PDF or the
+already-correct target URL. No Store identity, coordinates, external ID,
+publication state, offer data or collection history is changed.
 """
 
 from __future__ import annotations
@@ -68,23 +69,37 @@ def _matching_store(bind):
         ),
         {"postal_code": EXPECTED_POSTAL_CODE},
     ).mappings().all()
-    matches = [
+
+    retailer_rows = [
         row
         for row in rows
         if _normalize(row["retailer"]) == _normalize(EXPECTED_RETAILER)
-        and _normalize(row["city"]) == _normalize(EXPECTED_CITY)
+    ]
+    if not retailer_rows:
+        # Normal for a freshly migrated empty database. This repair is about one
+        # historic production row and must not make Alembic bootstrap data-dependent.
+        return None
+
+    matches = [
+        row
+        for row in retailer_rows
+        if _normalize(row["city"]) == _normalize(EXPECTED_CITY)
         and _normalize(row["address"]) == _normalize(EXPECTED_ADDRESS)
     ]
     if len(matches) != 1:
         raise RuntimeError(
-            "Expected exactly one ALDI SÜD Altenkirchen Store at Kölner Straße 30a; "
-            f"found {len(matches)}"
+            "ALDI SÜD Store(s) exist in 57610 but the exact Altenkirchen identity "
+            "at Kölner Straße 30a is missing or ambiguous; "
+            f"found {len(matches)} exact match(es) among {len(retailer_rows)} ALDI row(s)"
         )
     return matches[0]
 
 
 def _repair_source(bind) -> bool:
     row = _matching_store(bind)
+    if row is None:
+        return False
+
     current = (row["source_url"] or "").strip()
     if current == TARGET_SOURCE_URL:
         return False
