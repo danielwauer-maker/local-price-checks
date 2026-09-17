@@ -37,7 +37,6 @@ from .postcode_reconciliation import (
     deduplicate_candidates,
     group_physical_candidates,
     reconcile_postcode_coverage,
-    store_matches_candidate,
 )
 from .retailer_store_sources import stage_official_store_candidates
 from .web_collector import collect_store_from_web
@@ -95,43 +94,69 @@ def _activation_rows_for_postcode(
     candidates: list[StoreDiscoveryCandidate],
     stores: list[Store],
 ) -> list[dict]:
-    """Build one activation row per physical market plus explicit orphan stores.
+    """Build activation rows from explicit candidate-to-Store lifecycle links only.
 
-    Discovery candidates and promoted Store rows are separate lifecycle objects.
-    The admin cockpit must show both layers together so a discovered market never
-    disappears merely because it has not been promoted yet, while pre-existing
-    stores without a current discovery identity are surfaced as reconciliation
-    problems instead of being silently mixed into the happy path.
+    Physical identity similarity is intentionally *not* a Promotion signal. A
+    pre-existing Store can look identical to a discovered candidate and still be
+    an unrelated/legacy row until Promotion explicitly writes matched_store_id.
+    Showing such a heuristic match as ``promoted`` made the admin cockpit claim
+    that unverified markets (for example ALDI 56587) had already been promoted.
+
+    A physical candidate group is attached to a Store only when its members carry
+    exactly one explicit matched_store_id and that Store exists in this postcode.
+    Missing, duplicated, or conflicting explicit assignments fail closed and are
+    surfaced for reconciliation. Every Store without an explicit assignment is
+    kept as an orphan warning instead of being silently consumed by a candidate.
     """
     rows: list[dict] = []
-    matched_store_ids: set[int] = set()
+    explicitly_linked_store_ids: set[int] = set()
+    stores_by_id = {store.id: store for store in stores}
+
     for group in group_physical_candidates(candidates):
         explicit_ids = {
             member.matched_store_id
             for member in group.members
             if member.matched_store_id is not None
         }
-        matches = [
-            store
-            for store in stores
-            if store.id not in matched_store_ids
-            and any(store_matches_candidate(store, member) for member in group.members)
-        ]
-        matches.sort(key=lambda store: (store.id not in explicit_ids, store.retailer, store.name, store.id))
-        store = matches[0] if matches else None
-        if store is not None:
-            matched_store_ids.add(store.id)
+        store: Store | None = None
+        assignment_conflict = False
+        conflict_reason: str | None = None
+
+        if len(explicit_ids) > 1:
+            assignment_conflict = True
+            conflict_reason = "Mehrere explizite Store-Zuordnungen für denselben physischen Markt"
+        elif len(explicit_ids) == 1:
+            store_id = next(iter(explicit_ids))
+            explicit_store = stores_by_id.get(store_id)
+            if explicit_store is None:
+                assignment_conflict = True
+                conflict_reason = (
+                    f"Explizit zugeordneter Store {store_id} ist in dieser PLZ nicht vorhanden"
+                )
+            elif store_id in explicitly_linked_store_ids:
+                assignment_conflict = True
+                conflict_reason = (
+                    f"Store {store_id} ist bereits einem anderen physischen Markt zugeordnet"
+                )
+            else:
+                store = explicit_store
+                explicitly_linked_store_ids.add(store_id)
+
         rows.append(
             {
                 "candidate": group.representative,
                 "store": store,
                 "orphan_store": False,
                 "source_count": len(group.members),
+                "explicitly_promoted": store is not None and not assignment_conflict,
+                "assignment_conflict": assignment_conflict,
+                "conflicting_store_ids": sorted(explicit_ids) if assignment_conflict else [],
+                "conflict_reason": conflict_reason,
             }
         )
 
     for store in stores:
-        if store.id in matched_store_ids:
+        if store.id in explicitly_linked_store_ids:
             continue
         rows.append(
             {
@@ -139,6 +164,10 @@ def _activation_rows_for_postcode(
                 "store": store,
                 "orphan_store": True,
                 "source_count": 0,
+                "explicitly_promoted": False,
+                "assignment_conflict": False,
+                "conflicting_store_ids": [],
+                "conflict_reason": None,
             }
         )
     return rows
