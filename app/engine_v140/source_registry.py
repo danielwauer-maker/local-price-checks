@@ -136,31 +136,56 @@ def _normalized_known_source(source: RetailSource) -> RetailSource:
 
 
 def source_for_store_record(store) -> RetailSource | None:
-    """Return a source for a concrete Store, including newly discovered markets.
+    """Return the operational collection source for one concrete Store.
 
-    Hand-tuned registry entries still win. New markets can use a store-specific
-    URL discovered from OSM/admin data or a retailer-level fallback. They start
-    unverified and therefore remain QA-only until explicitly released.
+    Hand-tuned registry entries still win. For most newly onboarded markets a
+    store-specific URL may be used directly or normalized to the retailer's
+    collection route.
+
+    ALDI SÜD is intentionally different: the URL stored during market onboarding
+    is identity provenance (for example a branch page or an older directory
+    document), while the production collector is a regional-chain collector that
+    accepts only ALDI's official offer/weekly pages. Never feed an identity URL
+    into that collector; use the retailer-level offer source instead. This keeps
+    identity verification and offer collection independent without relaxing the
+    collector allowlist.
     """
     known = SOURCE_BY_STORE.get(store.name)
     if known:
         return _normalized_known_source(known)
-    url = (store.source_url or "").strip() or RETAILER_FALLBACK_URLS.get(store.retailer)
+
+    identity_url = (store.source_url or "").strip()
+    if store.retailer == "ALDI SÜD":
+        url = RETAILER_FALLBACK_URLS.get("ALDI SÜD")
+        store_specific = False
+        mode = "prospect_discovery"
+        locality = "regional_chain"
+        notes = (
+            "Automatisch aus Markt-Onboarding erzeugte ALDI-SÜD-Quelle; "
+            "Identitätsprovenienz bleibt vom regionalen Angebots-Collector getrennt."
+        )
+    else:
+        url = identity_url or RETAILER_FALLBACK_URLS.get(store.retailer)
+        store_specific = bool(identity_url)
+        mode = "store_page" if store_specific else "prospect_discovery"
+        locality = "store_specific" if store_specific else "regional_chain"
+        notes = "Automatisch aus Markt-Onboarding erzeugte Quelle."
+
     if not url:
         return None
     if store.retailer == "EDEKA":
         url = _normalize_edeka_market_url(url)
     elif store.retailer == "REWE":
         url = _normalize_rewe_collection_url(url)
-    store_specific = bool((store.source_url or "").strip())
+
     return RetailSource(
         key=f"auto_{store.retailer.lower().replace(' ', '_').replace('-', '_')}_{store.id}",
         retailer=store.retailer,
         store_name=store.name,
         url=url,
-        mode="store_page" if store_specific else "prospect_discovery",
-        locality="store_specific" if store_specific else "regional_chain",
-        notes="Automatisch aus Markt-Onboarding erzeugte Quelle.",
+        mode=mode,
+        locality=locality,
+        notes=notes,
         supports_products=True,
         store_specific=store_specific,
     )
