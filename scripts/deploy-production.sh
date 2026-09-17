@@ -168,6 +168,11 @@ if [[ -n "$SCHEMA_FILES" ]]; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled data repair recognized: remove stale Lidl Puderbach legacy identity."
   elif grep -Fxq 'app/sqlite_alembic.py' <<<"$SCHEMA_FILES" \
+    && grep -Fxq 'migrations/versions/20260918_01_repair_aldi_altenkirchen_source.py' <<<"$SCHEMA_FILES" \
+    && ! grep -Evq '^(app/sqlite_alembic\.py|migrations/versions/20260918_01_repair_aldi_altenkirchen_source\.py)$' <<<"$SCHEMA_FILES"; then
+    CONTROLLED_SCHEMA_RELEASE=1
+    echo "Controlled data repair recognized: ALDI Altenkirchen source provenance + reviewed Alembic target."
+  elif grep -Fxq 'app/sqlite_alembic.py' <<<"$SCHEMA_FILES" \
     && ! grep -Evq '^app/sqlite_alembic\.py$' <<<"$SCHEMA_FILES"; then
     CONTROLLED_SCHEMA_RELEASE=1
     echo "Controlled migration runner update recognized: apply pending reviewed Alembic revisions."
