@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -95,43 +96,117 @@ def _activation_rows_for_postcode(
     candidates: list[StoreDiscoveryCandidate],
     stores: list[Store],
 ) -> list[dict]:
-    """Build one activation row per physical market plus explicit orphan stores.
+    """Build activation rows without confusing identity similarity with Promotion.
 
-    Discovery candidates and promoted Store rows are separate lifecycle objects.
-    The admin cockpit must show both layers together so a discovered market never
-    disappears merely because it has not been promoted yet, while pre-existing
-    stores without a current discovery identity are surfaced as reconciliation
-    problems instead of being silently mixed into the happy path.
+    ``matched_store_id`` is the only source of truth for a completed Promotion.
+    A unique identity-compatible legacy Store may still be shown beside a
+    discovery market as a reconciliation hint, but it remains explicitly marked
+    as *not promoted* and receives no lifecycle actions. Ambiguous identity hints,
+    conflicting explicit assignments, and missing explicit Stores fail closed.
     """
     rows: list[dict] = []
-    matched_store_ids: set[int] = set()
-    for group in group_physical_candidates(candidates):
-        explicit_ids = {
+    groups = group_physical_candidates(candidates)
+    stores_by_id = {store.id: store for store in stores}
+
+    explicit_ids_by_group = [
+        {
             member.matched_store_id
             for member in group.members
             if member.matched_store_id is not None
         }
-        matches = [
+        for group in groups
+    ]
+    explicit_store_usage = Counter(
+        next(iter(explicit_ids))
+        for explicit_ids in explicit_ids_by_group
+        if len(explicit_ids) == 1
+    )
+    reserved_explicit_store_ids = set(explicit_store_usage)
+
+    legacy_matches_by_group: list[list[Store]] = []
+    for group, explicit_ids in zip(groups, explicit_ids_by_group, strict=True):
+        if explicit_ids:
+            legacy_matches_by_group.append([])
+            continue
+        legacy_matches_by_group.append([
             store
             for store in stores
-            if store.id not in matched_store_ids
+            if store.id not in reserved_explicit_store_ids
             and any(store_matches_candidate(store, member) for member in group.members)
-        ]
-        matches.sort(key=lambda store: (store.id not in explicit_ids, store.retailer, store.name, store.id))
-        store = matches[0] if matches else None
-        if store is not None:
-            matched_store_ids.add(store.id)
+        ])
+    legacy_store_usage = Counter(
+        store.id
+        for matches in legacy_matches_by_group
+        for store in matches
+    )
+
+    displayed_store_ids: set[int] = set()
+    for group, explicit_ids, legacy_matches in zip(
+        groups,
+        explicit_ids_by_group,
+        legacy_matches_by_group,
+        strict=True,
+    ):
+        store: Store | None = None
+        explicitly_promoted = False
+        reconciliation_only = False
+        assignment_conflict = False
+        conflict_reason: str | None = None
+        conflicting_store_ids: list[int] = []
+
+        if len(explicit_ids) > 1:
+            assignment_conflict = True
+            conflicting_store_ids = sorted(explicit_ids)
+            conflict_reason = "Mehrere explizite Store-Zuordnungen für denselben physischen Markt"
+        elif len(explicit_ids) == 1:
+            store_id = next(iter(explicit_ids))
+            explicit_store = stores_by_id.get(store_id)
+            if explicit_store is None:
+                assignment_conflict = True
+                conflicting_store_ids = [store_id]
+                conflict_reason = (
+                    f"Explizit zugeordneter Store {store_id} ist in dieser PLZ nicht vorhanden"
+                )
+            elif explicit_store_usage[store_id] > 1:
+                assignment_conflict = True
+                conflicting_store_ids = [store_id]
+                conflict_reason = (
+                    f"Store {store_id} ist mehreren physischen Märkten explizit zugeordnet"
+                )
+            else:
+                store = explicit_store
+                explicitly_promoted = True
+                displayed_store_ids.add(store.id)
+        elif len(legacy_matches) == 1 and legacy_store_usage[legacy_matches[0].id] == 1:
+            # Preserve useful legacy context without turning similarity into a
+            # completed Promotion. The template renders this as reconciliation.
+            store = legacy_matches[0]
+            reconciliation_only = True
+            displayed_store_ids.add(store.id)
+        elif legacy_matches:
+            assignment_conflict = True
+            conflicting_store_ids = sorted(store.id for store in legacy_matches)
+            conflict_reason = (
+                "Mehrere bestehende Stores passen zur Discovery-Identität; "
+                "keine Zuordnung wird automatisch gewählt"
+            )
+
         rows.append(
             {
                 "candidate": group.representative,
                 "store": store,
                 "orphan_store": False,
                 "source_count": len(group.members),
+                "explicitly_promoted": explicitly_promoted,
+                "reconciliation_only": reconciliation_only,
+                "assignment_conflict": assignment_conflict,
+                "conflicting_store_ids": conflicting_store_ids,
+                "conflict_reason": conflict_reason,
             }
         )
 
     for store in stores:
-        if store.id in matched_store_ids:
+        if store.id in displayed_store_ids:
             continue
         rows.append(
             {
@@ -139,6 +214,11 @@ def _activation_rows_for_postcode(
                 "store": store,
                 "orphan_store": True,
                 "source_count": 0,
+                "explicitly_promoted": False,
+                "reconciliation_only": False,
+                "assignment_conflict": False,
+                "conflicting_store_ids": [],
+                "conflict_reason": None,
             }
         )
     return rows
