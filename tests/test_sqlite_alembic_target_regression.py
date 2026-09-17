@@ -36,7 +36,7 @@ def test_sqlite_migration_target_matches_repository_head() -> None:
     config.set_main_option("script_location", str(ROOT / "migrations"))
     head = ScriptDirectory.from_config(config).get_current_head()
 
-    assert TARGET_REVISION == head == "20260916_02"
+    assert TARGET_REVISION == head == "20260918_01"
 
 
 def test_pre_repair_production_revision_is_not_treated_as_current(tmp_path: Path) -> None:
@@ -61,7 +61,7 @@ def test_pre_repair_production_revision_is_not_treated_as_current(tmp_path: Path
     assert applied.initial_revision == "20260910_01"
     assert applied.final_revision == TARGET_REVISION
     assert applied.action == "upgraded-baseline"
-    assert _revision(database) == "20260916_02"
+    assert _revision(database) == "20260918_01"
     assert _revision(backup) == "20260910_01"
 
 
