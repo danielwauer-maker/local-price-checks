@@ -165,10 +165,11 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
         source_url="https://www.rewe.de/marktseite/brechen-niederbrechen/240076/rewe-markt-in-den-wallgaerten-1/",
         source_identifier="rewe-market-240076",
     ),
-    # ALDI SÜD's official environmental declaration lists these branches but
-    # does not publish a retailer branch ID or coordinates.  Coordinates are
-    # therefore resolved from an existing matching Store/Candidate at staging
-    # time and the external ID intentionally remains NULL.
+    # ALDI SÜD identity provenance must point to the concrete official branch
+    # page. Offer collection is deliberately separate and uses the regional
+    # ALDI offer pages from source_registry; branch pages are never collector
+    # inputs. Coordinates continue to come from reviewed local evidence because
+    # the branch pages do not provide a stable coordinate contract here.
     *(
         RetailerStoreRecord(
             retailer="ALDI SÜD",
@@ -179,14 +180,38 @@ CURATED_OFFICIAL_STORES: tuple[RetailerStoreRecord, ...] = (
             latitude=None,
             longitude=None,
             external_id=None,
-            source_url="https://s7g10.scene7.com/is/content/aldi/ALDI_SUED_Umwelterklaerung-2024.pdf",
+            source_url=source_url,
             source_identifier=f"aldi-sued-{postal_code}-{slug}",
         )
-        for postal_code, city, address, slug in (
-            ("56269", "Dierdorf", "Königsberger Straße 50", "koenigsberger-strasse-50"),
-            ("56587", "Oberhonnefeld-Gierend", "Über dem Stellweg 5", "ueber-dem-stellweg-5"),
-            ("57610", "Altenkirchen", "Kölner Straße 30a", "koelner-strasse-30a"),
-            ("65611", "Brechen", "Kapellenstraße 88", "kapellenstrasse-88"),
+        for postal_code, city, address, slug, source_url in (
+            (
+                "56269",
+                "Dierdorf",
+                "Königsberger Straße 50",
+                "koenigsberger-strasse-50",
+                "https://filialen.aldi-sued.de/rheinland-pfalz/dierdorf/koenigsberger-strasse-50",
+            ),
+            (
+                "56587",
+                "Oberhonnefeld-Gierend",
+                "Über dem Stellweg 5",
+                "ueber-dem-stellweg-5",
+                "https://filialen.aldi-sued.de/rheinland-pfalz/oberhonnefeld-gierend/ueber-dem-stellweg-5",
+            ),
+            (
+                "57610",
+                "Altenkirchen",
+                "Kölner Straße 30a",
+                "koelner-strasse-30a",
+                "https://filialen.aldi-sued.de/rheinland-pfalz/altenkirchen/koelner-strasse-30a",
+            ),
+            (
+                "65611",
+                "Brechen",
+                "Kapellenstraße 88",
+                "kapellenstrasse-88",
+                "https://filialen.aldi-sued.de/hessen/brechen/kapellenstrasse-88",
+            ),
         )
     ),
     RetailerStoreRecord(
