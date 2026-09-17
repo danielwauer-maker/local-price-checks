@@ -203,7 +203,7 @@ def _collect_netto_from_official_prospect(
     pdf_url = discover_official_pdf(prospect_url)
     pdf_path = download_pdf(pdf_url, settings.data_dir / "prospects" / source.key)
     _archive_downloaded_prospect(db, store, source_url=prospect_url, pdf_url=pdf_url, pdf_path=pdf_path)
-    return collect_pdf_for_store(db, store.name, pdf_path, benchmark_context=benchmark_context)
+    return collect_pdf_for_store(db, store.id, pdf_path, benchmark_context=benchmark_context)
 
 
 def _collect_edeka_from_official_prospect(
@@ -240,7 +240,7 @@ def _collect_edeka_from_official_prospect(
     )
     return collect_pdf_for_store(
         db,
-        store.name,
+        store.id,
         pdf_path,
         benchmark_context=benchmark_context,
     )
@@ -349,7 +349,7 @@ def _collect_lidl_from_official_leaflet(
 
     result, summary, run = collect_structured_for_store(
         db,
-        store.name,
+        store.id,
         collector_fn=collector,
         before_import_fn=archive_before_import,
         benchmark_context=benchmark_context,
@@ -379,18 +379,22 @@ def collect_store_from_web(
     store_name: str,
     *,
     benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
+    allow_inactive: bool = False,
+    store_id: int | None = None,
 ):
-    """Collect an active market for QA or production.
+    """Collect one market while keeping publication and collection separate.
 
-    Collection and release are deliberately separate. benchmark_verified is
-    only the user-facing release gate. Active unverified markets may be scraped
-    so admins can audit them before release. Every successful collection also
-    attempts to archive the matching prospect automatically.
+    Normal callers still require ``store.active``. The activation lifecycle may
+    explicitly pass ``allow_inactive=True`` together with the promoted Store id;
+    that is the only supported pre-publication collection path. Supplying the id
+    also prevents a same-name legacy duplicate from being selected accidentally.
     """
-    store = db.query(Store).filter(Store.name == store_name).first()
+    if allow_inactive and store_id is None:
+        raise CollectionError("Inaktive Test-Scrapes erfordern eine explizite Store-ID")
+    store = db.get(Store, store_id) if store_id is not None else db.query(Store).filter(Store.name == store_name).first()
     if not store:
         raise CollectionError(f"Unbekannter Markt: {store_name}")
-    if not store.active:
+    if not store.active and not allow_inactive:
         raise CollectionError(f"Markt ist inaktiv: {store_name}")
     source = source_for_store_record(store)
     if not source:
@@ -410,7 +414,7 @@ def collect_store_from_web(
     try:
         result, summary, run = collect_structured_for_store(
             db,
-            store.name,
+            store.id if store_id is not None else store.name,
             benchmark_context=benchmark_context,
         )
         if summary.imported:
@@ -427,7 +431,7 @@ def collect_store_from_web(
         _archive_downloaded_prospect(db, store, source_url=source.url, pdf_url=pdf_url, pdf_path=pdf_path)
         return collect_pdf_for_store(
             db,
-            store.name,
+            store.id if store_id is not None else store.name,
             pdf_path,
             benchmark_context=benchmark_context,
         )
