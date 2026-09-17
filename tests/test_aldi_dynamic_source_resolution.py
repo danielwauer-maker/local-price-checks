@@ -1,5 +1,6 @@
 from app.engine_v140.source_registry import source_for_store_record
 from app.models import Store
+from app.retailer_store_sources import CURATED_OFFICIAL_STORES
 
 
 ALDI_OFFERS_URL = "https://www.aldi-sued.de/angebote"
@@ -8,6 +9,9 @@ OLD_ALDI_IDENTITY_PDF = (
 )
 ALDI_ALTENKIRCHEN_BRANCH = (
     "https://www.aldi-sued.de/filialen/l/altenkirchen/koelner-strasse-30a/b496"
+)
+ALDI_ALTENKIRCHEN_IDENTITY_URL = (
+    "https://filialen.aldi-sued.de/rheinland-pfalz/altenkirchen/koelner-strasse-30a"
 )
 
 
@@ -74,6 +78,17 @@ def test_known_aldi_market_keeps_curated_operational_source():
     assert source.url == ALDI_OFFERS_URL
     assert source.locality == "regional_chain"
     assert source.store_specific is False
+
+
+def test_curated_aldi_identity_sources_use_branch_pages_not_stale_pdf():
+    aldi_rows = [row for row in CURATED_OFFICIAL_STORES if row.retailer == "ALDI SÜD"]
+
+    assert len(aldi_rows) == 4
+    assert all(OLD_ALDI_IDENTITY_PDF != row.source_url for row in aldi_rows)
+    assert all(row.source_url.startswith("https://filialen.aldi-sued.de/") for row in aldi_rows)
+    altenkirchen = next(row for row in aldi_rows if row.postal_code == "57610")
+    assert altenkirchen.address == "Kölner Straße 30a"
+    assert altenkirchen.source_url == ALDI_ALTENKIRCHEN_IDENTITY_URL
 
 
 def test_non_aldi_dynamic_store_still_uses_store_specific_source():
