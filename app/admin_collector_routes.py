@@ -228,13 +228,20 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
         if store.retailer == "EDEKA":
             _, _, run = collect_edeka_web_for_store(db, store, benchmark_context=context)
         else:
-            result, summary, run = collect_store_from_web(
-                db,
-                store.name,
-                benchmark_context=context,
-                allow_inactive=activation_test,
-                store_id=store.id if activation_test else None,
-            )
+            if activation_test:
+                result, summary, run = collect_store_from_web(
+                    db,
+                    store.name,
+                    benchmark_context=context,
+                    allow_inactive=True,
+                    store_id=store.id,
+                )
+            else:
+                result, summary, run = collect_store_from_web(
+                    db,
+                    store.name,
+                    benchmark_context=context,
+                )
             if store.retailer == "REWE" and context == BenchmarkContext.PRODUCTION:
                 _reconcile_rewe_manual_collection(db, store, result, summary, run)
         if activation_test:
