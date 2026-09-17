@@ -167,11 +167,17 @@ def register_promoted_store(
 
 
 def can_start_test_scrape(db: Session, store: Store) -> bool:
+    """Allow QA collection before publication without making the Store public.
+
+    ``active`` is a public/live collection concern, not an activation-test
+    prerequisite. Promotion already provides the stricter identity and manual
+    suspension gates needed here. Publication remains exclusively controlled by
+    ``publish_store`` after a passing Quality Gate.
+    """
     state = activation_state(db, store.id)
     return bool(
         state
         and state.identity_verified
-        and store.active
         and not state.manually_suspended
         and state.lifecycle_status
         in {"promoted", "scrape_failed", "quality_review", "quality_passed"}

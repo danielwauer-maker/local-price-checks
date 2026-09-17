@@ -45,6 +45,18 @@ def _canonical_store(db: Session, store_id: int) -> Store | None:
     return mapping.get(store_id)
 
 
+def _collection_store(db: Session, store_id: int, *, activation_test: bool) -> Store | None:
+    """Resolve the exact promoted Store for activation tests.
+
+    Normal/live collection keeps the existing physical-market canonicalization.
+    Activation tests must instead stay bound to the explicit Discovery→Store
+    assignment so a same-name legacy duplicate cannot receive the QA run.
+    """
+    if activation_test:
+        return db.get(Store, store_id)
+    return _canonical_store(db, store_id)
+
+
 def _expire_stuck_lidl_run(store_id: int) -> None:
     """Close the run even if a browser/native dependency stops responding."""
     db = SessionLocal()
@@ -199,8 +211,10 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
     timeout_timer = None
     job_started_at = datetime.utcnow()
     try:
-        store = _canonical_store(db, store_id)
-        if not store or not store.active:
+        store = _collection_store(db, store_id, activation_test=activation_test)
+        if not store:
+            return
+        if not activation_test and not store.active:
             return
         if store.retailer == "Lidl":
             timeout_timer = threading.Timer(
@@ -214,15 +228,28 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
         if store.retailer == "EDEKA":
             _, _, run = collect_edeka_web_for_store(db, store, benchmark_context=context)
         else:
-            result, summary, run = collect_store_from_web(db, store.name, benchmark_context=context)
+            if activation_test:
+                result, summary, run = collect_store_from_web(
+                    db,
+                    store.name,
+                    benchmark_context=context,
+                    allow_inactive=True,
+                    store_id=store.id,
+                )
+            else:
+                result, summary, run = collect_store_from_web(
+                    db,
+                    store.name,
+                    benchmark_context=context,
+                )
             if store.retailer == "REWE" and context == BenchmarkContext.PRODUCTION:
                 _reconcile_rewe_manual_collection(db, store, result, summary, run)
         if activation_test:
             complete_test_scrape(db, store, run)
     except Exception as exc:
         try:
-            canonical = _canonical_store(db, store_id)
-            effective_store_id = canonical.id if canonical is not None else store_id
+            effective_store = _collection_store(db, store_id, activation_test=activation_test)
+            effective_store_id = effective_store.id if effective_store is not None else store_id
             _persist_background_failure(
                 db,
                 store_id=effective_store_id,
@@ -233,7 +260,7 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
             db.rollback()
         if activation_test:
             try:
-                store = _canonical_store(db, store_id)
+                store = _collection_store(db, store_id, activation_test=True)
                 effective_store_id = store.id if store is not None else store_id
                 run = (
                     db.query(CollectionRun)
@@ -334,11 +361,16 @@ def collector_run_store(
     db: Session = Depends(get_db),
     actor: str = Depends(_admin),
 ):
-    store = _canonical_store(db, store_id)
+    requested_store = db.get(Store, store_id)
+    if not requested_store:
+        raise HTTPException(404, "Markt nicht gefunden")
+
+    activation_test = not requested_store.benchmark_verified
+    store = requested_store if activation_test else _canonical_store(db, store_id)
     if not store:
         raise HTTPException(404, "Markt nicht gefunden")
-    if not store.active:
-        raise HTTPException(400, "Inaktive Märkte können nicht gesammelt werden")
+    if not activation_test and not store.active:
+        raise HTTPException(400, "Inaktive Märkte können nicht live gesammelt werden")
 
     running = (
         db.query(CollectionRun)
@@ -352,7 +384,6 @@ def collector_run_store(
             status_code=303,
         )
 
-    activation_test = not store.benchmark_verified
     if activation_test:
         try:
             begin_test_scrape(db, store)

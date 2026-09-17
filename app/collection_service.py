@@ -69,10 +69,21 @@ def _finish_run(
     db.commit()
 
 
-def _store_and_source(db: Session, store_name: str):
-    store = db.query(Store).filter(Store.name == store_name).first()
+def _store_and_source(db: Session, store_ref: str | int | Store):
+    """Resolve a store by exact identity when one is available.
+
+    Legacy callers may continue to pass the display name. Activation-test code
+    passes the explicit Store id/object so same-name legacy duplicates cannot
+    steal the collection run from the promoted Discovery→Store assignment.
+    """
+    if isinstance(store_ref, Store):
+        store = db.get(Store, store_ref.id) if store_ref.id is not None else None
+    elif isinstance(store_ref, int):
+        store = db.get(Store, store_ref)
+    else:
+        store = db.query(Store).filter(Store.name == store_ref).first()
     if not store:
-        raise CollectionError(f"Unbekannter Markt: {store_name}")
+        raise CollectionError(f"Unbekannter Markt: {getattr(store_ref, 'name', store_ref)}")
     source = source_for_store_record(store)
     if not source:
         raise CollectionError(f"Keine Quelle registriert oder automatisch ableitbar für: {store.name}")
@@ -150,7 +161,7 @@ def _record_collection_quality(
 
 def collect_structured_for_store(
     db: Session,
-    store_name: str,
+    store_name: str | int | Store,
     source_override: RetailSource | None = None,
     collector_fn: Callable | None = None,
     before_import_fn: Callable | None = None,
@@ -269,7 +280,7 @@ def collect_structured_for_store(
 
 def collect_pdf_for_store(
     db: Session,
-    store_name: str,
+    store_name: str | int | Store,
     pdf_path: str | Path,
     *,
     benchmark_context: BenchmarkContext | str = BenchmarkContext.NOT_APPLICABLE,
