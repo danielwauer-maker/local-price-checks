@@ -92,7 +92,7 @@ def _rewe_candidate(*, matched_store_id: int | None = None, source: str = "offic
     )
 
 
-def test_matching_legacy_store_does_not_make_unpromoted_candidate_look_promoted():
+def test_unique_matching_legacy_store_is_reconciliation_only_not_promoted():
     candidate = _candidate(
         key="aldi-osm",
         retailer="ALDI SÜD",
@@ -116,16 +116,14 @@ def test_matching_legacy_store_does_not_make_unpromoted_candidate_look_promoted(
 
     rows = coverage_routes._activation_rows_for_postcode([candidate], [legacy_store])
 
-    discovery = rows[0]
-    orphan = rows[1]
-    assert discovery["candidate"] is candidate
-    assert discovery["store"] is None
-    assert discovery["explicitly_promoted"] is False
-    assert discovery["assignment_conflict"] is False
-    assert orphan["candidate"] is None
-    assert orphan["store"].id == 6
-    assert orphan["orphan_store"] is True
-    assert orphan["explicitly_promoted"] is False
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["candidate"] is candidate
+    assert row["store"] is legacy_store
+    assert row["explicitly_promoted"] is False
+    assert row["reconciliation_only"] is True
+    assert row["assignment_conflict"] is False
+    assert row["orphan_store"] is False
 
 
 def test_56587_promoted_rewe_uses_explicit_store_2_and_leaves_store_15_orphaned():
@@ -143,6 +141,7 @@ def test_56587_promoted_rewe_uses_explicit_store_2_and_leaves_store_15_orphaned(
     assert promoted["candidate"] is candidate
     assert promoted["store"].id == 2
     assert promoted["explicitly_promoted"] is True
+    assert promoted["reconciliation_only"] is False
     assert promoted["orphan_store"] is False
     assert promoted["assignment_conflict"] is False
     assert orphan["store"].id == 15
@@ -160,8 +159,12 @@ def test_duplicate_matching_legacy_rewe_stores_are_not_arbitrarily_selected_befo
         [canonical, duplicate],
     )
 
-    assert rows[0]["store"] is None
-    assert rows[0]["explicitly_promoted"] is False
+    conflict = rows[0]
+    assert conflict["store"] is None
+    assert conflict["explicitly_promoted"] is False
+    assert conflict["reconciliation_only"] is False
+    assert conflict["assignment_conflict"] is True
+    assert conflict["conflicting_store_ids"] == [2, 15]
     orphan_ids = {row["store"].id for row in rows[1:] if row["orphan_store"]}
     assert orphan_ids == {2, 15}
 
@@ -180,6 +183,7 @@ def test_conflicting_explicit_store_ids_for_one_physical_market_fail_closed():
     conflict = rows[0]
     assert conflict["store"] is None
     assert conflict["explicitly_promoted"] is False
+    assert conflict["reconciliation_only"] is False
     assert conflict["assignment_conflict"] is True
     assert conflict["conflicting_store_ids"] == [2, 15]
     assert "Mehrere explizite Store-Zuordnungen" in conflict["conflict_reason"]
@@ -195,6 +199,8 @@ def test_explicit_assignment_to_store_outside_current_postcode_fails_closed():
 
     conflict = rows[0]
     assert conflict["store"] is None
+    assert conflict["explicitly_promoted"] is False
+    assert conflict["reconciliation_only"] is False
     assert conflict["assignment_conflict"] is True
     assert conflict["conflicting_store_ids"] == [99]
     assert "in dieser PLZ nicht vorhanden" in conflict["conflict_reason"]
@@ -202,7 +208,7 @@ def test_explicit_assignment_to_store_outside_current_postcode_fails_closed():
     assert rows[1]["orphan_store"] is True
 
 
-def test_coverage_template_never_labels_orphan_store_as_promoted():
+def test_coverage_template_never_labels_reconciliation_or_orphan_store_as_promoted():
     template = (
         Path(coverage_routes.__file__).resolve().parent
         / "templates"
@@ -212,4 +218,6 @@ def test_coverage_template_never_labels_orphan_store_as_promoted():
     assert "Promoted {{ '✓' if row.explicitly_promoted else '✗' }}" in template
     assert "a.can_test_scrape and row.explicitly_promoted" in template
     assert "a.can_publish and row.explicitly_promoted" in template
+    assert "Legacy-Zuordnung prüfen" in template
+    assert "row.reconciliation_only" in template
     assert "Zuordnungskonflikt" in template
