@@ -108,9 +108,8 @@ def test_web_collector_requires_explicit_store_id_for_inactive_activation_test(m
     db = SessionLocal()
     ids: list[int] = []
     try:
-        shared_name = f"REWE duplicate activation {uuid4().hex}"
-        legacy = _store(db, name=shared_name, active=False)
-        target = _store(db, name=shared_name, active=False)
+        legacy = _store(db, name=f"REWE legacy activation {uuid4().hex}", active=False)
+        target = _store(db, name=f"REWE target activation {uuid4().hex}", active=False)
         ids.extend([legacy.id, target.id])
         db.commit()
 
@@ -132,14 +131,14 @@ def test_web_collector_requires_explicit_store_id_for_inactive_activation_test(m
         monkeypatch.setattr(web_collector, "collect_structured_for_store", fake_collect_structured)
 
         with pytest.raises(web_collector.CollectionError, match="explizite Store-ID"):
-            web_collector.collect_store_from_web(db, shared_name, allow_inactive=True)
+            web_collector.collect_store_from_web(db, target.name, allow_inactive=True)
 
         with pytest.raises(web_collector.CollectionError, match="Markt ist inaktiv"):
-            web_collector.collect_store_from_web(db, shared_name)
+            web_collector.collect_store_from_web(db, target.name)
 
         web_collector.collect_store_from_web(
             db,
-            shared_name,
+            legacy.name,
             allow_inactive=True,
             store_id=target.id,
         )
@@ -154,12 +153,12 @@ def test_background_activation_test_uses_exact_inactive_store_and_completes(monk
     setup = SessionLocal()
     ids: list[int] = []
     try:
-        shared_name = f"REWE worker duplicate {uuid4().hex}"
-        legacy = _store(setup, name=shared_name, active=False)
-        target = _store(setup, name=shared_name, active=False)
+        legacy = _store(setup, name=f"REWE worker legacy {uuid4().hex}", active=False)
+        target = _store(setup, name=f"REWE worker target {uuid4().hex}", active=False)
         ids.extend([legacy.id, target.id])
         _state(setup, target, lifecycle="scrape_pending")
         target_id = target.id
+        target_name = target.name
     finally:
         setup.close()
 
@@ -196,6 +195,7 @@ def test_background_activation_test_uses_exact_inactive_store_and_completes(monk
         finally:
             verify.close()
 
+        assert seen["store_name"] == target_name
         assert seen["allow_inactive"] is True
         assert seen["store_id"] == target_id
     finally:
