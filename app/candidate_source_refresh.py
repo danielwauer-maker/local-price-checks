@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import math
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 from .coverage_models import StoreDiscoveryCandidate
 
@@ -23,6 +24,15 @@ IDENTITY_FIELDS: tuple[str, ...] = (
 
 _SOURCE_DRIFT_MARKER = "[source-refresh-drift]"
 _COORDINATE_ABS_TOLERANCE = 1e-6
+_OFFICIAL_SOURCE_HOSTS = {
+    "rewe": "rewe.de",
+    "edeka": "edeka.de",
+    "lidl": "lidl.de",
+    "aldi süd": "aldi-sued.de",
+    "aldi sued": "aldi-sued.de",
+    "netto marken-discount": "netto-online.de",
+    "penny": "penny.de",
+}
 
 
 def candidate_identity_is_locked(candidate: StoreDiscoveryCandidate) -> bool:
@@ -60,6 +70,72 @@ def _identity_value_changed(field: str, old: Any, new: Any) -> bool:
         except (TypeError, ValueError):
             return old != new
     return old != new
+
+
+def _normalized_identity_text(value: str | None) -> str:
+    return " ".join((value or "").casefold().replace("ß", "ss").split())
+
+
+def _official_source_url_matches_retailer(retailer: str | None, source_url: str | None) -> bool:
+    allowed_host = _OFFICIAL_SOURCE_HOSTS.get(_normalized_identity_text(retailer))
+    if not allowed_host or not source_url:
+        return False
+    try:
+        host = (urlparse(source_url).hostname or "").casefold()
+    except ValueError:
+        return False
+    return bool(host == allowed_host or host.endswith("." + allowed_host))
+
+
+def _candidate_matches_store_identity(candidate: StoreDiscoveryCandidate) -> bool:
+    store = candidate.matched_store
+    if store is None:
+        return False
+    if _normalized_identity_text(candidate.retailer) != _normalized_identity_text(store.retailer):
+        return False
+    if (candidate.postal_code or "").strip() != (store.postal_code or "").strip():
+        return False
+
+    candidate_external_id = (candidate.source_external_id or "").strip()
+    store_external_id = (store.external_id or "").strip()
+    if candidate_external_id:
+        return candidate_external_id == store_external_id
+
+    # Retailers such as ALDI SÜD currently expose no stable external branch ID
+    # in our source adapter. In that case source propagation is allowed only
+    # when the already accepted address/city identity still matches exactly
+    # after conservative whitespace/case normalization.
+    return bool(
+        _normalized_identity_text(candidate.city) == _normalized_identity_text(store.city)
+        and _normalized_identity_text(candidate.address) == _normalized_identity_text(store.address)
+    )
+
+
+def _sync_verified_source_to_matched_store(candidate: StoreDiscoveryCandidate) -> None:
+    """Propagate provenance only from a fully accepted official candidate.
+
+    This deliberately updates only ``Store.source_url``. It never rewrites the
+    promoted Store identity, coordinates or external ID. The source URL itself
+    must also live on the expected official retailer domain, preventing generic
+    or unrelated documents from becoming canonical Store provenance.
+    """
+    source_url = (candidate.source_url or "").strip()
+    if not (
+        candidate.matched_store_id is not None
+        and candidate.status == "promoted"
+        and bool(candidate.address_verified)
+        and bool(candidate.coordinates_verified)
+        and bool(candidate.official_source_verified)
+        and str(candidate.source or "").startswith("official:")
+        and source_url
+        and _official_source_url_matches_retailer(candidate.retailer, source_url)
+        and _candidate_matches_store_identity(candidate)
+    ):
+        return
+
+    store = candidate.matched_store
+    if store is not None and (store.source_url or "").strip() != source_url:
+        store.source_url = source_url
 
 
 def refresh_candidate_from_source(
@@ -114,5 +190,6 @@ def refresh_candidate_from_source(
         candidate.status = "discovered"
         candidate.verified_at = None
 
+    _sync_verified_source_to_matched_store(candidate)
     candidate.updated_at = datetime.utcnow()
     return False
