@@ -445,14 +445,34 @@ def reactivate_store(db: Session, store: Store) -> StoreActivationState:
     return state
 
 
-def activation_overview(db: Session, store: Store) -> dict:
-    state = activation_state(db, store.id)
-    candidate = (
+def _identity_candidate_for_overview(
+    db: Session,
+    store: Store,
+) -> StoreDiscoveryCandidate | None:
+    """Prefer a fully verified promoted identity when several sources map to one Store.
+
+    Multi-source onboarding can leave a newer secondary candidate (for example
+    OSM) attached to the same Store after an official candidate already passed
+    all identity gates. The activation UI must reflect the authoritative verified
+    identity rather than whichever source happened to be updated last.
+    """
+    candidates = (
         db.query(StoreDiscoveryCandidate)
         .filter_by(matched_store_id=store.id)
-        .order_by(StoreDiscoveryCandidate.updated_at.desc())
-        .first()
+        .order_by(StoreDiscoveryCandidate.updated_at.desc(), StoreDiscoveryCandidate.id.desc())
+        .all()
     )
+    if not candidates:
+        return None
+    return next(
+        (candidate for candidate in candidates if _candidate_identity_verified(candidate)),
+        candidates[0],
+    )
+
+
+def activation_overview(db: Session, store: Store) -> dict:
+    state = activation_state(db, store.id)
+    candidate = _identity_candidate_for_overview(db, store)
     run = db.get(CollectionRun, state.last_test_run_id) if state and state.last_test_run_id else None
     assessment = latest_quality_assessment(db, store.id)
     result = result_from_assessment(assessment) if assessment else None
