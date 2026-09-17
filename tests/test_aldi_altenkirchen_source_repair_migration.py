@@ -19,7 +19,7 @@ migration = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(migration)
 
 
-def _engine(source_url: str):
+def _empty_engine():
     engine = sa.create_engine("sqlite+pysqlite:///:memory:", future=True)
     with engine.begin() as bind:
         bind.execute(
@@ -40,6 +40,12 @@ def _engine(source_url: str):
                 """
             )
         )
+    return engine
+
+
+def _engine(source_url: str):
+    engine = _empty_engine()
+    with engine.begin() as bind:
         bind.execute(
             sa.text(
                 """
@@ -65,6 +71,12 @@ def _source(engine) -> str | None:
         ).scalar_one()
 
 
+def test_repair_is_noop_on_fresh_database_without_target_store():
+    engine = _empty_engine()
+    with engine.begin() as bind:
+        assert migration._repair_source(bind) is False
+
+
 def test_repair_replaces_only_known_stale_aldi_source():
     engine = _engine(migration.STALE_SOURCE_URL)
     with engine.begin() as bind:
@@ -88,10 +100,32 @@ def test_repair_refuses_to_overwrite_an_unexpected_source():
     assert _source(engine) == unexpected
 
 
-def test_repair_fails_closed_when_exact_store_identity_is_missing():
+def test_repair_fails_closed_when_aldi_57610_identity_is_wrong():
     engine = _engine(migration.STALE_SOURCE_URL)
     with engine.begin() as bind:
         bind.execute(sa.text("UPDATE stores SET address = 'Andere Straße 1' WHERE id = 17"))
-    with pytest.raises(RuntimeError, match="found 0"):
+    with pytest.raises(RuntimeError, match="missing or ambiguous"):
+        with engine.begin() as bind:
+            migration._repair_source(bind)
+
+
+def test_repair_fails_closed_when_multiple_exact_aldi_targets_exist():
+    engine = _engine(migration.STALE_SOURCE_URL)
+    with engine.begin() as bind:
+        bind.execute(
+            sa.text(
+                """
+                INSERT INTO stores (
+                    id, retailer, name, postal_code, city, address, source_url,
+                    external_id, active, benchmark_verified
+                ) VALUES (
+                    99, 'ALDI SÜD', 'ALDI duplicate', '57610', 'Altenkirchen',
+                    'Kölner Straße 30a', :source_url, NULL, 0, 0
+                )
+                """
+            ),
+            {"source_url": migration.STALE_SOURCE_URL},
+        )
+    with pytest.raises(RuntimeError, match="missing or ambiguous"):
         with engine.begin() as bind:
             migration._repair_source(bind)
