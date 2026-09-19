@@ -539,16 +539,24 @@ def _snapshot_metrics(snapshot: CollectionQualitySnapshot | None) -> dict[str, A
 
 
 def _match_target(stores: Iterable[Store], target: TargetMarket) -> Store | None:
+    retailer_stores = [store for store in stores if store.retailer == target.retailer]
+
+    # A reviewed retailer ID is stronger identity evidence than mutable
+    # city/name display text. Physical aliases have already been collapsed.
+    if target.external_id:
+        exact = [
+            store
+            for store in retailer_stores
+            if str(store.external_id or "") == target.external_id
+        ]
+        return exact[0] if exact else None
+
     candidates = [
         store
-        for store in stores
-        if store.retailer == target.retailer
-        and _text(store.city) == _text(target.city)
+        for store in retailer_stores
+        if _text(store.city) == _text(target.city)
         and _text(target.name_contains) in _text(store.name)
     ]
-    if target.external_id:
-        exact = [store for store in candidates if str(store.external_id or "") == target.external_id]
-        return exact[0] if exact else None
     return candidates[0] if candidates else None
 
 
