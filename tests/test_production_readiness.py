@@ -168,17 +168,54 @@ def test_rewe_external_id_must_match_exactly():
     assert rewe["source_strategy"] == "external_primary"
 
 
-def test_readiness_report_always_covers_all_seven_target_markets():
+def test_readiness_report_covers_full_beta_and_legacy_target_inventory():
     db = _session()
     _ready_store(db)
 
     report = build_multi_market_readiness(db)
 
-    assert report["target_count"] == 7
-    assert len(report["stores"]) == 7
+    assert report["target_count"] == 15
+    assert len(report["stores"]) == 15
     assert report["collector_primary"] == 1
-    assert report["external_primary"] == 6
+    assert report["external_primary"] == 14
     assert report["status"] == "IN_PROGRESS"
+
+
+def test_readiness_collapses_confirmed_physical_store_aliases_before_target_matching():
+    db = _session()
+    alias = Store(
+        retailer="REWE",
+        name="REWE Dierdorf",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Str. 20-22",
+        active=False,
+        benchmark_verified=False,
+        external_id="321019",
+    )
+    canonical = Store(
+        retailer="REWE",
+        name="REWE:XL Familie Hundertmark",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Straße 20-22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+        source_url="https://www.rewe.de/marktseite/dierdorf/321019/rewe-markt-koenigsberger-str-20-22/",
+    )
+    db.add_all([alias, canonical])
+    db.commit()
+
+    report = build_multi_market_readiness(db)
+    rewe = next(
+        row for row in report["stores"]
+        if row["target_key"] == "rewe-hundertmark-dierdorf"
+    )
+
+    assert rewe["store_id"] == canonical.id
+    assert rewe["status"] == "VALIDATION_REQUIRED"
+    assert "store_inactive" not in rewe["reasons"]
 
 
 def test_inapplicable_rewe_diagnostics_render_as_na_instead_of_zero():
