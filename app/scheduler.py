@@ -61,6 +61,7 @@ def run_verified_market_collection() -> dict[str, str]:
                         db,
                         store.name,
                         benchmark_context=BenchmarkContext.PRODUCTION,
+                        store_id=store.id,
                     )
                     if store.retailer == "REWE":
                         from .authoritative_offer_reconcile import reconcile_completed_rewe_collection
