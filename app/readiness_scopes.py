@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
+from .beta_market_scope import is_beta_retailer
 from .production_readiness import TARGET_MARKETS, build_multi_market_readiness
 
 
@@ -19,11 +20,8 @@ BETA_1_SCOPE_KEY = "beta-1"
 ALL_TARGETS_SCOPE_KEY = "all-target-markets"
 DEFAULT_READINESS_SCOPE = BETA_1_SCOPE_KEY
 
-_BETA_1_TARGET_KEYS = (
-    "edeka-fellenzer-puderbach",
-    "aldi-dierdorf",
-    "rewe-hundertmark-dierdorf",
-    "aldi-oberhonnefeld",
+_BETA_1_TARGET_KEYS = tuple(
+    target.key for target in TARGET_MARKETS if is_beta_retailer(target.retailer)
 )
 _ALL_TARGET_KEYS = tuple(target.key for target in TARGET_MARKETS)
 
