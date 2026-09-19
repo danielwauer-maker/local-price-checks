@@ -17,7 +17,7 @@ from .db import SessionLocal, get_db
 from .edeka_live_collector import collect_edeka_web_for_store
 from .models import CollectionRun, CollectionRunProgress, Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
-from .production_readiness import build_multi_market_readiness
+from .readiness_scopes import build_scoped_market_readiness
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
@@ -241,6 +241,7 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
                     db,
                     store.name,
                     benchmark_context=context,
+                    store_id=store.id,
                 )
             if store.retailer == "REWE" and context == BenchmarkContext.PRODUCTION:
                 _reconcile_rewe_manual_collection(db, store, result, summary, run)
@@ -281,14 +282,39 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
         db.close()
 
 
+def _latest_physical_run(db: Session, store_ids: list[int]) -> CollectionRun | None:
+    if not store_ids:
+        return None
+    return (
+        db.query(CollectionRun)
+        .filter(CollectionRun.store_id.in_(store_ids))
+        .order_by(CollectionRun.started_at.desc(), CollectionRun.id.desc())
+        .first()
+    )
+
+
+def _current_physical_prospect(db: Session, stores: list[Store], period_key: str):
+    rows = [
+        row
+        for store in stores
+        if (row := current_prospect(db, store, period_key)) is not None
+    ]
+    if not rows:
+        return None
+    return max(
+        rows,
+        key=lambda row: (row.fetched_at or datetime.min, row.id or 0),
+    )
+
+
 def _collector_readiness_context(db: Session) -> tuple[dict, dict[int, dict]]:
-    """Expose the canonical seven-market gate to the collector admin.
+    """Expose the current beta release gate to the collector admin.
 
     The detailed readiness page and the collector overview must never implement
-    different release rules. Both therefore originate from
-    ``build_multi_market_readiness``.
+    different release rules or scopes. Both therefore originate from the
+    default scoped readiness builder.
     """
-    readiness = build_multi_market_readiness(db)
+    readiness = build_scoped_market_readiness(db)
     by_store_id = {
         int(row["store_id"]): row
         for row in readiness["stores"]
@@ -300,15 +326,22 @@ def _collector_readiness_context(db: Session) -> tuple[dict, dict[int, dict]]:
 @router.get("/admin/collector")
 def collector_admin(request: Request, collected: str = "", db: Session = Depends(get_db), actor: str = Depends(_admin)):
     raw_stores = db.query(Store).order_by(Store.retailer, Store.city, Store.name).all()
+    canonical_by_store_id = canonical_store_map(raw_stores)
     stores = collapse_physical_stores(raw_stores)
+    physical_groups: dict[int, list[Store]] = {store.id: [] for store in stores}
+    for raw_store in raw_stores:
+        canonical = canonical_by_store_id[raw_store.id]
+        physical_groups.setdefault(canonical.id, []).append(raw_store)
+
     latest = {}
     prospects = {}
     next_prospects = {}
     for store in stores:
-        run = db.query(CollectionRun).filter(CollectionRun.store_id == store.id).order_by(CollectionRun.started_at.desc()).first()
-        latest[store.id] = run
-        prospects[store.id] = current_prospect(db, store, "current")
-        next_prospects[store.id] = current_prospect(db, store, "next")
+        group = physical_groups.get(store.id, [store])
+        store_ids = [row.id for row in group]
+        latest[store.id] = _latest_physical_run(db, store_ids)
+        prospects[store.id] = _current_physical_prospect(db, group, "current")
+        next_prospects[store.id] = _current_physical_prospect(db, group, "next")
     recent = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).limit(30).all()
     run_ids = {run.id for run in recent}
     run_ids.update(run.id for run in latest.values() if run is not None)

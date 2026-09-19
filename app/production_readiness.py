@@ -10,8 +10,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
+from .beta_market_scope import is_beta_retailer
 from .collection_quality import CollectionQualitySnapshot
 from .models import CollectionRun, Offer, Store
+from .physical_market_identity import canonical_store_map, collapse_physical_stores
+from .retailer_store_sources import CURATED_OFFICIAL_STORES, RetailerStoreRecord
 
 
 @dataclass(frozen=True)
@@ -23,14 +26,56 @@ class TargetMarket:
     external_id: str | None = None
 
 
-TARGET_MARKETS: tuple[TargetMarket, ...] = (
+_BETA_TARGET_KEY_OVERRIDES: dict[str, str] = {
+    # Keep the established keys stable where they already existed in admin URLs/tests.
+    "edeka-market-071378": "edeka-fellenzer-puderbach",
+    "aldi-sued-56269-koenigsberger-strasse-50": "aldi-dierdorf",
+    "aldi-sued-56587-ueber-dem-stellweg-5": "aldi-oberhonnefeld",
+    "rewe-market-321019": "rewe-hundertmark-dierdorf",
+}
+
+
+def _target_from_curated_store(record: RetailerStoreRecord) -> TargetMarket:
+    """Build one readiness target from the reviewed market inventory.
+
+    The curated official-store inventory is already the product-level source of
+    truth for beta coverage. Reusing it here prevents the release gate from
+    silently drifting behind onboarding when new reviewed beta markets are added.
+    """
+    name_contains = record.name
+    if record.retailer == "REWE":
+        name_contains = "REWE"
+    elif record.retailer == "ALDI SÜD":
+        name_contains = "ALDI"
+    elif record.retailer == "EDEKA":
+        name_contains = "Fellenzer"
+
+    return TargetMarket(
+        key=_BETA_TARGET_KEY_OVERRIDES.get(record.source_identifier, record.source_identifier),
+        retailer=record.retailer,
+        city=record.city,
+        name_contains=name_contains,
+        external_id=record.external_id,
+    )
+
+
+BETA_TARGET_MARKETS: tuple[TargetMarket, ...] = tuple(
+    _target_from_curated_store(record)
+    for record in CURATED_OFFICIAL_STORES
+    if is_beta_retailer(record.retailer)
+)
+
+# Legacy/non-beta targets stay operationally visible, but are intentionally kept
+# outside the beta release scope. They must never block the current beta gate.
+_NON_BETA_TARGET_MARKETS: tuple[TargetMarket, ...] = (
     TargetMarket("lidl-puderbach", "Lidl", "Puderbach", "Lidl"),
-    TargetMarket("edeka-fellenzer-puderbach", "EDEKA", "Puderbach", "Fellenzer"),
-    TargetMarket("aldi-dierdorf", "ALDI SÜD", "Dierdorf", "ALDI"),
     TargetMarket("netto-dierdorf", "Netto Marken-Discount", "Dierdorf", "Netto"),
-    TargetMarket("rewe-hundertmark-dierdorf", "REWE", "Dierdorf", "REWE", "321019"),
-    TargetMarket("aldi-oberhonnefeld", "ALDI SÜD", "Oberhonnefeld-Gierend", "ALDI"),
     TargetMarket("netto-oberhonnefeld", "Netto Marken-Discount", "Oberhonnefeld-Gierend", "Netto"),
+)
+
+TARGET_MARKETS: tuple[TargetMarket, ...] = (
+    *BETA_TARGET_MARKETS,
+    *_NON_BETA_TARGET_MARKETS,
 )
 
 
@@ -456,10 +501,18 @@ def offer_covers_next_week(offer: Any, today: date) -> bool:
     return valid_from <= week_end and valid_to >= week_start
 
 
-def _latest_run(db: Session, store_id: int) -> CollectionRun | None:
+def _latest_run(
+    db: Session,
+    store_id: int,
+    *,
+    equivalent_store_ids: Iterable[int] = (),
+) -> CollectionRun | None:
+    """Return the latest run for one physical market, including confirmed aliases."""
+
+    store_ids = {store_id, *(int(value) for value in equivalent_store_ids)}
     return (
         db.query(CollectionRun)
-        .filter(CollectionRun.store_id == store_id)
+        .filter(CollectionRun.store_id.in_(store_ids))
         .order_by(CollectionRun.started_at.desc(), CollectionRun.id.desc())
         .first()
     )
@@ -486,20 +539,34 @@ def _snapshot_metrics(snapshot: CollectionQualitySnapshot | None) -> dict[str, A
 
 
 def _match_target(stores: Iterable[Store], target: TargetMarket) -> Store | None:
+    retailer_stores = [store for store in stores if store.retailer == target.retailer]
+
+    # A reviewed retailer ID is stronger identity evidence than mutable
+    # city/name display text. Physical aliases have already been collapsed.
+    if target.external_id:
+        exact = [
+            store
+            for store in retailer_stores
+            if str(store.external_id or "") == target.external_id
+        ]
+        return exact[0] if exact else None
+
     candidates = [
         store
-        for store in stores
-        if store.retailer == target.retailer
-        and _text(store.city) == _text(target.city)
+        for store in retailer_stores
+        if _text(store.city) == _text(target.city)
         and _text(target.name_contains) in _text(store.name)
     ]
-    if target.external_id:
-        exact = [store for store in candidates if str(store.external_id or "") == target.external_id]
-        return exact[0] if exact else None
     return candidates[0] if candidates else None
 
 
-def assess_store_readiness(db: Session, target: TargetMarket, store: Store | None) -> StoreReadiness:
+def assess_store_readiness(
+    db: Session,
+    target: TargetMarket,
+    store: Store | None,
+    *,
+    equivalent_store_ids: Iterable[int] = (),
+) -> StoreReadiness:
     if store is None:
         return StoreReadiness(
             target_key=target.key,
@@ -512,7 +579,7 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
             reasons=("target_store_not_configured",),
         )
 
-    run = _latest_run(db, store.id)
+    run = _latest_run(db, store.id, equivalent_store_ids=equivalent_store_ids)
     snapshot = _snapshot_for_run(db, run)
     metrics = _snapshot_metrics(snapshot)
     run_status = run.status if run else None
@@ -587,8 +654,29 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
 
 
 def build_multi_market_readiness(db: Session) -> dict[str, Any]:
-    stores = db.query(Store).all()
-    rows = [assess_store_readiness(db, target, _match_target(stores, target)) for target in TARGET_MARKETS]
+    # Readiness is a physical-market gate. Collapse confirmed aliases before
+    # matching targets, but retain every member ID for historical run lookup.
+    # This keeps old collection evidence queryable without duplicating markets.
+    raw_stores = db.query(Store).all()
+    canonical_by_store_id = canonical_store_map(raw_stores)
+    stores = collapse_physical_stores(raw_stores)
+    physical_store_ids: dict[int, tuple[int, ...]] = {}
+    for store in raw_stores:
+        canonical = canonical_by_store_id[store.id]
+        physical_store_ids.setdefault(canonical.id, tuple())
+        physical_store_ids[canonical.id] = (*physical_store_ids[canonical.id], store.id)
+
+    rows = []
+    for target in TARGET_MARKETS:
+        store = _match_target(stores, target)
+        rows.append(
+            assess_store_readiness(
+                db,
+                target,
+                store,
+                equivalent_store_ids=physical_store_ids.get(store.id, ()) if store else (),
+            )
+        )
     collector_primary = sum(1 for row in rows if row.collector_primary)
     return {
         "status": "READY" if collector_primary == len(TARGET_MARKETS) else "IN_PROGRESS",
