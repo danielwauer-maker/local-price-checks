@@ -10,8 +10,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
+from .beta_market_scope import is_beta_retailer
 from .collection_quality import CollectionQualitySnapshot
 from .models import CollectionRun, Offer, Store
+from .physical_market_identity import collapse_physical_stores
+from .retailer_store_sources import CURATED_OFFICIAL_STORES, RetailerStoreRecord
 
 
 @dataclass(frozen=True)
@@ -23,14 +26,56 @@ class TargetMarket:
     external_id: str | None = None
 
 
-TARGET_MARKETS: tuple[TargetMarket, ...] = (
+_BETA_TARGET_KEY_OVERRIDES: dict[str, str] = {
+    # Keep the established keys stable where they already existed in admin URLs/tests.
+    "edeka-market-071378": "edeka-fellenzer-puderbach",
+    "aldi-sued-56269-koenigsberger-strasse-50": "aldi-dierdorf",
+    "aldi-sued-56587-ueber-dem-stellweg-5": "aldi-oberhonnefeld",
+    "rewe-market-321019": "rewe-hundertmark-dierdorf",
+}
+
+
+def _target_from_curated_store(record: RetailerStoreRecord) -> TargetMarket:
+    """Build one readiness target from the reviewed market inventory.
+
+    The curated official-store inventory is already the product-level source of
+    truth for beta coverage. Reusing it here prevents the release gate from
+    silently drifting behind onboarding when new reviewed beta markets are added.
+    """
+    name_contains = record.name
+    if record.retailer == "REWE":
+        name_contains = "REWE"
+    elif record.retailer == "ALDI SÜD":
+        name_contains = "ALDI"
+    elif record.retailer == "EDEKA":
+        name_contains = "Fellenzer"
+
+    return TargetMarket(
+        key=_BETA_TARGET_KEY_OVERRIDES.get(record.source_identifier, record.source_identifier),
+        retailer=record.retailer,
+        city=record.city,
+        name_contains=name_contains,
+        external_id=record.external_id,
+    )
+
+
+BETA_TARGET_MARKETS: tuple[TargetMarket, ...] = tuple(
+    _target_from_curated_store(record)
+    for record in CURATED_OFFICIAL_STORES
+    if is_beta_retailer(record.retailer)
+)
+
+# Legacy/non-beta targets stay operationally visible, but are intentionally kept
+# outside the beta release scope. They must never block the current beta gate.
+_NON_BETA_TARGET_MARKETS: tuple[TargetMarket, ...] = (
     TargetMarket("lidl-puderbach", "Lidl", "Puderbach", "Lidl"),
-    TargetMarket("edeka-fellenzer-puderbach", "EDEKA", "Puderbach", "Fellenzer"),
-    TargetMarket("aldi-dierdorf", "ALDI SÜD", "Dierdorf", "ALDI"),
     TargetMarket("netto-dierdorf", "Netto Marken-Discount", "Dierdorf", "Netto"),
-    TargetMarket("rewe-hundertmark-dierdorf", "REWE", "Dierdorf", "REWE", "321019"),
-    TargetMarket("aldi-oberhonnefeld", "ALDI SÜD", "Oberhonnefeld-Gierend", "ALDI"),
     TargetMarket("netto-oberhonnefeld", "Netto Marken-Discount", "Oberhonnefeld-Gierend", "Netto"),
+)
+
+TARGET_MARKETS: tuple[TargetMarket, ...] = (
+    *BETA_TARGET_MARKETS,
+    *_NON_BETA_TARGET_MARKETS,
 )
 
 
@@ -587,7 +632,10 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
 
 
 def build_multi_market_readiness(db: Session) -> dict[str, Any]:
-    stores = db.query(Store).all()
+    # Readiness is a physical-market gate. Collapse confirmed aliases before
+    # matching targets so one duplicated Store row cannot create a second market
+    # or make target selection depend on arbitrary row order.
+    stores = collapse_physical_stores(db.query(Store).all())
     rows = [assess_store_readiness(db, target, _match_target(stores, target)) for target in TARGET_MARKETS]
     collector_primary = sum(1 for row in rows if row.collector_primary)
     return {
