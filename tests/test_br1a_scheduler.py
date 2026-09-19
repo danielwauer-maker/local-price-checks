@@ -33,7 +33,15 @@ def test_daily_scheduler_uses_only_public_physical_stores_keeps_edeka_path_and_c
         session.add(run); session.commit(); session.refresh(run)
         return {}, ImportSummary(received=1, imported=1), run
 
-    monkeypatch.setattr(scheduler, "collect_store_from_web", lambda session, name, **kwargs: complete(session, next(s for s in session.query(Store) if s.name == name), fail=True))
+    monkeypatch.setattr(
+        scheduler,
+        "collect_store_from_web",
+        lambda session, name, **kwargs: complete(
+            session,
+            session.get(Store, kwargs["store_id"]),
+            fail=True,
+        ),
+    )
     monkeypatch.setattr(scheduler, "collect_edeka_web_for_store", lambda session, store, **kwargs: complete(session, store))
 
     results = scheduler.run_verified_market_collection()
