@@ -17,7 +17,7 @@ from .db import SessionLocal, get_db
 from .edeka_live_collector import collect_edeka_web_for_store
 from .models import CollectionRun, CollectionRunProgress, Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
-from .production_readiness import build_multi_market_readiness
+from .readiness_scopes import build_scoped_market_readiness
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
 from .support_export import build_support_export
@@ -282,13 +282,13 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
 
 
 def _collector_readiness_context(db: Session) -> tuple[dict, dict[int, dict]]:
-    """Expose the canonical seven-market gate to the collector admin.
+    """Expose the current beta release gate to the collector admin.
 
     The detailed readiness page and the collector overview must never implement
-    different release rules. Both therefore originate from
-    ``build_multi_market_readiness``.
+    different release rules or scopes. Both therefore originate from the
+    default scoped readiness builder.
     """
-    readiness = build_multi_market_readiness(db)
+    readiness = build_scoped_market_readiness(db)
     by_store_id = {
         int(row["store_id"]): row
         for row in readiness["stores"]
