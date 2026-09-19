@@ -168,6 +168,25 @@ def test_rewe_external_id_must_match_exactly():
     assert rewe["source_strategy"] == "external_primary"
 
 
+def test_readiness_exact_official_id_survives_display_city_drift():
+    db = _session()
+    store = _ready_store(
+        db,
+        name="REWE Markt – abweichender Anzeigename",
+        city="Dierdorf / Region",
+        external_id="321019",
+    )
+
+    report = build_multi_market_readiness(db)
+    rewe = next(
+        row for row in report["stores"]
+        if row["target_key"] == "rewe-hundertmark-dierdorf"
+    )
+
+    assert rewe["store_id"] == store.id
+    assert rewe["status"] == "READY"
+
+
 def test_readiness_report_covers_full_beta_and_legacy_target_inventory():
     db = _session()
     _ready_store(db)
