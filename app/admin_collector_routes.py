@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -15,8 +15,9 @@ from .admin_routes import _admin
 from .config import settings
 from .db import SessionLocal, get_db
 from .edeka_live_collector import collect_edeka_web_for_store
-from .models import CollectionRun, CollectionRunProgress, Store
+from .models import CollectionRun, CollectionRunProgress, Offer, Store
 from .physical_market_identity import canonical_store_map, collapse_physical_stores
+from .freshness import state_for_run
 from .readiness_scopes import build_scoped_market_readiness
 from .prospects import current_prospect, save_manual_prospect
 from .scheduler import run_verified_market_collection
@@ -293,6 +294,75 @@ def _latest_physical_run(db: Session, store_ids: list[int]) -> CollectionRun | N
     )
 
 
+def _physical_offer_week_observability(
+    db: Session,
+    store_ids: list[int],
+    *,
+    today: date | None = None,
+) -> dict:
+    """Summarize persisted current/next-week offers for one physical market.
+
+    Confirmed alias rows are intentionally queried together. Duplicate copies of
+    the same product/price/validity on different alias IDs count only once so
+    the admin view reflects one physical market instead of database row history.
+    """
+    anchor = today or date.today()
+    current_start = anchor - timedelta(days=anchor.weekday())
+    current_end = current_start + timedelta(days=6)
+    next_start = current_start + timedelta(days=7)
+    next_end = next_start + timedelta(days=6)
+
+    if not store_ids:
+        rows: list[Offer] = []
+    else:
+        rows = (
+            db.query(Offer)
+            .filter(
+                Offer.store_id.in_(store_ids),
+                Offer.valid_to >= current_start,
+                Offer.valid_from <= next_end,
+            )
+            .order_by(Offer.valid_from, Offer.valid_to, Offer.id)
+            .all()
+        )
+
+    def snapshot(window_from: date, window_to: date) -> dict:
+        overlapping = [
+            offer for offer in rows
+            if offer.valid_from <= window_to and offer.valid_to >= window_from
+        ]
+        unique: dict[tuple, Offer] = {}
+        for offer in overlapping:
+            identity = (
+                offer.master_product_id,
+                round(float(offer.price), 4),
+                offer.valid_from,
+                offer.valid_to,
+            )
+            unique.setdefault(identity, offer)
+        ranges = sorted({(offer.valid_from, offer.valid_to) for offer in unique.values()})
+        source_urls = sorted({
+            offer.source_url.strip()
+            for offer in overlapping
+            if offer.source_url and offer.source_url.strip()
+        })
+        return {
+            "window_from": window_from,
+            "window_to": window_to,
+            "count": len(unique),
+            "ranges": ranges,
+            "source_urls": source_urls,
+        }
+
+    current = snapshot(current_start, current_end)
+    next_week = snapshot(next_start, next_end)
+    return {
+        "current": current,
+        "next": next_week,
+        "source_urls": sorted(set(current["source_urls"]) | set(next_week["source_urls"])),
+    }
+
+
 def _current_physical_prospect(db: Session, stores: list[Store], period_key: str):
     rows = [
         row
@@ -336,12 +406,17 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
     latest = {}
     prospects = {}
     next_prospects = {}
+    offer_observability = {}
+    freshness_by_store = {}
     for store in stores:
         group = physical_groups.get(store.id, [store])
         store_ids = [row.id for row in group]
-        latest[store.id] = _latest_physical_run(db, store_ids)
+        latest_run = _latest_physical_run(db, store_ids)
+        latest[store.id] = latest_run
         prospects[store.id] = _current_physical_prospect(db, group, "current")
         next_prospects[store.id] = _current_physical_prospect(db, group, "next")
+        offer_observability[store.id] = _physical_offer_week_observability(db, store_ids)
+        freshness_by_store[store.id] = state_for_run(latest_run)
     recent = db.query(CollectionRun).order_by(CollectionRun.started_at.desc()).limit(30).all()
     run_ids = {run.id for run in recent}
     run_ids.update(run.id for run in latest.values() if run is not None)
@@ -377,6 +452,8 @@ def collector_admin(request: Request, collected: str = "", db: Session = Depends
         "activation_overviews": activation_overviews,
         "production_readiness": production_readiness,
         "readiness_by_store": readiness_by_store,
+        "offer_observability": offer_observability,
+        "freshness_by_store": freshness_by_store,
     })
 
 

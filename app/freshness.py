@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .models import CollectionRun, Store
-from .physical_market_identity import canonical_store_map
+from .physical_market_identity import canonical_store_map, collapse_physical_stores
 
 
 def _state_for_run(run: CollectionRun | None, stale_before: datetime) -> str:
@@ -25,15 +25,18 @@ def _state_for_run(run: CollectionRun | None, stale_before: datetime) -> str:
     return run.status
 
 
+def state_for_run(run: CollectionRun | None, *, now: datetime | None = None) -> str:
+    """Return the operational freshness state for one collector run."""
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    stale_before = reference - timedelta(hours=settings.stale_after_hours)
+    return _state_for_run(run, stale_before)
+
+
 def market_freshness(db: Session) -> list[dict]:
     now = datetime.now(timezone.utc)
-    stale_before = now - timedelta(hours=settings.stale_after_hours)
-    stores = (
-        db.query(Store)
-        .filter(Store.active.is_(True), Store.benchmark_verified.is_(True))
-        .order_by(Store.retailer, Store.name)
-        .all()
-    )
+    stores = db.query(Store).order_by(Store.retailer, Store.name).all()
     canonical_by_store_id = canonical_store_map(stores)
     physical_groups: dict[int, list[Store]] = {}
     canonical_by_id: dict[int, Store] = {}
@@ -44,7 +47,11 @@ def market_freshness(db: Session) -> list[dict]:
 
     rows = []
     for canonical_id, group in physical_groups.items():
-        store = canonical_by_id[canonical_id]
+        canonical = canonical_by_id[canonical_id]
+        operational = [row for row in group if row.active and row.benchmark_verified]
+        if not operational:
+            continue
+        store = canonical if canonical in operational else collapse_physical_stores(operational)[0]
         store_ids = [row.id for row in group]
         recent_runs = (
             db.query(CollectionRun)
@@ -59,7 +66,7 @@ def market_freshness(db: Session) -> list[dict]:
         rows.append({
             "store": store,
             "run": run,
-            "state": _state_for_run(run, stale_before),
+            "state": state_for_run(run, now=now),
             "web_run": latest_web,
             "pdf_run": latest_pdf,
         })
