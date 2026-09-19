@@ -63,6 +63,8 @@ def test_collector_admin_uses_hardened_external_validation_gate():
 
     readiness, by_store = _collector_readiness_context(db)
 
+    assert readiness["scope_key"] == "beta-1"
+    assert readiness["target_count"] == 12
     assert readiness["collector_primary"] == 0
     assert by_store[store.id]["source_strategy"] == "external_primary"
     assert "external_validation_insufficient_samples" in by_store[store.id]["reasons"]
