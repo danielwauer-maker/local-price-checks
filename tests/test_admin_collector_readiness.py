@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -10,10 +10,11 @@ from app.admin_collector_routes import (
     _collector_readiness_context,
     _current_physical_prospect,
     _latest_physical_run,
+    _physical_offer_week_observability,
 )
 from app.collection_quality import CollectionQualitySnapshot
 from app.db import Base
-from app.models import CollectionRun, Store
+from app.models import CollectionRun, MasterProduct, Offer, Store
 from app.prospect_models import Prospect
 
 
@@ -158,3 +159,71 @@ def test_collector_physical_helpers_surface_alias_run_and_prospect_history():
     assert physical_prospect is not None
     assert physical_prospect.id == prospect.id
     assert physical_prospect.store_id == alias.id
+
+
+def test_collector_week_observability_is_alias_safe_and_keeps_weeks_separate():
+    db = _session()
+    canonical = Store(
+        retailer="REWE",
+        name="REWE:XL observability canonical",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Str. 20-22",
+        active=True,
+        benchmark_verified=True,
+        external_id="321019",
+    )
+    alias = Store(
+        retailer="REWE",
+        name="REWE observability legacy",
+        postal_code="56269",
+        city="Dierdorf",
+        address="Königsberger Straße 20-22",
+        active=False,
+        benchmark_verified=False,
+        external_id="321019",
+    )
+    current_product = MasterProduct(name="Current Product", normalized_key="current-product")
+    next_product = MasterProduct(name="Next Product", normalized_key="next-product")
+    db.add_all([canonical, alias, current_product, next_product])
+    db.flush()
+
+    current_kwargs = dict(
+        master_product_id=current_product.id,
+        price=1.99,
+        valid_from=date(2026, 9, 14),
+        valid_to=date(2026, 9, 20),
+        source_url="https://www.rewe.de/angebote/dierdorf/321019/test/",
+    )
+    db.add_all([
+        Offer(store_id=canonical.id, **current_kwargs),
+        Offer(store_id=alias.id, **current_kwargs),
+        Offer(
+            store_id=alias.id,
+            master_product_id=next_product.id,
+            price=2.49,
+            valid_from=date(2026, 9, 21),
+            valid_to=date(2026, 9, 27),
+            source_url="https://www.rewe.de/angebote/dierdorf/321019/next/",
+        ),
+    ])
+    db.commit()
+
+    observation = _physical_offer_week_observability(
+        db,
+        [canonical.id, alias.id],
+        today=date(2026, 9, 19),
+    )
+
+    assert observation["current"]["window_from"] == date(2026, 9, 14)
+    assert observation["current"]["window_to"] == date(2026, 9, 20)
+    assert observation["next"]["window_from"] == date(2026, 9, 21)
+    assert observation["next"]["window_to"] == date(2026, 9, 27)
+    assert observation["current"]["count"] == 1
+    assert observation["next"]["count"] == 1
+    assert observation["current"]["ranges"] == [(date(2026, 9, 14), date(2026, 9, 20))]
+    assert observation["next"]["ranges"] == [(date(2026, 9, 21), date(2026, 9, 27))]
+    assert observation["source_urls"] == [
+        "https://www.rewe.de/angebote/dierdorf/321019/next/",
+        "https://www.rewe.de/angebote/dierdorf/321019/test/",
+    ]
