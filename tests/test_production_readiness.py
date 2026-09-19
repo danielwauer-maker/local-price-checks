@@ -207,6 +207,31 @@ def test_readiness_collapses_confirmed_physical_store_aliases_before_target_matc
     db.add_all([alias, canonical])
     db.commit()
 
+    run = CollectionRun(
+        store_id=alias.id,
+        source_key="historical-alias-run",
+        status="success",
+        offers_received=20,
+        offers_imported=20,
+    )
+    db.add(run)
+    db.flush()
+    db.add(CollectionQualitySnapshot(
+        run_id=run.id,
+        store_id=alias.id,
+        retailer=alias.retailer,
+        run_status="success",
+        quality_status="PASS",
+        benchmark_status="PASS",
+        benchmark_context="PRODUCTION",
+        quality_score=99.0,
+        metrics_json=json.dumps({
+            "external_validation_status": "PASS",
+            "external_validation_checked": 10,
+        }),
+    ))
+    db.commit()
+
     report = build_multi_market_readiness(db)
     rewe = next(
         row for row in report["stores"]
@@ -214,7 +239,10 @@ def test_readiness_collapses_confirmed_physical_store_aliases_before_target_matc
     )
 
     assert rewe["store_id"] == canonical.id
-    assert rewe["status"] == "VALIDATION_REQUIRED"
+    assert rewe["status"] == "READY"
+    assert rewe["source_strategy"] == "collector_primary"
+    assert rewe["run_status"] == "success"
+    assert rewe["offers_imported"] == 20
     assert "store_inactive" not in rewe["reasons"]
 
 
