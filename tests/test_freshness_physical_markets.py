@@ -74,3 +74,59 @@ def test_stale_alias_does_not_degrade_current_physical_market():
             db.query(Store).filter(Store.id.in_(store_ids)).delete(synchronize_session=False)
             db.commit()
         db.close()
+
+
+def test_inactive_alias_run_counts_for_active_canonical_freshness():
+    suffix = uuid4().hex[:8]
+    db = SessionLocal()
+    store_ids: list[int] = []
+    try:
+        canonical = Store(
+            retailer="REWE",
+            name=f"REWE canonical alias-history {suffix}",
+            postal_code="56269",
+            city="Dierdorf",
+            address=f"Aliasweg {suffix}",
+            active=True,
+            benchmark_verified=True,
+            external_id=f"official-{suffix}",
+            source_url="https://www.rewe.de/marktseite/test/",
+        )
+        alias = Store(
+            retailer="REWE",
+            name=f"REWE legacy alias-history {suffix}",
+            postal_code="56269",
+            city="Dierdorf",
+            address=f"Aliasweg {suffix}",
+            active=False,
+            benchmark_verified=False,
+            external_id=f"official-{suffix}",
+        )
+        db.add_all([canonical, alias])
+        db.flush()
+        store_ids = [canonical.id, alias.id]
+        db.add(CollectionRun(
+            store_id=alias.id,
+            source_key=f"legacy-{suffix}:web",
+            started_at=datetime.utcnow() - timedelta(minutes=5),
+            finished_at=datetime.utcnow() - timedelta(minutes=4),
+            status="success",
+            offers_received=12,
+            offers_imported=12,
+        ))
+        db.commit()
+
+        rows = market_freshness(db)
+        matching = [row for row in rows if row["store"].id == canonical.id]
+
+        assert len(matching) == 1
+        assert matching[0]["state"] == "current"
+        assert matching[0]["run"].store_id == alias.id
+    finally:
+        if store_ids:
+            db.query(CollectionRun).filter(CollectionRun.store_id.in_(store_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(Store).filter(Store.id.in_(store_ids)).delete(synchronize_session=False)
+            db.commit()
+        db.close()
