@@ -125,9 +125,10 @@ def test_manual_verified_rewe_collection_runs_authoritative_completion_hook(monk
     result = {"offers": ["fresh-row"]}
     summary = object()
 
-    def collect(db, store_name, *, benchmark_context):
+    def collect(db, store_name, *, benchmark_context, store_id):
         calls["collector_context"] = benchmark_context
         calls["store_name"] = store_name
+        calls["store_id"] = store_id
         return result, summary, CollectionRun(
             store_id=store_id,
             source_key="rewe-test",
@@ -149,6 +150,7 @@ def test_manual_verified_rewe_collection_runs_authoritative_completion_hook(monk
 
     assert calls["collector_context"] == BenchmarkContext.PRODUCTION
     assert calls["store_name"] == "REWE Dierdorf"
+    assert calls["store_id"] == store_id
     assert calls["reconciled"] is True
     assert calls["reconcile_store_id"] == store_id
     assert calls["result"] is result
