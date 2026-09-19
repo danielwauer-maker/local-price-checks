@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .beta_market_scope import is_beta_retailer
 from .collection_quality import CollectionQualitySnapshot
 from .models import CollectionRun, Offer, Store
-from .physical_market_identity import collapse_physical_stores
+from .physical_market_identity import canonical_store_map, collapse_physical_stores
 from .retailer_store_sources import CURATED_OFFICIAL_STORES, RetailerStoreRecord
 
 
@@ -501,10 +501,18 @@ def offer_covers_next_week(offer: Any, today: date) -> bool:
     return valid_from <= week_end and valid_to >= week_start
 
 
-def _latest_run(db: Session, store_id: int) -> CollectionRun | None:
+def _latest_run(
+    db: Session,
+    store_id: int,
+    *,
+    equivalent_store_ids: Iterable[int] = (),
+) -> CollectionRun | None:
+    """Return the latest run for one physical market, including confirmed aliases."""
+
+    store_ids = {store_id, *(int(value) for value in equivalent_store_ids)}
     return (
         db.query(CollectionRun)
-        .filter(CollectionRun.store_id == store_id)
+        .filter(CollectionRun.store_id.in_(store_ids))
         .order_by(CollectionRun.started_at.desc(), CollectionRun.id.desc())
         .first()
     )
@@ -544,7 +552,13 @@ def _match_target(stores: Iterable[Store], target: TargetMarket) -> Store | None
     return candidates[0] if candidates else None
 
 
-def assess_store_readiness(db: Session, target: TargetMarket, store: Store | None) -> StoreReadiness:
+def assess_store_readiness(
+    db: Session,
+    target: TargetMarket,
+    store: Store | None,
+    *,
+    equivalent_store_ids: Iterable[int] = (),
+) -> StoreReadiness:
     if store is None:
         return StoreReadiness(
             target_key=target.key,
@@ -557,7 +571,7 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
             reasons=("target_store_not_configured",),
         )
 
-    run = _latest_run(db, store.id)
+    run = _latest_run(db, store.id, equivalent_store_ids=equivalent_store_ids)
     snapshot = _snapshot_for_run(db, run)
     metrics = _snapshot_metrics(snapshot)
     run_status = run.status if run else None
@@ -633,10 +647,28 @@ def assess_store_readiness(db: Session, target: TargetMarket, store: Store | Non
 
 def build_multi_market_readiness(db: Session) -> dict[str, Any]:
     # Readiness is a physical-market gate. Collapse confirmed aliases before
-    # matching targets so one duplicated Store row cannot create a second market
-    # or make target selection depend on arbitrary row order.
-    stores = collapse_physical_stores(db.query(Store).all())
-    rows = [assess_store_readiness(db, target, _match_target(stores, target)) for target in TARGET_MARKETS]
+    # matching targets, but retain every member ID for historical run lookup.
+    # This keeps old collection evidence queryable without duplicating markets.
+    raw_stores = db.query(Store).all()
+    canonical_by_store_id = canonical_store_map(raw_stores)
+    stores = collapse_physical_stores(raw_stores)
+    physical_store_ids: dict[int, tuple[int, ...]] = {}
+    for store in raw_stores:
+        canonical = canonical_by_store_id[store.id]
+        physical_store_ids.setdefault(canonical.id, tuple())
+        physical_store_ids[canonical.id] = (*physical_store_ids[canonical.id], store.id)
+
+    rows = []
+    for target in TARGET_MARKETS:
+        store = _match_target(stores, target)
+        rows.append(
+            assess_store_readiness(
+                db,
+                target,
+                store,
+                equivalent_store_ids=physical_store_ids.get(store.id, ()) if store else (),
+            )
+        )
     collector_primary = sum(1 for row in rows if row.collector_primary)
     return {
         "status": "READY" if collector_primary == len(TARGET_MARKETS) else "IN_PROGRESS",
