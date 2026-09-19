@@ -241,6 +241,7 @@ def _run_store_collection_background(store_id: int, activation_test: bool = Fals
                     db,
                     store.name,
                     benchmark_context=context,
+                    store_id=store.id,
                 )
             if store.retailer == "REWE" and context == BenchmarkContext.PRODUCTION:
                 _reconcile_rewe_manual_collection(db, store, result, summary, run)
